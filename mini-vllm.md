@@ -160,7 +160,7 @@ class Sequence:
     token_ids: list[int]           # 所有 token IDs（prompt + completion）
     num_cached_tokens: int         # 已缓存的 token 数（前缀缓存）
     block_table: list[int]         # 分配的 KV 缓存块 ID 列表
-    
+
     # 采样参数
     temperature: float
     max_tokens: int
@@ -335,13 +335,13 @@ class Attention:
     def forward(q, k, v):
         # 1. 将 K, V 存储到 KV 缓存
         store_kvcache(k, v, k_cache, v_cache, slot_mapping)
-        
+
         # 2. Prefill 阶段
         if is_prefill:
             if block_tables exists:  # 前缀缓存
                 use cached k, v
             o = flash_attn_varlen_func(...)  # 处理不同长度序列
-        
+
         # 3. Decode 阶段
         else:
             o = flash_attn_with_kvcache(...)  # 使用缓存的 K, V
@@ -400,7 +400,7 @@ class RotaryEmbedding:
 ```python
 class RMSNorm:
     # 标准 RMSNorm: x = x / sqrt(mean(x^2) + eps) * weight
-    
+
     def forward(x, residual=None):
         if residual is None:
             return rms_forward(x)
@@ -472,13 +472,13 @@ def load_model(model, path):
 def main():
     # 1. 初始化模型
     llm = LLM(model_path, enforce_eager=True, tensor_parallel_size=1)
-    
+
     # 2. 设置采样参数
     sampling_params = SamplingParams(temperature=0.6, max_tokens=256)
-    
+
     # 3. 批量生成
     outputs = llm.generate(prompts, sampling_params)
-    
+
     # 4. 处理输出
     for prompt, output in zip(prompts, outputs):
         print(f"Prompt: {prompt}")
@@ -736,7 +736,7 @@ During decode:
 - **推理速度**: 与 vLLM 相当
 - **代码量**: ~1,200 行代码（注释包含在内）
 - **内存效率**: 支持 GPU 内存动态利用率配置
-- **吞吐量**: 
+- **吞吐量**:
   - Prefill 阶段: 受限于 max_num_batched_tokens 和 max_num_seqs
   - Decode 阶段: 高吞吐量（每步处理多个序列）
 
@@ -759,4 +759,3 @@ During decode:
 4. **内存利用**:
    - 调整 `gpu_memory_utilization` 优化 KV 缓存块数
    - 调整 `max_num_batched_tokens` 控制 prefill 吞吐量
-
