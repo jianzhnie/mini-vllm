@@ -15,6 +15,7 @@ import torch.distributed as dist
 
 from minivllm.config import Config
 from minivllm.engine.sequence import Sequence
+from minivllm.utils.context import get_context, reset_context, set_context
 
 # Note: The following imports may not be available in the base
 # minivllm package. They need to be implemented or imported from
@@ -119,15 +120,15 @@ class ModelRunner:
         if self.world_size > 1:
             if rank == 0:
                 # Main process: create shared memory
-                self.shm: SharedMemory = SharedMemory(name='minivllm',
-                                                      create=True,
-                                                      size=2**20)
+                self.share_memory: SharedMemory = SharedMemory(name='minivllm',
+                                                               create=True,
+                                                               size=2**20)
                 dist.barrier()
             else:
                 # Worker process: wait for main process, then enter
                 # command loop
                 dist.barrier()
-                self.shm = SharedMemory(name='minivllm')
+                self.share_memory = SharedMemory(name='minivllm')
                 self.loop()
 
     def exit(self) -> None:
@@ -143,10 +144,10 @@ class ModelRunner:
         """
         try:
             if self.world_size > 1:
-                self.shm.close()
+                self.share_memory.close()
                 dist.barrier()
                 if self.rank == 0:
-                    self.shm.unlink()
+                    self.share_memory.unlink()
 
             # Cleanup CUDA graphs
             if not self.enforce_eager and hasattr(self, 'graphs'):
@@ -176,7 +177,7 @@ class ModelRunner:
             if method_name == 'exit':
                 break
 
-    def read_shm(self) -> Tuple[str, Tuple]:
+    def read_share_memory(self) -> Tuple[str, Tuple]:
         """Read command from shared memory.
 
         Returns:
@@ -189,12 +190,12 @@ class ModelRunner:
         """
         assert self.world_size > 1 and self.rank > 0
         self.event.wait()
-        n: int = int.from_bytes(self.shm.buf[0:4], 'little')
-        method_name, *args = pickle.loads(self.shm.buf[4:n + 4])
+        n: int = int.from_bytes(self.share_memory.buf[0:4], 'little')
+        method_name, *args = pickle.loads(self.share_memory.buf[4:n + 4])
         self.event.clear()
         return method_name, tuple(args)
 
-    def write_shm(self, method_name: str, *args: Any) -> None:
+    def write_share_memory(self, method_name: str, *args: Any) -> None:
         """Write command to shared memory for worker processes.
 
         Args:
@@ -207,8 +208,8 @@ class ModelRunner:
         assert self.world_size > 1 and self.rank == 0
         data: bytes = pickle.dumps([method_name, *args])
         n: int = len(data)
-        self.shm.buf[0:4] = n.to_bytes(4, 'little')
-        self.shm.buf[4:n + 4] = data
+        self.share_memory.buf[0:4] = n.to_bytes(4, 'little')
+        self.share_memory.buf[4:n + 4] = data
         for event in self.event:
             event.set()
 
@@ -227,7 +228,7 @@ class ModelRunner:
             Return value of the called method.
         """
         if self.world_size > 1 and self.rank == 0:
-            self.write_shm(method_name, *args)
+            self.write_share_memory(method_name, *args)
         method: Callable = getattr(self, method_name, None)
         if method is None:
             raise AttributeError(f"ModelRunner has no method '{method_name}'")

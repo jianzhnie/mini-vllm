@@ -46,8 +46,8 @@ class Scheduler:
         self.eos: int = config.eos
         self.block_manager: BlockManager = BlockManager(
             config.num_kvcache_blocks, config.kvcache_block_size)
-        self.waiting: deque = deque()
-        self.running: deque = deque()
+        self.waiting: deque[Sequence] = deque()
+        self.running: deque[Sequence] = deque()
 
     def is_finished(self) -> bool:
         """Check if all sequences have finished generation.

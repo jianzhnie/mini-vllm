@@ -165,26 +165,26 @@ class LLMEngine:
         between prefill (compute-bound) and decode (memory-bound) phases.
         """
         # Get sequences to process this step
-        seqs: List[Sequence]
+        sequences: List[Sequence]
         is_prefill: bool
-        seqs, is_prefill = self.scheduler.schedule()
+        sequences, is_prefill = self.scheduler.schedule()
 
         # Run model inference
-        token_ids: List[int] = self.model_runner.call('run', seqs, is_prefill)
+        token_ids: List[int] = self.model_runner.call('run', sequences,
+                                                      is_prefill)
 
         # Update sequences with new tokens
-        self.scheduler.postprocess(seqs, token_ids)
+        self.scheduler.postprocess(sequences, token_ids)
 
         # Collect finished sequences
         outputs: List[Tuple[int, List[int]]] = [
-            (seq.seq_id, seq.completion_token_ids) for seq in seqs
+            (seq.seq_id, seq.completion_token_ids) for seq in sequences
             if seq.is_finished
         ]
 
         # Compute token count for throughput tracking
-        num_tokens: int = sum(len(seq)
-                              for seq in seqs) if is_prefill else -len(seqs)
-
+        num_tokens: int = sum(
+            len(seq) for seq in sequences) if is_prefill else -len(sequences)
         return outputs, num_tokens
 
     def is_finished(self) -> bool:
@@ -271,8 +271,8 @@ class LLMEngine:
                 else:
                     decode_throughput = -num_tokens / elapsed
                 pbar.set_postfix({
-                    'Prefill': f'{int(prefill_throughput)}tok/s',
-                    'Decode': f'{int(decode_throughput)}tok/s',
+                    'Prefill': f'{int(prefill_throughput)}token/s',
+                    'Decode': f'{int(decode_throughput)}token/s',
                 })
 
             # Collect outputs and update progress
