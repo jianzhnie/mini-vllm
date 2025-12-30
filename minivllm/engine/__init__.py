@@ -12,9 +12,17 @@ Core Components:
     LLMEngine: Main engine orchestration and scheduling
 """
 
+from minivllm.engine.block_manager import BlockManager
+from minivllm.engine.llm_engine import LLMEngine
+from minivllm.engine.model_runner import ModelRunner
+from minivllm.engine.scheduler import Scheduler
 from minivllm.engine.sequence import Sequence, SequenceStatus
 
 __all__ = [
     'Sequence',
     'SequenceStatus',
+    'BlockManager',
+    'Scheduler',
+    'ModelRunner',
+    'LLMEngine',
 ]

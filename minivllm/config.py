@@ -34,8 +34,8 @@ class Config:
             Must be between 1 and 8. Default: 1.
         enforce_eager: Force eager execution mode instead of graph
         mode. Default: False.
-    hf_config: HuggingFace model configuration object,
-        loaded automatically.
+        hf_config: HuggingFace model configuration object,
+            loaded automatically.
         eos: End-of-sequence token ID. Default: -1 (auto-detect).
         kvcache_block_size: Size of KV cache blocks in tokens.
             Must be divisible by 256. Default: 256.
