@@ -497,10 +497,11 @@ class ModelRunner:
             bs: int = input_ids.size(0)
             context: Any = get_context()
             # Find smallest graph batch size >= current batch size
-            graph_bs_idx: int = next(x for x in self.graph_bs
-                                     if x >= bs)  # type: ignore[attr-defined]
-            graph: torch.cuda.CUDAGraph = self.graphs[
-                graph_bs_idx]  # type: ignore[attr-defined]
+            graph_bs_idx: int = next(
+                x for x in self.graph_bs  # type: ignore[attr-defined]
+                if x >= bs)
+            graph: torch.cuda.CUDAGraph = self.graphs[  # type: ignore[attr-defined]
+                graph_bs_idx]
             graph_vars: Dict[
                 str,
                 torch.Tensor] = self.graph_vars  # type: ignore[attr-defined]

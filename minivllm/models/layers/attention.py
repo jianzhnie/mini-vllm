@@ -16,42 +16,72 @@ Key components:
 - Attention: Main attention module with flash attention integration
 """
 
+import logging
+
 import torch
-import triton
-import triton.language as tl
-from flash_attn import flash_attn_varlen_func, flash_attn_with_kvcache
 from torch import nn
 
 from minivllm.utils.context import get_context
 
+logger = logging.getLogger(__name__)
 
-@triton.jit
-def store_kvcache_kernel(
-    key_ptr,
-    key_stride,
-    value_ptr,
-    value_stride,
-    k_cache_ptr,
-    v_cache_ptr,
-    slot_mapping_ptr,
-    D: tl.constexpr,
-):
-    """Triton kernel for storing key-value pairs to cache.
+# Optional imports for high-performance attention
+try:
+    import triton
+    import triton.language as tl
+    _TRITON_AVAILABLE = True
+except ImportError:
+    _TRITON_AVAILABLE = False
+    logger.warning(
+        'Triton not available. Some optimizations will be disabled.')
 
-    This kernel efficiently writes K/V tensors to their cache locations
-    based on slot mapping, enabling fast KV-cache updates during inference.
-    """
-    idx = tl.program_id(0)
-    slot = tl.load(slot_mapping_ptr + idx)
-    if slot == -1:
-        return
-    key_offsets = idx * key_stride + tl.arange(0, D)
-    value_offsets = idx * value_stride + tl.arange(0, D)
-    key = tl.load(key_ptr + key_offsets)
-    value = tl.load(value_ptr + value_offsets)
-    cache_offsets = slot * D + tl.arange(0, D)
-    tl.store(k_cache_ptr + cache_offsets, key)
-    tl.store(v_cache_ptr + cache_offsets, value)
+try:
+    from flash_attn import flash_attn_varlen_func, flash_attn_with_kvcache
+    _FLASH_ATTN_AVAILABLE = True
+except ImportError:
+    _FLASH_ATTN_AVAILABLE = False
+    logger.warning(
+        'FlashAttention not available. Falling back to standard attention.')
+
+if _TRITON_AVAILABLE:
+
+    @triton.jit
+    def store_kvcache_kernel(
+        key_ptr,
+        key_stride,
+        value_ptr,
+        value_stride,
+        k_cache_ptr,
+        v_cache_ptr,
+        slot_mapping_ptr,
+        D: tl.constexpr,
+    ):
+        """Triton kernel for storing key-value pairs to cache.
+
+        This kernel efficiently writes K/V tensors to their cache locations
+        based on slot mapping, enabling fast KV-cache updates during inference.
+        """
+        idx = tl.program_id(0)
+        slot = tl.load(slot_mapping_ptr + idx)
+        if slot == -1:
+            return
+        key_offsets = idx * key_stride + tl.arange(0, D)
+        value_offsets = idx * value_stride + tl.arange(0, D)
+        key = tl.load(key_ptr + key_offsets)
+        value = tl.load(value_ptr + value_offsets)
+        cache_offsets = slot * D + tl.arange(0, D)
+        tl.store(k_cache_ptr + cache_offsets, key)
+        tl.store(v_cache_ptr + cache_offsets, value)
+else:
+    # Fallback implementation when Triton is not available
+    def store_kvcache_kernel(*args, **kwargs):
+        """Fallback kernel when Triton is not available.
+
+        This fallback raises an error to prevent silent failures.
+        Users should install Triton for optimal performance.
+        """
+        raise RuntimeError('Triton is required for KV cache operations. '
+                           'Please install triton: pip install triton')
 
 
 def store_kvcache(
