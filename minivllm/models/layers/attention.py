@@ -1,0 +1,199 @@
+"""Attention layer utilities and KV-cache helpers.
+
+This module implements attention primitives which rely on external
+high-performance libraries (Triton / flash-attn). The implementation
+here focuses on correctness, type annotations and clean imports.
+
+The module provides:
+- High-performance attention computation using FlashAttention
+- KV-cache management for efficient inference
+- Support for both prefill and decode phases
+- Tensor-parallel attention patterns
+
+Key components:
+- store_kvcache_kernel: Triton kernel for efficient KV cache updates
+- store_kvcache: Python wrapper for KV cache storage
+- Attention: Main attention module with flash attention integration
+"""
+
+import torch
+import triton
+import triton.language as tl
+from flash_attn import flash_attn_varlen_func, flash_attn_with_kvcache
+from torch import nn
+
+from minivllm.utils.context import get_context
+
+
+@triton.jit
+def store_kvcache_kernel(
+    key_ptr,
+    key_stride,
+    value_ptr,
+    value_stride,
+    k_cache_ptr,
+    v_cache_ptr,
+    slot_mapping_ptr,
+    D: tl.constexpr,
+):
+    """Triton kernel for storing key-value pairs to cache.
+
+    This kernel efficiently writes K/V tensors to their cache locations
+    based on slot mapping, enabling fast KV-cache updates during inference.
+    """
+    idx = tl.program_id(0)
+    slot = tl.load(slot_mapping_ptr + idx)
+    if slot == -1:
+        return
+    key_offsets = idx * key_stride + tl.arange(0, D)
+    value_offsets = idx * value_stride + tl.arange(0, D)
+    key = tl.load(key_ptr + key_offsets)
+    value = tl.load(value_ptr + value_offsets)
+    cache_offsets = slot * D + tl.arange(0, D)
+    tl.store(k_cache_ptr + cache_offsets, key)
+    tl.store(v_cache_ptr + cache_offsets, value)
+
+
+def store_kvcache(
+    key: torch.Tensor,
+    value: torch.Tensor,
+    k_cache: torch.Tensor,
+    v_cache: torch.Tensor,
+    slot_mapping: torch.Tensor,
+) -> None:
+    """Store key-value pairs to cache using Triton kernel.
+
+    This function efficiently writes K/V tensors to their cache locations
+    based on slot mapping, enabling fast KV-cache updates during inference.
+
+    Args:
+        key: Key tensor of shape (N, num_heads, head_dim)
+        value: Value tensor of shape (N, num_heads, head_dim)
+        k_cache: Key cache tensor
+        v_cache: Value cache tensor
+        slot_mapping: Slot mapping tensor of shape (N,)
+
+    Raises:
+        AssertionError: If tensor strides or shapes don't match expected patterns
+    """
+    N, num_heads, head_dim = key.shape
+    D = num_heads * head_dim
+    assert key.stride(-1) == 1 and value.stride(-1) == 1
+    assert key.stride(1) == head_dim and value.stride(1) == head_dim
+    assert k_cache.stride(1) == D and v_cache.stride(1) == D
+    assert slot_mapping.numel() == N
+    store_kvcache_kernel[(N, )](key, key.stride(0), value, value.stride(0),
+                                k_cache, v_cache, slot_mapping, D)
+
+
+class Attention(nn.Module):
+    """Flash Attention module with KV-cache support.
+
+    This class provides high-performance attention computation using FlashAttention
+    with integrated KV-cache management for efficient inference. It supports both
+    prefill (prompt processing) and decode (token generation) phases.
+
+    The module expects pre-split query/key/value tensors with specific shapes:
+    - Query: (N, num_heads, head_dim)
+    - Key/Value: (N, num_kv_heads, head_dim)
+
+    Args:
+        num_heads: Number of attention heads for queries
+        head_dim: Dimension of each attention head
+        scale: Attention scaling factor (typically 1/sqrt(head_dim))
+        num_kv_heads: Number of attention heads for keys/values (for GQA/MQA)
+
+    Attributes:
+        num_heads: Number of query attention heads
+        head_dim: Dimension of each attention head
+        scale: Attention scaling factor
+        num_kv_heads: Number of key/value attention heads
+        k_cache: Key cache tensor (initialized later by ModelRunner)
+        v_cache: Value cache tensor (initialized later by ModelRunner)
+
+    Examples:
+        >>> attention = Attention(num_heads=32, head_dim=128, scale=0.088, num_kv_heads=32)
+        >>> q = torch.randn(2, 32, 128)  # (batch, num_heads, head_dim)
+        >>> k = torch.randn(2, 32, 128)  # (batch, num_kv_heads, head_dim)
+        >>> v = torch.randn(2, 32, 128)  # (batch, num_kv_heads, head_dim)
+        >>> output = attention(q, k, v)
+        >>> print(output.shape)  # torch.Size([2, 32, 128])
+    """
+
+    def __init__(
+        self,
+        num_heads: int,
+        head_dim: int,
+        scale: float,
+        num_kv_heads: int,
+    ) -> None:
+        super().__init__()
+        self.num_heads: int = num_heads
+        self.head_dim: int = head_dim
+        self.scale: float = float(scale)
+        self.num_kv_heads: int = num_kv_heads
+
+        # KV cache tensors are set later by the ModelRunner; initialize
+        # as empty tensors to avoid attribute errors during initialization
+        self.k_cache: torch.Tensor = torch.tensor([])
+        self.v_cache: torch.Tensor = torch.tensor([])
+
+    def forward(self, q: torch.Tensor, k: torch.Tensor,
+                v: torch.Tensor) -> torch.Tensor:
+        """Apply attention computation with KV-cache management.
+
+        This method handles both prefill and decode phases, automatically
+        selecting the appropriate FlashAttention function based on the
+        inference context.
+
+        Args:
+            q: Query tensor of shape (N, num_heads, head_dim)
+            k: Key tensor of shape (N, num_kv_heads, head_dim)
+            v: Value tensor of shape (N, num_kv_heads, head_dim)
+
+        Returns:
+            Attention output tensor of shape (N, num_heads, head_dim)
+
+        Note:
+            The method interacts with the global inference context to:
+            - Store new K/V pairs to cache during prefill
+            - Use cached K/V pairs for decode operations
+            - Handle prefix caching when available
+        """
+        context = get_context()
+        k_cache, v_cache = self.k_cache, self.v_cache
+
+        # Store K/V to cache if cache is initialized
+        if k_cache.numel() and v_cache.numel():
+            store_kvcache(k, v, k_cache, v_cache, context.slot_mapping)
+
+        if context.is_prefill:
+            # Prefill phase: process entire prompt sequence
+            # In prefill, if a prefix cache exists we use cached KV tensors
+            if context.block_tables is not None:  # prefix cache
+                k, v = k_cache, v_cache
+
+            o: torch.Tensor = flash_attn_varlen_func(
+                q,
+                k,
+                v,
+                max_seqlen_q=context.max_seqlen_q,
+                cu_seqlens_q=context.cu_seqlens_q,
+                max_seqlen_k=context.max_seqlen_k,
+                cu_seqlens_k=context.cu_seqlens_k,
+                softmax_scale=self.scale,
+                causal=True,
+                block_table=context.block_tables,
+            )
+        else:
+            # Decode phase: generate single token using cached K/V
+            o = flash_attn_with_kvcache(
+                q.unsqueeze(1),
+                k_cache,
+                v_cache,
+                cache_seqlens=context.context_lens,
+                block_table=context.block_tables,
+                softmax_scale=self.scale,
+                causal=True,
+            )
+        return o
