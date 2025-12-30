@@ -40,7 +40,7 @@ mini-vLLM 是一个从零开始构建的轻量级大语言模型推理引擎，�
 
 ```bash
 # 克隆项目
-git clone https://github.com/your-repo/mini-vllm.git
+git clone https://github.com/jianzhnie/mini-vllm.git
 cd mini-vllm
 
 # 安装依赖
@@ -149,69 +149,16 @@ for output in llm.generate(prompts, sampling_params):
 | `ignore_eos`  | bool  | False  | 是否忽略结束符       |
 
 
-## 📚 API 参考
-
-### LLM 类
-
-```python
-class LLM(LLMEngine):
-    def generate(
-        self,
-        prompts: Union[str, List[str]],
-        sampling_params: SamplingParams
-    ) -> List[Dict]:
-        """生成文本
-
-        Args:
-            prompts: 输入提示（字符串或列表）
-            sampling_params: 采样参数
-
-        Returns:
-            生成结果列表，每个结果包含：
-            - prompt: 原始提示
-            - text: 生成的文本
-            - tokens: 生成的 token 列表
-            - finished: 是否完成
-        """
-```
-
-### 高级用法
-
-```python
-# 自定义批处理
-llm = LLM(
-    model="meta-llama/Llama-2-7b-chat-hf",
-    max_num_seqs=128,  # 较小批量，更低延迟
-    max_num_batched_tokens=4096
-)
-
-# 高吞吐量配置
-llm = LLM(
-    model="meta-llama/Llama-2-7b-chat-hf",
-    max_num_seqs=1024,  # 大量并发
-    max_num_batched_tokens=32768,  # 大批次
-    gpu_memory_utilization=0.95  # 高内存使用
-)
-
-# 内存受限配置
-llm = LLM(
-    model="meta-llama/Llama-2-7b-chat-hf",
-    gpu_memory_utilization=0.6,  # 保守内存使用
-    num_kvcache_blocks=1000,  # 限制缓存块数
-    kvcache_block_size=512  # 更大块，减少管理开销
-)
-```
-
-
 ## 📄 许可证
 
 本项目基于 [Apache 2.0 许可证](LICENSE) 开源。
 
 ## 🤝 致谢
 
-非常感谢 [nanovllm](hhttps://github.com/GeeeekExplorer/nano-vllm)， 它为 mini-vLLM 提供了宝贵的设计思路和实现参考。从中借鉴了许多内存管理和调度机制相关代码，帮助我们更好地理解大语言模型推理引擎的实现细节。 同时，感谢以下开源项目和库，它们为 mini-vLLM 的开发提供了重要支持：
+非常感谢 [nanovllm](https://github.com/GeeeekExplorer/nano-vllm)， 它为 mini-vLLM 提供了宝贵的设计思路和实现参考。从中借鉴了许多内存管理和调度机制相关代码，帮助我们更好地理解大语言模型推理引擎的实现细节。 同时，感谢以下开源项目和库，它们为 mini-vLLM 的开发提供了重要支持：
 
 - [vLLM](https://github.com/vllm-project/vllm) - 灵感来源
+- [Transformers](https://github.com/huggingface/transformers) - 模型定义和加载
 - [PyTorch](https://pytorch.org/) - 深度学习框架
 - [FlashAttention](https://github.com/HazyResearch/flash-attention) - 高性能注意力
 - [Triton](https://github.com/openai/triton) - GPU 内核优化
