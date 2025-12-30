@@ -44,7 +44,7 @@ git clone https://github.com/your-repo/mini-vllm.git
 cd mini-vllm
 
 # 安装依赖
-pip install -r requirements.txt
+pip install -e .
 
 # 可选：安装 FlashAttention (显著提升性能)
 pip install flash-attn --no-build-isolation
