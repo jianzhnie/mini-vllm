@@ -40,14 +40,17 @@ class Scheduler:
 
         Args:
             config: Engine configuration containing scheduling parameters.
+
+        Raises:
+            ValueError: If configuration is invalid.
         """
         self.max_num_seqs: int = config.max_num_seqs
         self.max_num_batched_tokens: int = config.max_num_batched_tokens
         self.eos: int = config.eos
         self.block_manager: BlockManager = BlockManager(
             config.num_kvcache_blocks, config.kvcache_block_size)
-        self.waiting: deque[Sequence] = deque()
-        self.running: deque[Sequence] = deque()
+        self.waiting: deque = deque()
+        self.running: deque = deque()
 
     def is_finished(self) -> bool:
         """Check if all sequences have finished generation.

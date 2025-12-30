@@ -3,6 +3,9 @@
 This module provides the BlockManager and Block classes which handle
 physical block allocation and management for the KV cache, including
 block hashing for prefix caching optimization.
+
+The BlockManager uses a hash-based prefix cache to enable memory sharing
+between sequences with common token prefixes, reducing total memory usage.
 """
 
 from collections import deque
@@ -88,10 +91,20 @@ class BlockManager:
     def __init__(self, num_blocks: int, block_size: int) -> None:
         """Initialize the block manager.
 
+        Allocates the block pool and initializes all tracking structures.
+
         Args:
             num_blocks: Total number of physical blocks in the KV cache.
             block_size: Number of tokens per block.
+
+        Raises:
+            ValueError: If num_blocks or block_size is invalid (<=0).
         """
+        if num_blocks <= 0:
+            raise ValueError(f'num_blocks must be positive, got {num_blocks}')
+        if block_size <= 0:
+            raise ValueError(f'block_size must be positive, got {block_size}')
+
         self.block_size: int = block_size
         self.blocks: List[Block] = [Block(i) for i in range(num_blocks)]
         self.hash_to_block_id: Dict[int, int] = {}
@@ -102,13 +115,22 @@ class BlockManager:
     def compute_hash(cls, token_ids: List[int], prefix: int = -1) -> int:
         """Compute hash of token sequence for prefix caching.
 
+        Uses xxhash for fast hashing. If a prefix hash is provided, it's
+        included in the computation to support chained hashing where each
+        block's hash depends on previous blocks' hashes.
+
         Args:
             token_ids: List of token IDs to hash.
             prefix: Hash of the previous block (for chained hashing).
-                Default -1 for no prefix.
+                Default -1 means no prefix.
 
         Returns:
-            Hash value of the token sequence (including prefix if provided).
+            Integer hash value of the token sequence (including prefix if
+            provided).
+
+        Note:
+            The same token_ids with the same prefix will always produce
+            the same hash, enabling prefix cache matching.
         """
         h: xxhash.xxh64 = xxhash.xxh64()
         if prefix != -1:
@@ -163,20 +185,35 @@ class BlockManager:
     def allocate(self, seq: Sequence) -> None:
         """Allocate blocks for a sequence, using prefix caching when possible.
 
-        This method:
+        This method implements the core prefix caching logic:
         1. Iterates through the sequence's blocks
-        2. For full blocks, computes hash and checks for matching cached blocks
-        3. For matching blocks, increments reference count (cache hit)
-        4. For non-matching blocks, allocates a new block (cache miss)
-        5. Updates the sequence's block table
+        2. For full blocks (block_size tokens), computes hash and checks cache
+        3. For cache hits (matching hash and tokens), increments ref count
+        4. For cache misses, allocates a new block
+        5. Updates the sequence's block table with allocated block IDs
+
+        Prefix caching works by:
+        - Full blocks have their hash stored in hash_to_block_id mapping
+        - When a new sequence's block matches a cached block's hash and
+          tokens, it can reuse the physical block
+        - Reference counting ensures blocks are kept alive while in use
 
         Args:
             seq: Sequence to allocate blocks for. Must have empty block_table.
 
         Raises:
-            AssertionError: If sequence already has a block table.
+            AssertionError: If sequence already has an allocated block table.
+            ValueError: If not enough free blocks available for allocation.
+
+        Note:
+            After allocation, seq.block_table will contain the physical block
+            IDs for each logical block in the sequence.
         """
-        assert not seq.block_table, 'Sequence already has allocated blocks'
+        assert not seq.block_table, ('Sequence already has allocated blocks')
+
+        if len(self.free_block_ids) < seq.num_blocks:
+            raise ValueError(f'Not enough free blocks: need {seq.num_blocks}, '
+                             f'have {len(self.free_block_ids)}')
 
         h: int = -1
         cache_miss: bool = False
@@ -184,21 +221,21 @@ class BlockManager:
         for i in range(seq.num_blocks):
             token_ids: List[int] = seq.block(i)
 
-            # Compute hash only for full blocks
+            # Compute hash only for full blocks (others can't be cached)
             if len(token_ids) == self.block_size:
                 h = self.compute_hash(token_ids, h)
             else:
                 h = -1
 
-            # Check for cached block
+            # Look up in prefix cache
             block_id: int = self.hash_to_block_id.get(h, -1)
 
-            # Validate cache hit (hash match and token ID match)
+            # Validate cache hit (hash match AND token ID match)
             if block_id == -1 or self.blocks[block_id].token_ids != token_ids:
                 cache_miss = True
 
             if cache_miss:
-                # Cache miss: allocate new block
+                # Cache miss: allocate a new block
                 block_id = self.free_block_ids[0]
                 block: Block = self._allocate_block(block_id)
             else:
@@ -206,14 +243,14 @@ class BlockManager:
                 seq.num_cached_tokens += self.block_size
 
                 if block_id in self.used_block_ids:
-                    # Block already in use: increment reference count
+                    # Block in use: increment ref count
                     block = self.blocks[block_id]
                     block.ref_count += 1
                 else:
                     # Block not in use: allocate it
                     block = self._allocate_block(block_id)
 
-            # Update block with token data if needed
+            # Update block with token data and register in hash table
             if h != -1:
                 block.update(h, token_ids)
                 self.hash_to_block_id[h] = block_id
@@ -244,57 +281,83 @@ class BlockManager:
         """Check if a new block can be allocated for a sequence.
 
         During decode, sequences grow token by token. When a sequence's
-        token count crosses a block boundary, a new block is needed.
+        token count crosses a block boundary (len(seq) % block_size == 0),
+        a new block is needed on the next append.
+
+        This method checks if there are enough free blocks to accommodate
+        the next block allocation when needed.
 
         Args:
             seq: Sequence to check append feasibility for.
 
         Returns:
-            True if a new block can be allocated when needed.
+            True if a new block can be allocated when the next boundary
+            is crossed, False otherwise.
+
+        Note:
+            This returns True most of the time (when we're not at a boundary).
+            Only when at a block boundary and low on free blocks does it
+            return False, triggering sequence preemption.
         """
-        # A new block is needed only when moving to a new block boundary
-        # This happens when: (len(seq) % block_size == 0) -> (len(seq) + 1)
-        return len(self.free_block_ids) >= (len(seq) % self.block_size == 0)
+        # A new block is needed only when crossing a block boundary
+        # This happens when: len(seq) % block_size == 0 -> len(seq) + 1
+        is_at_boundary: bool = (len(seq) % self.block_size == 0)
+        return len(self.free_block_ids) >= (1 if is_at_boundary else 0)
 
     def may_append(self, seq: Sequence) -> None:
-        """Append tokens to a sequence's last block, allocating new
-        blocks as needed.
+        """Append tokens to a sequence's last block, allocating new blocks
+        as needed.
 
-        This method handles the decode phase where sequences grow
-        incrementally. It manages:
-        1. Allocating new blocks when sequence grows beyond block
-           boundary
-        2. Finalizing block hashes when blocks become full
+        This method handles the decode phase where sequences grow incrementally,
+        managing block boundaries:
+        1. When starting a new block (just moved past block_size boundary):
+           - Allocate a new physical block
+        2. When filling a block (just reached block_size tokens):
+           - Finalize the block's hash for prefix caching
+        3. When in a partial block: Do nothing
 
         Args:
             seq: Sequence to append tokens to.
+
+        Raises:
+            AssertionError: If invariants about block state are violated
+                (e.g., trying to allocate when no blocks are free).
         """
         block_table: List[int] = seq.block_table
         last_block: Block = self.blocks[block_table[-1]]
 
         if len(seq) % self.block_size == 1:
-            # Just started a new token in a new block
-            # The previous block's hash should be finalized
-            assert last_block.hash != -1, 'Previous block hash not finalized'
+            # Just started a new token in a new block (crossed boundary)
+            # The previous block should already have its hash finalized
+            assert last_block.hash != -1, (
+                f'Previous block {last_block.block_id} hash not finalized')
 
             # Allocate a new block for this token
+            if not self.free_block_ids:
+                raise ValueError('No free blocks available for allocation')
+
             block_id: int = self.free_block_ids[0]
             self._allocate_block(block_id)
             block_table.append(block_id)
 
         elif len(seq) % self.block_size == 0:
             # Just filled a block (now has block_size tokens)
-            # Finalize this block's hash
-            assert last_block.hash == -1, 'Block hash already set'
+            # Finalize this block's hash for prefix caching
+            assert last_block.hash == -1, (
+                f'Block {last_block.block_id} hash already set')
 
             token_ids: List[int] = seq.block(seq.num_blocks - 1)
-            prefix: int = (self.blocks[block_table[-2]].hash
-                           if len(block_table) > 1 else -1)
+            if len(block_table) > 1:
+                prefix: int = self.blocks[block_table[-2]].hash
+            else:
+                prefix: int = -1
+
             h: int = self.compute_hash(token_ids, prefix)
             last_block.update(h, token_ids)
             self.hash_to_block_id[h] = last_block.block_id
 
         else:
-            # Partial block (between 1 and block_size tokens)
+            # In a partial block (between 1 and block_size-1 tokens)
             # Nothing to do until we reach a boundary
-            assert last_block.hash == -1, 'Partial block should not have hash'
+            assert last_block.hash == -1, (
+                f'Partial block {last_block.block_id} should not have hash')
