@@ -15,6 +15,8 @@ import torch.distributed as dist
 
 from minivllm.config import Config
 from minivllm.engine.sequence import Sequence
+from minivllm.models.layers import Sampler
+from minivllm.models.qwen3 import Qwen3ForCausalLM
 from minivllm.utils.context import get_context, reset_context, set_context
 
 
@@ -109,17 +111,16 @@ class ModelRunner:
         torch.set_default_device('cuda')
 
         # Load model (NOTE: These functions need to be implemented)
-        # self.model = Qwen3ForCausalLM(hf_config)
-        # load_model(self.model, config.model)
-        # self.sampler = Sampler()
+        self.model = Qwen3ForCausalLM(hf_config)
+        self.sampler = Sampler()
 
         # Allocate KV cache and warmup
-        # self.warmup_model()
-        # self.allocate_kv_cache()
+        self.warmup_model()
+        self.allocate_kv_cache()
 
         # Capture CUDA graphs for efficient decode (optional)
-        # if not self.enforce_eager:
-        #     self.capture_cudagraph()
+        if not self.enforce_eager:
+            self.capture_cudagraph()
 
         torch.set_default_device('cpu')
         torch.set_default_dtype(default_dtype)
