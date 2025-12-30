@@ -132,11 +132,11 @@ class BlockManager:
             The same token_ids with the same prefix will always produce
             the same hash, enabling prefix cache matching.
         """
-        h: xxhash.xxh64 = xxhash.xxh64()
+        hash_prev: xxhash.xxh64 = xxhash.xxh64()
         if prefix != -1:
-            h.update(prefix.to_bytes(8, 'little'))
-        h.update(np.array(token_ids, dtype=np.int32).tobytes())
-        return h.intdigest()
+            hash_prev.update(prefix.to_bytes(8, 'little'))
+        hash_prev.update(np.array(token_ids, dtype=np.int32).tobytes())
+        return hash_prev.intdigest()
 
     def _allocate_block(self, block_id: int) -> Block:
         """Allocate a block from the free pool.
@@ -215,7 +215,7 @@ class BlockManager:
             raise ValueError(f'Not enough free blocks: need {seq.num_blocks}, '
                              f'have {len(self.free_block_ids)}')
 
-        h: int = -1
+        hash_prev: int = -1
         cache_miss: bool = False
 
         for i in range(seq.num_blocks):
@@ -223,12 +223,12 @@ class BlockManager:
 
             # Compute hash only for full blocks (others can't be cached)
             if len(token_ids) == self.block_size:
-                h = self.compute_hash(token_ids, h)
+                hash_prev = self.compute_hash(token_ids, hash_prev)
             else:
-                h = -1
+                hash_prev = -1
 
             # Look up in prefix cache
-            block_id: int = self.hash_to_block_id.get(h, -1)
+            block_id: int = self.hash_to_block_id.get(hash_prev, -1)
 
             # Validate cache hit (hash match AND token ID match)
             if block_id == -1 or self.blocks[block_id].token_ids != token_ids:
@@ -251,10 +251,9 @@ class BlockManager:
                     block = self._allocate_block(block_id)
 
             # Update block with token data and register in hash table
-            if h != -1:
-                block.update(h, token_ids)
-                self.hash_to_block_id[h] = block_id
-
+            if hash_prev != -1:
+                block.update(hash_prev, token_ids)
+                self.hash_to_block_id[hash_prev] = block_id
             seq.block_table.append(block_id)
 
     def deallocate(self, seq: Sequence) -> None:
