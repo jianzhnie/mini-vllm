@@ -16,6 +16,17 @@ def apply_rotary_emb(x: torch.Tensor, cos: torch.Tensor,
                      sin: torch.Tensor) -> torch.Tensor:
     """Apply rotary positional embeddings to last dimension of `x`.
 
+    This function implements the core rotary embedding transformation:
+    - Split input tensor into real and imaginary parts along last dimension
+    - Apply rotation using trigonometric interpolation
+    - Concatenate results while preserving original dtype
+
+    The rotation formula for position m is:
+    [cos(mθ)  -sin(mθ)] [x₁]
+    [sin(mθ)   cos(mθ)] [x₂]
+
+    where x₁, x₂ are the split halves and θ are the base frequencies.
+
     Args:
         x: Tensor of shape (..., dim), where dim is even and split into two
            halves for rotary rotation. The first half represents the real part
@@ -26,15 +37,24 @@ def apply_rotary_emb(x: torch.Tensor, cos: torch.Tensor,
     Returns:
         Tensor with rotary embeddings applied, preserving original dtype.
 
-    Note:
-        The function splits the input tensor into two halves along the last
-        dimension, applies the rotation transformation, and concatenates the
-        results back together.
+    Examples:
+        >>> x = torch.randn(2, 8, 64)  # (batch, seq_len, hidden_dim)
+        >>> cos = torch.randn(8, 32)   # (seq_len, rotary_dim//2)
+        >>> sin = torch.randn(8, 32)   # (seq_len, rotary_dim//2)
+        >>> rotated = apply_rotary_emb(x, cos, sin)
+        >>> print(rotated.shape)  # torch.Size([2, 8, 64])
     """
-    # Convert to float for stable math before restoring dtype
+    # Convert to float for stable mathematical operations
+    # The rotation uses trigonometric functions that work best in float precision
     x1, x2 = torch.chunk(x.float(), 2, dim=-1)
+
+    # Apply rotary transformation using the rotation matrix:
+    # [cos  -sin] [x1] = x1*cos - x2*sin
+    # [sin   cos] [x2] = x2*cos + x1*sin
     y1 = x1 * cos - x2 * sin
     y2 = x2 * cos + x1 * sin
+
+    # Concatenate rotated halves and restore original dtype
     return torch.cat((y1, y2), dim=-1).to(x.dtype)
 
 

@@ -96,18 +96,25 @@ class Scheduler:
         num_batched_tokens: int = 0
 
         # Phase 1: Prefill phase for waiting sequences
+        # Process new sequences with their full prompt to compute initial KV cache
         while self.waiting and num_seqs < self.max_num_seqs:
             seq: Sequence = self.waiting[0]
 
-            # Check if sequence fits in current batch
+            # Check if sequence fits in current batch constraints
+            # - Total token limit (including cached tokens)
+            # - Available KV cache blocks
             if (num_batched_tokens + len(seq) > self.max_num_batched_tokens
                     or not self.block_manager.can_allocate(seq)):
                 break
 
             num_seqs += 1
+            # Allocate KV cache blocks for this sequence
             self.block_manager.allocate(seq)
+            # Only count uncached tokens for batch size limit
             num_batched_tokens += len(seq) - seq.num_cached_tokens
             seq.status = SequenceStatus.RUNNING
+
+            # Move from waiting to running queue
             self.waiting.popleft()
             self.running.append(seq)
             scheduled_seqs.append(seq)
@@ -117,27 +124,35 @@ class Scheduler:
             return scheduled_seqs, True
 
         # Phase 2: Decode phase for running sequences
+        # Generate one token per sequence while managing cache constraints
         while self.running and num_seqs < self.max_num_seqs:
             seq: Sequence = self.running.popleft()
 
-            # Ensure space for appending next token
+            # Ensure space for appending next token during decode
+            # Handle cache pressure by preempting sequences when necessary
             while not self.block_manager.can_append(seq):
                 if self.running:
-                    # Preempt another sequence to make space
-                    self.preempt(self.running.pop())
+                    # Preempt another sequence to make space for current one
+                    # This maintains fairness by preempting the most recently scheduled
+                    preempted_seq = self.running.pop()
+                    self.preempt(preempted_seq)
                 else:
-                    # Preempt current sequence and try next iteration
+                    # No other sequences available: preempt current sequence
+                    # It will be rescheduled when cache space becomes available
                     self.preempt(seq)
                     break
             else:
-                # Space available: prepare sequence for decode
+                # Sufficient cache space: prepare sequence for decode
                 num_seqs += 1
+                # May allocate new block if we've crossed a block boundary
                 self.block_manager.may_append(seq)
                 scheduled_seqs.append(seq)
 
+        # Safety check: ensure we scheduled something
         if not scheduled_seqs:
             raise RuntimeError(
-                'No sequences scheduled; both waiting and running queues are empty'
+                'No sequences scheduled. This should not happen as we check '
+                'is_finished() before calling schedule(). Check for logic errors.'
             )
 
         # Restore running sequences order (put back those not scheduled)

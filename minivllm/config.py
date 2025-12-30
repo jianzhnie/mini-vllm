@@ -56,44 +56,91 @@ class Config:
     num_kvcache_blocks: int = -1
 
     def __post_init__(self) -> None:
-        """Validate and initialize configuration after dataclass
-        initialization.
+        """Validate and initialize configuration after dataclass initialization.
 
-        This method:
-        - Validates that the model path exists and is a directory
-        - Verifies KV cache block size is divisible by 256
-        - Validates tensor parallel size is within valid range
-        - Loads HuggingFace model configuration
-        - Constrains max_model_len based on model's max_position_embeddings
-        - Ensures batch token limit meets model requirements
+        This method performs comprehensive validation of all configuration
+        parameters and loads the HuggingFace model configuration. It ensures
+        the engine is configured correctly before initialization.
+
+        Validation performed:
+        1. Model path validation (must exist and be a directory)
+        2. KV cache block size validation (must be divisible by 256 for alignment)
+        3. Tensor parallel size validation (1-8 range for efficiency and compatibility)
+        4. Memory utilization validation (0.1-1.0 range for safety)
+        5. Batch size validation (must accommodate model length)
+        6. Loading HuggingFace model configuration
+        7. Automatic adjustment of max_model_len based on model capabilities
 
         Raises:
-            AssertionError: If any validation check fails.
+            ValueError: If any configuration parameter is invalid or
+                if the model cannot be loaded.
         """
-        # Validate model path exists
+        # Validate model path exists and is accessible
         if not os.path.isdir(self.model):
             raise ValueError(
-                f"Model path '{self.model}' is not a valid directory")
+                f"Model path '{self.model}' is not a valid directory. "
+                f'Please ensure the model is properly downloaded and accessible.'
+            )
 
-        # Validate KV cache block size
+        # Validate GPU memory utilization is in reasonable range
+        if not (0.1 <= self.gpu_memory_utilization <= 1.0):
+            raise ValueError(
+                f'gpu_memory_utilization must be between 0.1 and 1.0, '
+                f'got {self.gpu_memory_utilization}. '
+                f'Values outside this range may cause OOM errors or underutilization.'
+            )
+
+        # Validate KV cache block size for optimal performance
+        # 256 is optimal for most modern GPUs (memory alignment, cache efficiency)
         if self.kvcache_block_size % 256 != 0:
-            raise ValueError(f'kvcache_block_size must be divisible by 256, '
-                             f'got {self.kvcache_block_size}')
+            raise ValueError(
+                f'kvcache_block_size must be divisible by 256 for optimal performance, '
+                f'got {self.kvcache_block_size}. '
+                f'Common values: 256, 512, 1024.')
 
-        # Validate tensor parallel size
+        # Validate tensor parallel size for system compatibility
+        # 1-8 is a practical range that balances memory usage and throughput
         if not (1 <= self.tensor_parallel_size <= 8):
-            raise ValueError(f'tensor_parallel_size must be between 1 and 8, '
-                             f'got {self.tensor_parallel_size}')
+            raise ValueError(
+                f'tensor_parallel_size must be between 1 and 8, '
+                f'got {self.tensor_parallel_size}. '
+                f'Higher values may not provide additional benefits and consume more memory.'
+            )
 
-        # Load HuggingFace model configuration
-        self.hf_config = AutoConfig.from_pretrained(self.model)
+        # Validate batch size parameters are positive
+        if self.max_num_batched_tokens <= 0:
+            raise ValueError(f'max_num_batched_tokens must be positive, '
+                             f'got {self.max_num_batched_tokens}')
+        if self.max_num_seqs <= 0:
+            raise ValueError(f'max_num_seqs must be positive, '
+                             f'got {self.max_num_seqs}')
 
-        # Constrain max_model_len to model's maximum
-        self.max_model_len = min(self.max_model_len,
-                                 self.hf_config.max_position_embeddings)
+        try:
+            # Load HuggingFace model configuration
+            # This validates the model format and loads architectural details
+            self.hf_config = AutoConfig.from_pretrained(self.model)
+        except Exception as e:
+            raise ValueError(
+                f'Failed to load HuggingFace model configuration from {self.model}: {e}. '
+                f'Please ensure the model is a valid HuggingFace model or local directory.'
+            )
 
-        # Verify batch size is sufficient for model length
+        # Automatically adjust max_model_len based on model capabilities
+        # This prevents requests that exceed the model's maximum context length
+        model_max_len = getattr(self.hf_config, 'max_position_embeddings',
+                                4096)
+        if self.max_model_len > model_max_len:
+            # Warn user about automatic adjustment
+            import warnings
+            warnings.warn(
+                f'auto-adjusting max_model_len from {self.max_model_len} '
+                f'to {model_max_len} (model\'s maximum context length).',
+                UserWarning)
+            self.max_model_len = model_max_len
+
+        # Verify batch size is sufficient for model length requirements
         if self.max_num_batched_tokens < self.max_model_len:
             raise ValueError(
                 f'max_num_batched_tokens ({self.max_num_batched_tokens}) '
-                f'must be >= max_model_len ({self.max_model_len})')
+                f'must be >= max_model_len ({self.max_model_len}) '
+                f'to accommodate the full context length in a single batch.')

@@ -333,7 +333,8 @@ class BlockManager:
 
             # Allocate a new block for this token
             if not self.free_block_ids:
-                raise ValueError('No free blocks available for allocation')
+                raise ValueError('No free blocks available for allocation. '
+                                 'This may trigger sequence preemption.')
 
             block_id: int = self.free_block_ids[0]
             self._allocate_block(block_id)

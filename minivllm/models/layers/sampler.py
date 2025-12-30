@@ -37,10 +37,17 @@ class Sampler(nn.Module):
                 'batch size of logits and temperatures must match')
 
         # Safely scale logits by temperature (avoid divide-by-zero)
+        # Lower temperature = more focused/deterministic sampling
+        # Higher temperature = more random/diverse sampling
         temperatures = temperatures.clamp_min(1e-8)
         logits = logits.float().div_(temperatures.unsqueeze(dim=1))
+
+        # Convert scaled logits to probabilities
         probs = torch.softmax(logits, dim=-1)
+
         # Approximate sampling using Gumbel-ish trick: divide by exponential noise
+        # This provides a sampling approximation that's faster than true Gumbel sampling
+        # The noise creates diversity while maintaining some structure
         noise = torch.empty_like(probs).exponential_(1).clamp_min_(1e-10)
         sample_tokens = probs.div_(noise).argmax(dim=-1)
         return sample_tokens

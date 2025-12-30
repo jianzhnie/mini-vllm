@@ -497,6 +497,7 @@ class ModelRunner:
             bs: int = input_ids.size(0)
             context: Any = get_context()
             # Find smallest graph batch size >= current batch size
+            # This ensures we can reuse the captured CUDA graph for efficient decode
             graph_bs_idx: int = next(
                 x for x in self.graph_bs  # type: ignore[attr-defined]
                 if x >= bs)
@@ -507,16 +508,25 @@ class ModelRunner:
                 torch.Tensor] = self.graph_vars  # type: ignore[attr-defined]
 
             # Update graph variables with current batch data
-            graph_vars['input_ids'][:bs] = input_ids
-            graph_vars['positions'][:bs] = positions
+            # Reset slot mapping and fill with current batch positions
             graph_vars['slot_mapping'].fill_(-1)
             graph_vars['slot_mapping'][:bs] = context.slot_mapping
+
+            # Update input tensors for this batch
+            graph_vars['input_ids'][:bs] = input_ids
+            graph_vars['positions'][:bs] = positions
+
+            # Update context information for attention mechanism
             graph_vars['context_lens'].zero_()
             graph_vars['context_lens'][:bs] = context.context_lens
-            graph_vars['block_tables'][:bs, :context.block_tables.size(1)] = (
-                context.block_tables)
 
-            # Replay the captured graph
+            # Update block table mappings for KV cache
+            if context.block_tables is not None:
+                max_blocks = context.block_tables.size(1)
+                graph_vars[
+                    'block_tables'][:bs, :max_blocks] = context.block_tables
+
+            # Replay the captured CUDA graph for efficient inference
             graph.replay()
             return self.model.compute_logits(graph_vars['outputs'][:bs])
 

@@ -193,11 +193,24 @@ class Sequence:
         """Add a new token to the sequence.
 
         This method is called during generation to add newly sampled
-        tokens to the sequence.
+        tokens to the sequence. It updates all relevant sequence state
+        including token tracking and completion counter.
 
         Args:
-            token_id: The token ID to append.
+            token_id: The token ID to append to the sequence.
+
+        Note:
+            This method is called for each token generated during the
+            decode phase. It updates token_ids, last_token, and num_tokens
+            but does NOT check for sequence completion - that should be
+            handled by the scheduler based on EOS tokens or max_tokens.
+
+        Raises:
+            ValueError: If token_id is negative (invalid token).
         """
+        if token_id < 0:
+            raise ValueError(f'Token ID must be non-negative, got {token_id}')
+
         self.token_ids.append(token_id)
         self.last_token = token_id
         self.num_tokens += 1
