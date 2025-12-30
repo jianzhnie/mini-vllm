@@ -8,7 +8,7 @@ cache management, and state serialization.
 from copy import copy
 from enum import Enum, auto
 from itertools import count
-from typing import Any, List, Tuple
+from typing import Any, Iterator, List, Optional, Tuple
 
 from minivllm.sampling_params import SamplingParams
 
@@ -54,11 +54,13 @@ class Sequence:
     """
 
     block_size: int = 256
-    counter = count()
+    counter: Iterator[int] = count()
 
-    def __init__(self,
-                 token_ids: List[int],
-                 sampling_params: SamplingParams = None) -> None:
+    def __init__(
+        self,
+        token_ids: List[int],
+        sampling_params: Optional[SamplingParams] = None,
+    ) -> None:
         """Initialize a new sequence.
 
         Args:
@@ -69,12 +71,15 @@ class Sequence:
         if sampling_params is None:
             sampling_params = SamplingParams()
 
+        if not token_ids:
+            raise ValueError('token_ids must contain at least one token')
+
         self.seq_id: int = next(Sequence.counter)
         self.status: SequenceStatus = SequenceStatus.WAITING
         self.token_ids: List[int] = copy(token_ids)
-        self.last_token: int = token_ids[-1]
+        self.last_token: int = self.token_ids[-1]
         self.num_tokens: int = len(self.token_ids)
-        self.num_prompt_tokens: int = len(token_ids)
+        self.num_prompt_tokens: int = len(self.token_ids)
         self.num_cached_tokens: int = 0
         self.block_table: List[int] = []
         self.temperature: float = sampling_params.temperature
@@ -213,9 +218,14 @@ class Sequence:
             - token_ids or last_token: Full prompt or just the last
               generated token (for memory efficiency)
         """
-        return (self.num_tokens, self.num_prompt_tokens,
-                self.num_cached_tokens, self.block_table, self.token_ids
-                if self.num_completion_tokens == 0 else self.last_token)
+        return (
+            self.num_tokens,
+            self.num_prompt_tokens,
+            self.num_cached_tokens,
+            self.block_table,
+            self.token_ids
+            if self.num_completion_tokens == 0 else self.last_token,
+        )
 
     def __setstate__(self, state: Tuple[int, int, int, List[int],
                                         Any]) -> None:
@@ -228,12 +238,18 @@ class Sequence:
             state: A tuple containing serialized sequence state in the
                 format returned by __getstate__.
         """
-        (self.num_tokens, self.num_prompt_tokens, self.num_cached_tokens,
-         self.block_table) = state[:-1]
+        (
+            self.num_tokens,
+            self.num_prompt_tokens,
+            self.num_cached_tokens,
+            self.block_table,
+        ) = state[:-1]
 
         if self.num_completion_tokens == 0:
             # If no completion tokens, restore full token list
-            self.token_ids = state[-1]
+            self.token_ids = list(state[-1])
+            self.last_token = self.token_ids[-1]
         else:
             # If has completions, only last token was serialized
-            self.last_token = state[-1]
+            self.token_ids = [0] * self.num_prompt_tokens
+            self.last_token = int(state[-1])

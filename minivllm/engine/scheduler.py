@@ -6,7 +6,7 @@ BlockManager, and handling sequence preemption when needed.
 """
 
 from collections import deque
-from typing import List, Tuple
+from typing import Deque, List, Tuple
 
 from minivllm.config import Config
 from minivllm.engine.block_manager import BlockManager
@@ -49,8 +49,8 @@ class Scheduler:
         self.eos: int = config.eos
         self.block_manager: BlockManager = BlockManager(
             config.num_kvcache_blocks, config.kvcache_block_size)
-        self.waiting: deque = deque()
-        self.running: deque = deque()
+        self.waiting: Deque[Sequence] = deque()
+        self.running: Deque[Sequence] = deque()
 
     def is_finished(self) -> bool:
         """Check if all sequences have finished generation.
@@ -135,7 +135,10 @@ class Scheduler:
                 self.block_manager.may_append(seq)
                 scheduled_seqs.append(seq)
 
-        assert scheduled_seqs, 'No sequences scheduled (should not happen)'
+        if not scheduled_seqs:
+            raise RuntimeError(
+                'No sequences scheduled; both waiting and running queues are empty'
+            )
 
         # Restore running sequences order (put back those not scheduled)
         self.running.extendleft(reversed(scheduled_seqs))

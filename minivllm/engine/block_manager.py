@@ -9,7 +9,7 @@ between sequences with common token prefixes, reducing total memory usage.
 """
 
 from collections import deque
-from typing import Dict, List
+from typing import Deque, Dict, List, Set
 
 import numpy as np
 import xxhash
@@ -108,8 +108,8 @@ class BlockManager:
         self.block_size: int = block_size
         self.blocks: List[Block] = [Block(i) for i in range(num_blocks)]
         self.hash_to_block_id: Dict[int, int] = {}
-        self.free_block_ids: deque = deque(range(num_blocks))
-        self.used_block_ids: set = set()
+        self.free_block_ids: Deque[int] = deque(range(num_blocks))
+        self.used_block_ids: Set[int] = set()
 
     @classmethod
     def compute_hash(cls, token_ids: List[int], prefix: int = -1) -> int:

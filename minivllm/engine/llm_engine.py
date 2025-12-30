@@ -234,7 +234,7 @@ class LLMEngine:
             >>> print(results[0]['text'])
         """
         # Setup progress bar if requested
-        pbar = None
+        pbar: Optional[tqdm] = None
         if use_tqdm:
             pbar = tqdm(total=len(prompts),
                         desc='Generating',
@@ -248,6 +248,9 @@ class LLMEngine:
         elif not isinstance(sampling_params, list):
             sampling_params_list = [sampling_params] * len(prompts)
         else:
+            if len(sampling_params) != len(prompts):
+                raise ValueError(
+                    'Length of sampling_params list must match prompts')
             sampling_params_list = sampling_params
 
         # Add all requests to the engine
@@ -271,8 +274,8 @@ class LLMEngine:
                 else:
                     decode_throughput = -num_tokens / elapsed
                 pbar.set_postfix({
-                    'Prefill': f'{int(prefill_throughput)}token/s',
-                    'Decode': f'{int(decode_throughput)}token/s',
+                    'Prefill': f'{int(prefill_throughput)} token/s',
+                    'Decode': f'{int(decode_throughput)} token/s',
                 })
 
             # Collect outputs and update progress

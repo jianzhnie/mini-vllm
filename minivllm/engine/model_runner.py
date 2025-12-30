@@ -85,6 +85,16 @@ class ModelRunner:
         self.rank: int = rank
         self.event: Union[Event, List[Event]] = event
 
+        # Optional attributes that may be set later when model/sampler
+        # are available. Initialize to None to avoid AttributeError in
+        # environments where model loading is skipped (tests, stubs).
+        self.model: Optional[Any] = None
+        self.sampler: Optional[Any] = None
+        self.kv_cache: Optional[torch.Tensor] = None
+        self.share_memory: Optional[SharedMemory] = None
+        self.graphs: Optional[Dict[int, torch.cuda.CUDAGraph]] = None
+        self.graph_vars: Optional[Dict[str, torch.Tensor]] = None
+
         # Initialize distributed communication
         if self.world_size > 1:
             dist.init_process_group('nccl',
@@ -118,9 +128,9 @@ class ModelRunner:
         if self.world_size > 1:
             if rank == 0:
                 # Main process: create shared memory
-                self.share_memory: SharedMemory = SharedMemory(name='minivllm',
-                                                               create=True,
-                                                               size=2**20)
+                self.share_memory = SharedMemory(name='minivllm',
+                                                 create=True,
+                                                 size=2**20)
                 dist.barrier()
             else:
                 # Worker process: wait for main process, then enter
