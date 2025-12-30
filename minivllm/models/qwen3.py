@@ -9,7 +9,7 @@ from typing import Optional, Tuple
 import torch
 import torch.distributed as dist
 from torch import nn
-from transformers.models.qwen3 import Qwen3Config
+from transformers import Qwen3Config
 
 from minivllm.models.layers import (Attention, MergedColumnParallelLinear,
                                     ParallelLMHead, QKVParallelLinear, RMSNorm,

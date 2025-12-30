@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 # Optional imports for high-performance attention
 try:
     import triton
-    import triton.language as tl
+    import triton.language as tritonlang
     _TRITON_AVAILABLE = True
 except ImportError:
     _TRITON_AVAILABLE = False
@@ -54,24 +54,24 @@ if _TRITON_AVAILABLE:
         k_cache_ptr,
         v_cache_ptr,
         slot_mapping_ptr,
-        D: tl.constexpr,
+        D: tritonlang.constexpr,
     ):
         """Triton kernel for storing key-value pairs to cache.
 
         This kernel efficiently writes K/V tensors to their cache locations
         based on slot mapping, enabling fast KV-cache updates during inference.
         """
-        idx = tl.program_id(0)
-        slot = tl.load(slot_mapping_ptr + idx)
+        idx = tritonlang.program_id(0)
+        slot = tritonlang.load(slot_mapping_ptr + idx)
         if slot == -1:
             return
-        key_offsets = idx * key_stride + tl.arange(0, D)
-        value_offsets = idx * value_stride + tl.arange(0, D)
-        key = tl.load(key_ptr + key_offsets)
-        value = tl.load(value_ptr + value_offsets)
-        cache_offsets = slot * D + tl.arange(0, D)
-        tl.store(k_cache_ptr + cache_offsets, key)
-        tl.store(v_cache_ptr + cache_offsets, value)
+        key_offsets = idx * key_stride + tritonlang.arange(0, D)
+        value_offsets = idx * value_stride + tritonlang.arange(0, D)
+        key = tritonlang.load(key_ptr + key_offsets)
+        value = tritonlang.load(value_ptr + value_offsets)
+        cache_offsets = slot * D + tritonlang.arange(0, D)
+        tritonlang.store(k_cache_ptr + cache_offsets, key)
+        tritonlang.store(v_cache_ptr + cache_offsets, value)
 else:
     # Fallback implementation when Triton is not available
     def store_kvcache_kernel(*args, **kwargs):
@@ -106,14 +106,16 @@ def store_kvcache(
     Raises:
         AssertionError: If tensor strides or shapes don't match expected patterns
     """
-    N, num_heads, head_dim = key.shape
-    D = num_heads * head_dim
+    batch_size, num_heads, head_dim = key.shape
+    hidden_size = num_heads * head_dim
     assert key.stride(-1) == 1 and value.stride(-1) == 1
     assert key.stride(1) == head_dim and value.stride(1) == head_dim
-    assert k_cache.stride(1) == D and v_cache.stride(1) == D
-    assert slot_mapping.numel() == N
-    store_kvcache_kernel[(N, )](key, key.stride(0), value, value.stride(0),
-                                k_cache, v_cache, slot_mapping, D)
+    assert k_cache.stride(1) == hidden_size and v_cache.stride(
+        1) == hidden_size
+    assert slot_mapping.numel() == batch_size
+    store_kvcache_kernel[(batch_size, )](key, key.stride(0), value,
+                                         value.stride(0), k_cache, v_cache,
+                                         slot_mapping, hidden_size)
 
 
 class Attention(nn.Module):
@@ -203,7 +205,7 @@ class Attention(nn.Module):
             if context.block_tables is not None:  # prefix cache
                 k, v = k_cache, v_cache
 
-            o: torch.Tensor = flash_attn_varlen_func(
+            attn_out: torch.Tensor = flash_attn_varlen_func(
                 q,
                 k,
                 v,
@@ -217,7 +219,7 @@ class Attention(nn.Module):
             )
         else:
             # Decode phase: generate single token using cached K/V
-            o = flash_attn_with_kvcache(
+            attn_out = flash_attn_with_kvcache(
                 q.unsqueeze(1),
                 k_cache,
                 v_cache,
@@ -226,4 +228,4 @@ class Attention(nn.Module):
                 softmax_scale=self.scale,
                 causal=True,
             )
-        return o
+        return attn_out

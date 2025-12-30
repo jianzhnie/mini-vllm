@@ -61,6 +61,7 @@ class RMSNorm(nn.Module):
         self.eps: float = float(eps)
         self.weight: nn.Parameter = nn.Parameter(torch.ones(hidden_size))
 
+    @torch.compile
     def rms_forward(self, x: torch.Tensor) -> torch.Tensor:
         """Apply RMS normalization without residual.
 
@@ -84,6 +85,7 @@ class RMSNorm(nn.Module):
         x = x.to(orig_dtype).mul_(self.weight)
         return x
 
+    @torch.compile
     def add_rms_forward(
             self, x: torch.Tensor,
             residual: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
