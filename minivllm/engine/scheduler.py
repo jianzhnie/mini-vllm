@@ -60,13 +60,13 @@ class Scheduler:
         """
         return not self.waiting and not self.running
 
-    def add(self, seq: Sequence) -> None:
+    def add(self, sequence: Sequence) -> None:
         """Add a new sequence to the waiting queue.
 
         Args:
-            seq: Sequence to add for processing.
+            sequence: Sequence to add for processing.
         """
-        self.waiting.append(seq)
+        self.waiting.append(sequence)
 
     def schedule(self) -> Tuple[List[Sequence], bool]:
         """Schedule sequences for the current inference step.
@@ -98,26 +98,27 @@ class Scheduler:
         # Phase 1: Prefill phase for waiting sequences
         # Process new sequences with their full prompt to compute initial KV cache
         while self.waiting and num_seqs < self.max_num_seqs:
-            seq: Sequence = self.waiting[0]
+            sequence: Sequence = self.waiting[0]
 
             # Check if sequence fits in current batch constraints
             # - Total token limit (including cached tokens)
             # - Available KV cache blocks
-            if (num_batched_tokens + len(seq) > self.max_num_batched_tokens
-                    or not self.block_manager.can_allocate(seq)):
+            if (num_batched_tokens + len(sequence) >
+                    self.max_num_batched_tokens
+                    or not self.block_manager.can_allocate(sequence)):
                 break
 
             num_seqs += 1
             # Allocate KV cache blocks for this sequence
-            self.block_manager.allocate(seq)
+            self.block_manager.allocate(sequence)
             # Only count uncached tokens for batch size limit
-            num_batched_tokens += len(seq) - seq.num_cached_tokens
-            seq.status = SequenceStatus.RUNNING
+            num_batched_tokens += len(sequence) - sequence.num_cached_tokens
+            sequence.status = SequenceStatus.RUNNING
 
             # Move from waiting to running queue
             self.waiting.popleft()
-            self.running.append(seq)
-            scheduled_seqs.append(seq)
+            self.running.append(sequence)
+            scheduled_seqs.append(sequence)
 
         # Return if prefill sequences were scheduled
         if scheduled_seqs:
@@ -126,11 +127,11 @@ class Scheduler:
         # Phase 2: Decode phase for running sequences
         # Generate one token per sequence while managing cache constraints
         while self.running and num_seqs < self.max_num_seqs:
-            seq: Sequence = self.running.popleft()
+            sequence: Sequence = self.running.popleft()
 
             # Ensure space for appending next token during decode
             # Handle cache pressure by preempting sequences when necessary
-            while not self.block_manager.can_append(seq):
+            while not self.block_manager.can_append(sequence):
                 if self.running:
                     # Preempt another sequence to make space for current one
                     # This maintains fairness by preempting the most recently scheduled
@@ -139,14 +140,14 @@ class Scheduler:
                 else:
                     # No other sequences available: preempt current sequence
                     # It will be rescheduled when cache space becomes available
-                    self.preempt(seq)
+                    self.preempt(sequence)
                     break
             else:
                 # Sufficient cache space: prepare sequence for decode
                 num_seqs += 1
                 # May allocate new block if we've crossed a block boundary
-                self.block_manager.may_append(seq)
-                scheduled_seqs.append(seq)
+                self.block_manager.may_append(sequence)
+                scheduled_seqs.append(sequence)
 
         # Safety check: ensure we scheduled something
         if not scheduled_seqs:
@@ -160,20 +161,21 @@ class Scheduler:
 
         return scheduled_seqs, False
 
-    def preempt(self, seq: Sequence) -> None:
+    def preempt(self, sequence: Sequence) -> None:
         """Preempt a sequence due to cache memory constraints.
 
         Preempted sequences are returned to the waiting queue and will
         be re-executed from the cached point when cache space is available.
 
         Args:
-            seq: Sequence to preempt.
+            sequence: Sequence to preempt.
         """
-        seq.status = SequenceStatus.WAITING
-        self.block_manager.deallocate(seq)
-        self.waiting.appendleft(seq)
+        sequence.status = SequenceStatus.WAITING
+        self.block_manager.deallocate(sequence)
+        self.waiting.appendleft(sequence)
 
-    def postprocess(self, seqs: List[Sequence], token_ids: List[int]) -> None:
+    def postprocess(self, sequences: List[Sequence],
+                    token_ids: List[int]) -> None:
         """Update sequences with newly generated tokens and handle completion.
 
         This method:
@@ -183,19 +185,19 @@ class Scheduler:
         4. Removes finished sequences from running queue
 
         Args:
-            seqs: Sequences that were just processed.
+            sequences: Sequences that were just processed.
             token_ids: Newly generated token IDs for each sequence.
         """
-        for seq, token_id in zip(seqs, token_ids):
+        for sequence, token_id in zip(sequences, token_ids):
             # Append new token to sequence
-            seq.append_token(token_id)
+            sequence.append_token(token_id)
 
             # Check if sequence is finished
-            is_eos: bool = (token_id == self.eos) and not seq.ignore_eos
-            is_max_len: bool = seq.num_completion_tokens >= seq.max_tokens
+            is_eos: bool = (token_id == self.eos) and not sequence.ignore_eos
+            is_max_len: bool = sequence.num_completion_tokens >= sequence.max_tokens
 
             if is_eos or is_max_len:
                 # Mark as finished and free resources
-                seq.status = SequenceStatus.FINISHED
-                self.block_manager.deallocate(seq)
-                self.running.remove(seq)
+                sequence.status = SequenceStatus.FINISHED
+                self.block_manager.deallocate(sequence)
+                self.running.remove(sequence)

@@ -351,8 +351,8 @@ class ModelRunner:
         """
         input_ids: List[int] = []
         positions: List[int] = []
-        cu_seqlens_q: List[int] = [0]
-        cu_seqlens_k: List[int] = [0]
+        cum_seqlens_q: List[int] = [0]
+        cum_seqlens_k: List[int] = [0]
         max_seqlen_q: int = 0
         max_seqlen_k: int = 0
         slot_mapping: List[int] = []
@@ -364,8 +364,8 @@ class ModelRunner:
             positions.extend(list(range(seq.num_cached_tokens, seqlen)))
             seqlen_q = seqlen - seq.num_cached_tokens
             seqlen_k = seqlen
-            cu_seqlens_q.append(cu_seqlens_q[-1] + seqlen_q)
-            cu_seqlens_k.append(cu_seqlens_k[-1] + seqlen_k)
+            cum_seqlens_q.append(cum_seqlens_q[-1] + seqlen_q)
+            cum_seqlens_k.append(cum_seqlens_k[-1] + seqlen_k)
             max_seqlen_q = max(seqlen_q, max_seqlen_q)
             max_seqlen_k = max(seqlen_k, max_seqlen_k)
             if not seq.block_table:  # warmup
@@ -377,27 +377,27 @@ class ModelRunner:
                 else:
                     end = start + seq.last_block_num_tokens
                 slot_mapping.extend(list(range(start, end)))
-        if cu_seqlens_k[-1] > cu_seqlens_q[-1]:  # prefix cache
+        if cum_seqlens_k[-1] > cum_seqlens_q[-1]:  # prefix cache
             block_tables = self.prepare_block_tables(seqs)
         input_ids = torch.tensor(input_ids, dtype=torch.int64,
                                  pin_memory=True).cuda(non_blocking=True)
         positions = torch.tensor(positions, dtype=torch.int64,
                                  pin_memory=True).cuda(non_blocking=True)
-        cu_seqlens_q = torch.tensor(cu_seqlens_q,
-                                    dtype=torch.int32,
-                                    pin_memory=True).cuda(non_blocking=True)
-        cu_seqlens_k = torch.tensor(cu_seqlens_k,
-                                    dtype=torch.int32,
-                                    pin_memory=True).cuda(non_blocking=True)
+        cum_seqlens_q = torch.tensor(cum_seqlens_q,
+                                     dtype=torch.int32,
+                                     pin_memory=True).cuda(non_blocking=True)
+        cum_seqlens_k = torch.tensor(cum_seqlens_k,
+                                     dtype=torch.int32,
+                                     pin_memory=True).cuda(non_blocking=True)
         slot_mapping = torch.tensor(slot_mapping,
                                     dtype=torch.int32,
                                     pin_memory=True).cuda(non_blocking=True)
         set_context(  # noqa: F821
             True,  # noqa: F821
-            cu_seqlens_q,
-            cu_seqlens_k,
             max_seqlen_q,
             max_seqlen_k,
+            cum_seqlens_q,
+            cum_seqlens_k,
             slot_mapping,
             None,
             block_tables)
@@ -593,23 +593,28 @@ class ModelRunner:
         """
         config: Config = self.config
         hf_config: Any = config.hf_config
-        max_bs: int = min(self.config.max_num_seqs, 512)
+        max_block_size: int = min(self.config.max_num_seqs, 512)
         max_num_blocks: int = ((config.max_model_len + self.block_size - 1) //
                                self.block_size)
 
         # Pre-allocate tensors for graphs
-        input_ids: torch.Tensor = torch.zeros(max_bs, dtype=torch.int64)
-        positions: torch.Tensor = torch.zeros(max_bs, dtype=torch.int64)
-        slot_mapping: torch.Tensor = torch.zeros(max_bs, dtype=torch.int32)
-        context_lens: torch.Tensor = torch.zeros(max_bs, dtype=torch.int32)
-        block_tables: torch.Tensor = torch.zeros(max_bs,
+        input_ids: torch.Tensor = torch.zeros(max_block_size,
+                                              dtype=torch.int64)
+        positions: torch.Tensor = torch.zeros(max_block_size,
+                                              dtype=torch.int64)
+        slot_mapping: torch.Tensor = torch.zeros(max_block_size,
+                                                 dtype=torch.int32)
+        context_lens: torch.Tensor = torch.zeros(max_block_size,
+                                                 dtype=torch.int32)
+        block_tables: torch.Tensor = torch.zeros(max_block_size,
                                                  max_num_blocks,
                                                  dtype=torch.int32)
-        outputs: torch.Tensor = torch.zeros(max_bs, hf_config.hidden_size)
+        outputs: torch.Tensor = torch.zeros(max_block_size,
+                                            hf_config.hidden_size)
 
         # Batch sizes to capture graphs for
         self.graph_bs: List[int] = [1, 2, 4, 8] + list(
-            range(16, max_bs + 1, 16))
+            range(16, max_block_size + 1, 16))
         self.graphs: Dict[int, torch.cuda.CUDAGraph] = {}
         self.graph_pool: Optional[torch.cuda.graph_pool_handle] = None
 

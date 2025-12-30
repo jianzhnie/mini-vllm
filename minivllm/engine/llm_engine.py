@@ -142,8 +142,8 @@ class LLMEngine:
             prompt_tokens = prompt
 
         # Create sequence and add to scheduler
-        seq: Sequence = Sequence(prompt_tokens, sampling_params)
-        self.scheduler.add(seq)
+        sequence: Sequence = Sequence(prompt_tokens, sampling_params)
+        self.scheduler.add(sequence)
 
     def step(self) -> Tuple[List[Tuple[int, List[int]]], int]:
         """Execute one inference step.
@@ -165,8 +165,8 @@ class LLMEngine:
         between prefill (compute-bound) and decode (memory-bound) phases.
         """
         # Get sequences to process this step
-        sequences: List[Sequence]
-        is_prefill: bool
+        sequences: List[Sequence]  # List of sequences to process
+        is_prefill: bool  # Whether this is prefill or decode
         sequences, is_prefill = self.scheduler.schedule()
 
         # Run model inference

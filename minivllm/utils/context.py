@@ -20,12 +20,12 @@ class Context:
 
     Attributes:
         is_prefill: Whether currently in prefill (True) or decode (False) phase.
-        cu_seqlens_q: Cumulative sequence lengths for queries in prefill.
-            Shape: [batch_size + 1]. None for decode phase.
-        cu_seqlens_k: Cumulative sequence lengths for keys in prefill.
-            Shape: [batch_size + 1]. None for decode phase.
         max_seqlen_q: Maximum query sequence length in current batch.
         max_seqlen_k: Maximum key sequence length in current batch.
+        cum_seqlens_q: Cumulative sequence lengths for queries in prefill.
+            Shape: [batch_size + 1]. None for decode phase.
+        cum_seqlens_k: Cumulative sequence lengths for keys in prefill.
+            Shape: [batch_size + 1]. None for decode phase.
         slot_mapping: Mapping from token positions to KV cache slots.
             Shape: [num_tokens] for prefill or
             [batch_size] for decode.
@@ -36,10 +36,10 @@ class Context:
     """
 
     is_prefill: bool = False
-    cu_seqlens_q: Optional[torch.Tensor] = None
-    cu_seqlens_k: Optional[torch.Tensor] = None
     max_seqlen_q: int = 0
     max_seqlen_k: int = 0
+    cum_seqlens_q: Optional[torch.Tensor] = None
+    cum_seqlens_k: Optional[torch.Tensor] = None
     slot_mapping: Optional[torch.Tensor] = None
     context_lens: Optional[torch.Tensor] = None
     block_tables: Optional[torch.Tensor] = None
@@ -60,10 +60,10 @@ def get_context() -> Context:
 
 def set_context(
     is_prefill: bool,
-    cu_seqlens_q: Optional[torch.Tensor] = None,
-    cu_seqlens_k: Optional[torch.Tensor] = None,
     max_seqlen_q: int = 0,
     max_seqlen_k: int = 0,
+    cum_seqlens_q: Optional[torch.Tensor] = None,
+    cum_seqlens_k: Optional[torch.Tensor] = None,
     slot_mapping: Optional[torch.Tensor] = None,
     context_lens: Optional[torch.Tensor] = None,
     block_tables: Optional[torch.Tensor] = None,
@@ -75,10 +75,10 @@ def set_context(
 
     Args:
         is_prefill: Whether in prefill or decode phase.
-        cu_seqlens_q: Cumulative query sequence lengths.
-        cu_seqlens_k: Cumulative key sequence lengths.
         max_seqlen_q: Maximum query sequence length.
         max_seqlen_k: Maximum key sequence length.
+        cum_seqlens_q: Cumulative query sequence lengths.
+        cum_seqlens_k: Cumulative key sequence lengths.
         slot_mapping: KV cache slot mapping.
         context_lens: Context lengths for each sequence.
         block_tables: Block tables for KV cache.
@@ -90,10 +90,10 @@ def set_context(
     global _CONTEXT
     _CONTEXT = Context(
         is_prefill,
-        cu_seqlens_q,
-        cu_seqlens_k,
         max_seqlen_q,
         max_seqlen_k,
+        cum_seqlens_q,
+        cum_seqlens_k,
         slot_mapping,
         context_lens,
         block_tables,
