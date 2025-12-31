@@ -7,7 +7,7 @@ pipeline including model loading, scheduling, and token generation.
 import atexit
 from dataclasses import fields
 from time import perf_counter
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch.multiprocessing as mp
 from tqdm.auto import tqdm
@@ -165,13 +165,18 @@ class LLMEngine:
         between prefill (compute-bound) and decode (memory-bound) phases.
         """
         # Get sequences to process this step
-        sequences: List[Sequence]  # List of sequences to process
-        is_prefill: bool  # Whether this is prefill or decode
+        sequences: List[Sequence]
+        is_prefill: bool
         sequences, is_prefill = self.scheduler.schedule()
 
-        # Run model inference
-        token_ids: List[int] = self.model_runner.call('run', sequences,
-                                                      is_prefill)
+        # Run model inference (may return None on worker processes)
+        token_ids_opt: Optional[List[int]] = self.model_runner.call(
+            'run', sequences, is_prefill)
+
+        if token_ids_opt is None:
+            raise RuntimeError('ModelRunner returned no tokens on rank 0')
+
+        token_ids: List[int] = token_ids_opt
 
         # Update sequences with new tokens
         self.scheduler.postprocess(sequences, token_ids)
@@ -234,7 +239,7 @@ class LLMEngine:
             >>> print(results[0]['text'])
         """
         # Setup progress bar if requested
-        pbar: Optional[tqdm] = None
+        pbar: Optional[Any] = None
         if use_tqdm:
             pbar = tqdm(total=len(prompts),
                         desc='Generating',

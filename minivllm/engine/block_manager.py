@@ -8,6 +8,8 @@ The BlockManager uses a hash-based prefix cache to enable memory sharing
 between sequences with common token prefixes, reducing total memory usage.
 """
 
+from __future__ import annotations
+
 from collections import deque
 from typing import Deque, Dict, List, Set
 

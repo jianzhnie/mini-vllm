@@ -5,6 +5,8 @@ for prefill and decode phases, managing the KV cache blocks through the
 BlockManager, and handling sequence preemption when needed.
 """
 
+from __future__ import annotations
+
 from collections import deque
 from typing import Deque, List, Tuple
 

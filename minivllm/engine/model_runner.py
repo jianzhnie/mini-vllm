@@ -17,7 +17,8 @@ from minivllm.config import Config
 from minivllm.engine.sequence import Sequence
 from minivllm.models.layers import Sampler
 from minivllm.models.qwen3 import Qwen3ForCausalLM
-from minivllm.utils.context import get_context, reset_context, set_context
+from minivllm.utils.context import (Context, get_context, reset_context,
+                                    set_context)
 
 
 class ModelRunner:
@@ -392,15 +393,16 @@ class ModelRunner:
         slot_mapping = torch.tensor(slot_mapping,
                                     dtype=torch.int32,
                                     pin_memory=True).cuda(non_blocking=True)
-        set_context(  # noqa: F821
-            True,  # noqa: F821
+        set_context(
+            True,
             max_seqlen_q,
             max_seqlen_k,
             cum_seqlens_q,
             cum_seqlens_k,
             slot_mapping,
             None,
-            block_tables)
+            block_tables,
+        )
         return input_ids, positions
 
     def prepare_decode(
@@ -495,7 +497,7 @@ class ModelRunner:
         else:
             # Use CUDA graph replay for decode phase
             bs: int = input_ids.size(0)
-            context: Any = get_context()
+            context: Context = get_context()
             # Find smallest graph batch size >= current batch size
             # This ensures we can reuse the captured CUDA graph for efficient decode
             graph_bs_idx: int = next(

@@ -8,7 +8,7 @@ cache management, and state serialization.
 from copy import copy
 from enum import Enum, auto
 from itertools import count
-from typing import Any, Iterator, List, Optional, Tuple
+from typing import Iterator, List, Optional, Tuple, Union
 
 from minivllm.sampling_params import SamplingParams
 
@@ -215,7 +215,8 @@ class Sequence:
         self.last_token = token_id
         self.num_tokens += 1
 
-    def __getstate__(self) -> Tuple[int, int, int, List[int], Any]:
+    def __getstate__(
+            self) -> Tuple[int, int, int, List[int], Union[List[int], int]]:
         """Prepare sequence state for serialization/pickling.
 
         This method optimizes serialization by only storing complete
@@ -240,8 +241,9 @@ class Sequence:
             if self.num_completion_tokens == 0 else self.last_token,
         )
 
-    def __setstate__(self, state: Tuple[int, int, int, List[int],
-                                        Any]) -> None:
+    def __setstate__(
+            self, state: Tuple[int, int, int, List[int], Union[List[int],
+                                                               int]]) -> None:
         """Restore sequence state from serialization/unpickling.
 
         This method reconstructs a sequence from its serialized state,
