@@ -262,9 +262,20 @@ class Sequence:
 
         if self.num_completion_tokens == 0:
             # If no completion tokens, restore full token list
-            self.token_ids = list(state[-1])
+            token_data: Union[List[int], int] = state[-1]
+            if isinstance(token_data, list):
+                self.token_ids = token_data
+            else:
+                # This should not happen for sequences with no completion tokens
+                self.token_ids = [token_data]
             self.last_token = self.token_ids[-1]
         else:
             # If has completions, only last token was serialized
-            self.token_ids = [0] * self.num_prompt_tokens
-            self.last_token = int(state[-1])
+            last_token_data: Union[List[int], int] = state[-1]
+            if isinstance(last_token_data, int):
+                self.token_ids = [0] * self.num_prompt_tokens
+                self.last_token = last_token_data
+            else:
+                # This should not happen for sequences with completion tokens
+                self.token_ids = last_token_data
+                self.last_token = self.token_ids[-1]
