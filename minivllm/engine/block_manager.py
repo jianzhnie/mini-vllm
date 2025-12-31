@@ -219,45 +219,54 @@ class BlockManager:
                 f'Not enough free blocks: need {sequence.num_blocks}, '
                 f'have {len(self.free_block_ids)}')
 
-        hash_prev: int = -1
-        cache_miss: bool = False
+        hash_prev: int = -1  # Hash of previous block for chained hashing
+        cache_miss: bool = False  # Flag to track if we've encountered a cache miss
 
+        # Iterate through each logical block in the sequence
         for i in range(sequence.num_blocks):
+            # Get token IDs for this block
             token_ids: List[int] = sequence.block(i)
 
             # Compute hash only for full blocks (others can't be cached)
             if len(token_ids) == self.block_size:
+                # Compute chained hash: combines current block tokens with previous block's hash
+                # This ensures hash uniquely identifies the entire prefix up to this block
                 hash_prev = self.compute_hash(token_ids, hash_prev)
             else:
-                hash_prev = -1
+                hash_prev = -1  # Partial blocks can't be cached
 
             # Look up in prefix cache
             block_id: int = self.hash_to_block_id.get(hash_prev, -1)
 
-            # Validate cache hit (hash match AND token ID match)
+            # Validate cache hit: hash match AND token ID match
+            # This double-check ensures we don't have hash collisions
             if block_id == -1 or self.blocks[block_id].token_ids != token_ids:
-                cache_miss = True
+                cache_miss = True  # No match found, need to allocate new block
 
             if cache_miss:
-                # Cache miss: allocate a new block
+                # Cache miss: allocate a new block from free pool
                 block_id = self.free_block_ids[0]
                 block: Block = self._allocate_block(block_id)
             else:
                 # Cache hit: reuse existing block
-                sequence.num_cached_tokens += self.block_size
+                sequence.num_cached_tokens += self.block_size  # Track cached tokens
 
                 if block_id in self.used_block_ids:
-                    # Block in use: increment ref count
+                    # Block is already in use by another sequence
                     block = self.blocks[block_id]
-                    block.ref_count += 1
+                    block.ref_count += 1  # Increment reference count
                 else:
-                    # Block not in use: allocate it
+                    # Block exists in cache but not currently allocated
                     block = self._allocate_block(block_id)
 
-            # Update block with token data and register in hash table
+            # Update block with token data and register in hash table (for full blocks)
             if hash_prev != -1:
-                block.update(hash_prev, token_ids)
-                self.hash_to_block_id[hash_prev] = block_id
+                block.update(hash_prev,
+                             token_ids)  # Store hash and tokens in block
+                self.hash_to_block_id[
+                    hash_prev] = block_id  # Register in cache mapping
+
+            # Add physical block ID to sequence's block table
             sequence.block_table.append(block_id)
 
     def deallocate(self, sequence: Sequence) -> None:
