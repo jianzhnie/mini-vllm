@@ -199,33 +199,147 @@ class Attention(nn.Module):
         if k_cache.numel() and v_cache.numel():
             store_kvcache(k, v, k_cache, v_cache, context.slot_mapping)
 
-        if context.is_prefill:
-            # Prefill phase: process entire prompt sequence
-            # In prefill, if a prefix cache exists we use cached KV tensors
-            if context.block_tables is not None:  # prefix cache
-                k, v = k_cache, v_cache
+        if _FLASH_ATTN_AVAILABLE:
+            if context.is_prefill:
+                # Prefill phase: process entire prompt sequence
+                # In prefill, if a prefix cache exists we use cached KV tensors
+                if context.block_tables is not None:  # prefix cache
+                    k, v = k_cache, v_cache
 
-            attn_out: torch.Tensor = flash_attn_varlen_func(
-                q,
-                k,
-                v,
-                max_seqlen_q=context.max_seqlen_q,
-                cu_seqlens_q=context.cu_seqlens_q,
-                max_seqlen_k=context.max_seqlen_k,
-                cu_seqlens_k=context.cu_seqlens_k,
-                softmax_scale=self.scale,
-                causal=True,
-                block_table=context.block_tables,
-            )
+                attn_out: torch.Tensor = flash_attn_varlen_func(
+                    q,
+                    k,
+                    v,
+                    max_seqlen_q=context.max_seqlen_q,
+                    cu_seqlens_q=context.cum_seqlens_q,
+                    max_seqlen_k=context.max_seqlen_k,
+                    cu_seqlens_k=context.cum_seqlens_k,
+                    softmax_scale=self.scale,
+                    causal=True,
+                    block_table=context.block_tables,
+                )
+            else:
+                # Decode phase: generate single token using cached K/V
+                attn_out = flash_attn_with_kvcache(
+                    q.unsqueeze(1),
+                    k_cache,
+                    v_cache,
+                    cache_seqlens=context.context_lens,
+                    block_table=context.block_tables,
+                    softmax_scale=self.scale,
+                    causal=True,
+                )
         else:
-            # Decode phase: generate single token using cached K/V
-            attn_out = flash_attn_with_kvcache(
-                q.unsqueeze(1),
-                k_cache,
-                v_cache,
-                cache_seqlens=context.context_lens,
-                block_table=context.block_tables,
-                softmax_scale=self.scale,
-                causal=True,
-            )
+            # Fallback to standard attention when FlashAttention is not available
+            # This is less efficient but ensures compatibility
+            if context.is_prefill:
+                # For prefill, we need to reshape tensors for standard attention
+                # This is a simplified implementation that doesn't handle all edge cases
+                # but provides basic functionality when FlashAttention is unavailable
+                batch_size = context.cum_seqlens_q.size(0) - 1
+                q_reshaped = q.view(batch_size, -1, self.num_heads,
+                                    self.head_dim)
+                k_reshaped = k.view(batch_size, -1, self.num_kv_heads,
+                                    self.head_dim)
+                v_reshaped = v.view(batch_size, -1, self.num_kv_heads,
+                                    self.head_dim)
+
+                # Repeat k/v heads to match q heads if needed (for MQA/GQA)
+                if self.num_kv_heads != self.num_heads:
+                    k_reshaped = k_reshaped.repeat_interleave(
+                        self.num_heads // self.num_kv_heads, dim=2)
+                    v_reshaped = v_reshaped.repeat_interleave(
+                        self.num_heads // self.num_kv_heads, dim=2)
+
+                # Compute attention scores
+                attn_weights = torch.matmul(
+                    q_reshaped, k_reshaped.transpose(-2, -1)) * self.scale
+
+                # Apply causal mask
+                seq_len = q_reshaped.size(1)
+                mask = torch.triu(torch.ones(seq_len,
+                                             seq_len,
+                                             device=attn_weights.device),
+                                  diagonal=1).bool()
+                attn_weights.masked_fill_(mask, float('-inf'))
+
+                # Softmax and attention output
+                attn_probs = torch.softmax(attn_weights, dim=-1)
+                attn_out = torch.matmul(attn_probs, v_reshaped)
+
+                # Extract last token output for each sequence
+                attn_out = attn_out[:, -1, :, :].contiguous().view(
+                    -1, self.num_heads, self.head_dim)
+            else:
+                # For decode, we use cached k/v
+                batch_size = q.size(0)
+
+                # Get cached k/v from previous steps
+                cached_k = []
+                cached_v = []
+                for i in range(batch_size):
+                    seq_len = context.context_lens[i]
+                    block_table = context.block_tables[i]
+                    # Collect cached k/v blocks for this sequence
+                    k_blocks = [
+                        k_cache[:, block_idx] for block_idx in block_table
+                        if block_idx != -1
+                    ]
+                    v_blocks = [
+                        v_cache[:, block_idx] for block_idx in block_table
+                        if block_idx != -1
+                    ]
+
+                    if k_blocks:
+                        # Concatenate blocks and truncate to actual sequence length
+                        cached_k_seq = torch.cat(k_blocks, dim=0)[:seq_len]
+                        cached_v_seq = torch.cat(v_blocks, dim=0)[:seq_len]
+                    else:
+                        # No cached k/v yet
+                        cached_k_seq = k[i].unsqueeze(0)
+                        cached_v_seq = v[i].unsqueeze(0)
+
+                    cached_k.append(cached_k_seq)
+                    cached_v.append(cached_v_seq)
+
+                # Pad to maximum sequence length
+                max_len = max(k_seq.size(0) for k_seq in cached_k)
+                cached_k_padded = torch.zeros(batch_size,
+                                              max_len,
+                                              self.num_kv_heads,
+                                              self.head_dim,
+                                              device=q.device)
+                cached_v_padded = torch.zeros(batch_size,
+                                              max_len,
+                                              self.num_kv_heads,
+                                              self.head_dim,
+                                              device=q.device)
+
+                for i, (k_seq, v_seq) in enumerate(zip(cached_k, cached_v)):
+                    cached_k_padded[i, :k_seq.size(0)] = k_seq
+                    cached_v_padded[i, :v_seq.size(0)] = v_seq
+
+                # Expand q to match k/v dimensions
+                q_expanded = q.unsqueeze(1)  # [batch, 1, num_heads, head_dim]
+
+                # Repeat k/v heads to match q heads if needed (for MQA/GQA)
+                if self.num_kv_heads != self.num_heads:
+                    cached_k_padded = cached_k_padded.repeat_interleave(
+                        self.num_heads // self.num_kv_heads, dim=2)
+                    cached_v_padded = cached_v_padded.repeat_interleave(
+                        self.num_heads // self.num_kv_heads, dim=2)
+
+                # Compute attention scores
+                attn_weights = torch.matmul(
+                    q_expanded, cached_k_padded.transpose(-2, -1)) * self.scale
+
+                # Apply causal mask (not needed for decode with single token)
+
+                # Softmax and attention output
+                attn_probs = torch.softmax(attn_weights, dim=-1)
+                attn_out = torch.matmul(attn_probs, cached_v_padded)
+
+                # Remove sequence dimension
+                attn_out = attn_out.squeeze(1)
+
         return attn_out
