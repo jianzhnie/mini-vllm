@@ -186,7 +186,7 @@ class ParallelLMHead(VocabParallelEmbedding):
 
         # In prefill mode, only compute logits for the final token of each sequence
         if context.is_prefill:
-            last_indices = context.cu_seqlens_q[1:] - 1
+            last_indices = context.cum_seqlens_q[1:] - 1
             x = x[last_indices].contiguous()
 
         # Compute logits using linear transformation
