@@ -279,25 +279,30 @@ class ModelRunner:
         max_model_len = self.config.max_model_len
         num_seqs = min(max_batched_tokens // max_model_len,
                        self.config.max_num_seqs)
-        seqs = [Sequence([0] * max_model_len) for _ in range(num_seqs)]
+        seqs: List[Sequence] = [
+            Sequence([0] * max_model_len) for _ in range(num_seqs)
+        ]
         self.run(seqs, True)
         torch.cuda.empty_cache()
 
     def allocate_kv_cache(self) -> None:
         """Allocate KV cache memory based on GPU memory availability."""
-        config = self.config
-        hf_config = config.hf_config
+        config: Config = self.config
+        hf_config: Any = config.hf_config
+        free: int
+        total: int
         free, total = torch.cuda.mem_get_info()
-        used = total - free
-        peak = torch.cuda.memory_stats()['allocated_bytes.all.peak']
-        current = (torch.cuda.memory_stats()['allocated_bytes.all.current'])
-        num_kv_heads = (hf_config.num_key_value_heads // self.world_size)
-        head_dim = getattr(
+        used: int = total - free
+        peak: int = torch.cuda.memory_stats()['allocated_bytes.all.peak']
+        current: int = (
+            torch.cuda.memory_stats()['allocated_bytes.all.current'])
+        num_kv_heads: int = (hf_config.num_key_value_heads // self.world_size)
+        head_dim: int = getattr(
             hf_config, 'head_dim',
             hf_config.hidden_size // hf_config.num_attention_heads)
-        block_bytes = (2 * hf_config.num_hidden_layers * self.block_size *
-                       num_kv_heads * head_dim *
-                       hf_config.torch_dtype.itemsize)
+        block_bytes: int = (2 * hf_config.num_hidden_layers * self.block_size *
+                            num_kv_heads * head_dim *
+                            hf_config.torch_dtype.itemsize)
         config.num_kvcache_blocks = int(
             (total * config.gpu_memory_utilization - used - peak + current) //
             block_bytes)
@@ -305,7 +310,7 @@ class ModelRunner:
         self.kv_cache = torch.empty(2, hf_config.num_hidden_layers,
                                     config.num_kvcache_blocks, self.block_size,
                                     num_kv_heads, head_dim)
-        layer_id = 0
+        layer_id: int = 0
         for module in self.model.modules():
             if hasattr(module, 'k_cache') and hasattr(module, 'v_cache'):
                 module.k_cache = self.kv_cache[0, layer_id]
@@ -490,24 +495,56 @@ class ModelRunner:
 
         Returns:
             Logits tensor of shape (batch_size, vocab_size).
+
+        Raises:
+            RuntimeError: If CUDA graph inference fails due to missing graph attributes.
         """
         if is_prefill or self.enforce_eager or input_ids.size(0) > 512:
             # Use eager execution for prefill, eager mode, or large batches
+            # Prefill: Long sequences, better to use eager execution
+            # Eager mode: User has requested no graph optimization
+            # Large batches: Graphs are cached for specific batch sizes, large batches
+            # may not match any cached graph size efficiently
             return self.model.compute_logits(self.model(input_ids, positions))
         else:
-            # Use CUDA graph replay for decode phase
+            # Use CUDA graph replay for decode phase (small batches)
+            # CUDA graphs provide significant speedups for small, repeated workloads
+            # like the decode phase where we generate one token at a time
             bs: int = input_ids.size(0)
             context: Context = get_context()
+
+            # Validate CUDA graph attributes are initialized
+            if not hasattr(self, 'graphs') or self.graphs is None:
+                raise RuntimeError(
+                    'CUDA graphs not initialized. This may happen if enforce_eager=True '
+                    'or if graph capture failed during initialization.')
+
+            if not hasattr(self, 'graph_bs') or self.graph_bs is None:
+                raise RuntimeError(
+                    'CUDA graph batch sizes not initialized. This may happen if enforce_eager=True '
+                    'or if graph capture failed during initialization.')
+
+            if not hasattr(self, 'graph_vars') or self.graph_vars is None:
+                raise RuntimeError(
+                    'CUDA graph variables not initialized. This may happen if enforce_eager=True '
+                    'or if graph capture failed during initialization.')
+
             # Find smallest graph batch size >= current batch size
             # This ensures we can reuse the captured CUDA graph for efficient decode
-            graph_bs_idx: int = next(
-                x for x in self.graph_bs  # type: ignore[attr-defined]
-                if x >= bs)
-            graph: torch.cuda.CUDAGraph = self.graphs[  # type: ignore[attr-defined]
-                graph_bs_idx]
-            graph_vars: Dict[
-                str,
-                torch.Tensor] = self.graph_vars  # type: ignore[attr-defined]
+            try:
+                graph_bs_idx: int = next(x for x in self.graph_bs if x >= bs)
+            except StopIteration:
+                raise RuntimeError(
+                    f'No cached CUDA graph found for batch size {bs}. '
+                    f'Available graph batch sizes: {self.graph_bs}')
+
+            if graph_bs_idx not in self.graphs:
+                raise RuntimeError(
+                    f'CUDA graph not found for batch size {graph_bs_idx}. '
+                    f'Available graph batch sizes: {list(self.graphs.keys())}')
+
+            graph: torch.cuda.CUDAGraph = self.graphs[graph_bs_idx]
+            graph_vars: Dict[str, torch.Tensor] = self.graph_vars
 
             # Update graph variables with current batch data
             # Reset slot mapping and fill with current batch positions
@@ -529,6 +566,7 @@ class ModelRunner:
                     'block_tables'][:bs, :max_blocks] = context.block_tables
 
             # Replay the captured CUDA graph for efficient inference
+            # This avoids the overhead of repeated kernel launches
             graph.replay()
             return self.model.compute_logits(graph_vars['outputs'][:bs])
 
