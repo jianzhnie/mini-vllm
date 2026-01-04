@@ -1,15 +1,24 @@
 """Embedding and LM head utilities with tensor-parallel support.
 
-This module provides vocabulary parallel embedding layers and language modelized for distributed inference heads
-optim. The implementations support tensor parallelism
-by partitioning the vocabulary across multiple devices and aggregating results
-during computation.
+This module provides vocabulary parallel embedding layers and language model
+heads optimized for distributed inference. The implementations support tensor
+parallelism by partitioning the vocabulary across multiple devices and
+aggregating results during computation.
 
 Key features:
 - VocabParallelEmbedding: Distributed token embeddings with automatic sharding
 - ParallelLMHead: Language model head with tensor-parallel logit computation
 - Support for both embedding lookup and logit computation
 - Efficient aggregation of results across tensor-parallel ranks
+
+Performance:
+    Vocabulary parallelism is particularly beneficial for:
+    - Large vocabulary sizes (>50k tokens)
+    - Limited GPU memory per device
+    - Models with tied embeddings
+
+    The overhead of all-reduce/gather operations is typically small
+    compared to the memory savings and compute distribution benefits.
 """
 
 from typing import Optional
@@ -20,6 +29,22 @@ import torch.nn.functional as F
 from torch import nn
 
 from minivllm.utils.context import get_context
+
+
+def get_tensor_parallel_rank() -> int:
+    """Get current tensor-parallel rank (0 if not distributed)."""
+    try:
+        return dist.get_rank() if dist.is_initialized() else 0
+    except Exception:
+        return 0
+
+
+def get_tensor_parallel_world_size() -> int:
+    """Get tensor-parallel world size (1 if not distributed)."""
+    try:
+        return dist.get_world_size() if dist.is_initialized() else 1
+    except Exception:
+        return 1
 
 
 class VocabParallelEmbedding(nn.Module):
@@ -62,15 +87,9 @@ class VocabParallelEmbedding(nn.Module):
     ) -> None:
         super().__init__()
 
-        # Safely get tensor-parallel rank/size. Default to (0, 1) when not
-        # running in distributed mode.
-        try:
-            self.tp_rank: int = dist.get_rank() if dist.is_initialized() else 0
-            self.tp_size: int = dist.get_world_size() if dist.is_initialized(
-            ) else 1
-        except Exception:
-            self.tp_rank = 0
-            self.tp_size = 1
+        # Use common helper functions for TP rank/size
+        self.tp_rank: int = get_tensor_parallel_rank()
+        self.tp_size: int = get_tensor_parallel_world_size()
 
         if num_embeddings % self.tp_size != 0:
             raise ValueError(
