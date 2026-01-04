@@ -122,7 +122,7 @@ class BlockManager:
         block's hash depends on previous blocks' hashes.
 
         Args:
-            token_ids: List of token IDs to hash.
+            token_ids: List of token IDs to hash. Must not be empty.
             prefix: Hash of the previous block (for chained hashing).
                 Default -1 means no prefix.
 
@@ -130,10 +130,16 @@ class BlockManager:
             Integer hash value of the token sequence (including prefix if
             provided).
 
+        Raises:
+            ValueError: If token_ids is empty.
+
         Note:
             The same token_ids with the same prefix will always produce
             the same hash, enabling prefix cache matching.
         """
+        if not token_ids:
+            raise ValueError('token_ids cannot be empty for hash computation')
+
         hash_prev: xxhash.xxh64 = xxhash.xxh64()
         if prefix != -1:
             hash_prev.update(prefix.to_bytes(8, 'little'))
@@ -150,10 +156,18 @@ class BlockManager:
             The allocated Block object.
 
         Raises:
-            AssertionError: If block is already allocated.
+            RuntimeError: If block is already allocated or block_id is invalid.
         """
+        if block_id < 0 or block_id >= len(self.blocks):
+            raise RuntimeError(f'Invalid block_id: {block_id}. '
+                               f'Valid range: [0, {len(self.blocks)})')
+
         block: Block = self.blocks[block_id]
-        assert block.ref_count == 0, f'Block {block_id} already allocated'
+        if block.ref_count != 0:
+            raise RuntimeError(
+                f'Block {block_id} is already allocated with '
+                f'ref_count={block.ref_count}. Cannot allocate.')
+
         block.reset()
         self.free_block_ids.remove(block_id)
         self.used_block_ids.add(block_id)
@@ -166,10 +180,17 @@ class BlockManager:
             block_id: ID of the block to deallocate.
 
         Raises:
-            AssertionError: If block is still in use (ref_count > 0).
+            RuntimeError: If block is still in use (ref_count > 0) or invalid.
         """
-        assert self.blocks[block_id].ref_count == 0, (
-            f'Cannot deallocate block {block_id} with ref_count > 0')
+        if block_id < 0 or block_id >= len(self.blocks):
+            raise RuntimeError(f'Invalid block_id: {block_id}. '
+                               f'Valid range: [0, {len(self.blocks)})')
+
+        block: Block = self.blocks[block_id]
+        if block.ref_count != 0:
+            raise RuntimeError(f'Cannot deallocate block {block_id} with '
+                               f'ref_count={block.ref_count} (must be 0)')
+
         self.used_block_ids.remove(block_id)
         self.free_block_ids.append(block_id)
 
