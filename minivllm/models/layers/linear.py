@@ -30,11 +30,46 @@ def divide(numerator: int, denominator: int) -> int:
     return numerator // denominator
 
 
+def get_tensor_parallel_rank() -> int:
+    """Get the current tensor-parallel rank.
+
+    Returns:
+        The rank of the current process in the tensor-parallel group.
+        Returns 0 if distributed is not initialized.
+    """
+    try:
+        return dist.get_rank() if dist.is_initialized() else 0
+    except Exception:
+        return 0
+
+
+def get_tensor_parallel_world_size() -> int:
+    """Get the tensor-parallel world size.
+
+    Returns:
+        The total number of processes in the tensor-parallel group.
+        Returns 1 if distributed is not initialized.
+    """
+    try:
+        return dist.get_world_size() if dist.is_initialized() else 1
+    except Exception:
+        return 1
+
+
 class LinearBase(nn.Module):
     """Base class for tensor-parallel linear layers.
 
     This class provides common functionality for distributed linear layers,
     including tensor-parallel rank/size detection and weight loading.
+
+    Attributes:
+        tp_rank: Tensor-parallel rank of current process.
+        tp_size: Total number of tensor-parallel processes.
+        tp_dim: Dimension along which to shard (0 for column, 1 for row).
+        input_size: Input dimension of the linear layer.
+        output_size: Output dimension of the linear layer.
+        weight: Weight parameter of the linear layer.
+        bias: Optional bias parameter of the linear layer.
     """
 
     def __init__(
@@ -46,15 +81,9 @@ class LinearBase(nn.Module):
     ) -> None:
         super().__init__()
         self.tp_dim: Optional[int] = tp_dim
-        # Safely get tensor-parallel rank/size. Default to (0, 1) when not
-        # running in distributed mode.
-        try:
-            self.tp_rank: int = dist.get_rank() if dist.is_initialized() else 0
-            self.tp_size: int = dist.get_world_size() if dist.is_initialized(
-            ) else 1
-        except Exception:
-            self.tp_rank = 0
-            self.tp_size = 1
+        # Use common helper functions for TP rank/size
+        self.tp_rank: int = get_tensor_parallel_rank()
+        self.tp_size: int = get_tensor_parallel_world_size()
 
         self.input_size: int = input_size
         self.output_size: int = output_size
@@ -103,7 +132,11 @@ class ReplicatedLinear(LinearBase):
 
 
 class ColumnParallelLinear(LinearBase):
-    """Column-parallel linear layer that shards output columns across ranks."""
+    """Column-parallel linear layer that shards output columns across ranks.
+
+    This layer splits the output dimension across tensor-parallel ranks,
+    allowing larger models to fit in distributed memory.
+    """
 
     def __init__(
         self,
@@ -111,10 +144,7 @@ class ColumnParallelLinear(LinearBase):
         output_size: int,
         bias: bool = False,
     ) -> None:
-        try:
-            tp_size = dist.get_world_size() if dist.is_initialized() else 1
-        except Exception:
-            tp_size = 1
+        tp_size = get_tensor_parallel_world_size()
         super().__init__(input_size, divide(output_size, tp_size), bias, 0)
 
     def weight_loader(self, param: nn.Parameter,
@@ -164,7 +194,8 @@ class QKVParallelLinear(ColumnParallelLinear):
     """Specialized parallel linear layer that packs Q, K, V projections.
 
     The output layout is: [Q(=num_heads), K(=num_kv_heads), V(=num_kv_heads)]
-    spread across TP ranks.
+    spread across TP ranks. This fusion improves performance by reducing
+    the number of kernel launches.
     """
 
     def __init__(
@@ -175,10 +206,7 @@ class QKVParallelLinear(ColumnParallelLinear):
         total_num_kv_heads: Optional[int] = None,
         bias: bool = False,
     ) -> None:
-        try:
-            tp_size = dist.get_world_size() if dist.is_initialized() else 1
-        except Exception:
-            tp_size = 1
+        tp_size = get_tensor_parallel_world_size()
         total_num_kv_heads = total_num_kv_heads or total_num_heads
         self.head_size: int = head_size
         self.num_heads: int = divide(total_num_heads, tp_size)
@@ -212,7 +240,11 @@ class QKVParallelLinear(ColumnParallelLinear):
 
 
 class RowParallelLinear(LinearBase):
-    """Row-parallel linear layer that shards input features across ranks."""
+    """Row-parallel linear layer that shards input features across ranks.
+
+    This layer splits the input dimension across tensor-parallel ranks
+    and performs an all-reduce on the output.
+    """
 
     def __init__(
         self,
@@ -220,10 +252,7 @@ class RowParallelLinear(LinearBase):
         output_size: int,
         bias: bool = False,
     ) -> None:
-        try:
-            tp_size = dist.get_world_size() if dist.is_initialized() else 1
-        except Exception:
-            tp_size = 1
+        tp_size = get_tensor_parallel_world_size()
         super().__init__(divide(input_size, tp_size), output_size, bias, 1)
 
     def weight_loader(self, param: nn.Parameter,
