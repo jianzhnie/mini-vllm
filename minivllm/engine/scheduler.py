@@ -186,10 +186,19 @@ class Scheduler:
 
         # Safety check: ensure we scheduled something
         if not scheduled_sequences:
-            raise RuntimeError(
-                'No sequences scheduled. This should not happen as we check '
-                'is_finished() before calling schedule(). Check for logic errors.'
+            # This should never happen if is_finished() is checked properly
+            # Provide detailed debugging information
+            error_msg = (
+                'No sequences scheduled, but scheduler is not finished. '
+                f'State: waiting={len(self.waiting)}, running={len(self.running)}, '
+                f'max_seqs={self.max_num_seqs}, max_tokens={self.max_num_batched_tokens}'
             )
+            if self.waiting:
+                first_waiting = self.waiting[0]
+                error_msg += f', first_waiting_seq_len={len(first_waiting)}'
+            if self.running:
+                error_msg += f', running_seq_lens={[len(s) for s in list(self.running)[:5]]}'
+            raise RuntimeError(error_msg)
 
         # Restore running sequences order (put back those not scheduled)
         self.running.extendleft(reversed(scheduled_sequences))
