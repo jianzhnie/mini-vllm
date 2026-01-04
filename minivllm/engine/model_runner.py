@@ -153,61 +153,108 @@ class ModelRunner:
         Called by main process to gracefully shutdown inference.
 
         Note:
-            This method swallows exceptions to ensure cleanup proceeds
-            even if individual steps fail. Errors are logged as warnings.
+            This method uses ordered cleanup to respect resource dependencies.
+            Errors in individual steps are logged but don't prevent subsequent cleanup.
         """
+        import logging
+        import warnings
+
+        logger = logging.getLogger(__name__)
         errors: List[str] = []
 
         try:
-            # Step 1: Close shared memory for distributed inference
+            # Step 1: Close shared memory for distributed inference (highest priority)
             if self.world_size > 1 and hasattr(self, 'share_memory'):
                 try:
                     if self.share_memory is not None:
+                        logger.debug(
+                            f'Rank {self.rank}: Closing shared memory...')
                         self.share_memory.close()
-                        dist.barrier()
+
+                        # Synchronize all processes before unlinking
+                        if dist.is_initialized():
+                            dist.barrier()
+
+                        # Only rank 0 unlinks the shared memory
                         if self.rank == 0:
+                            logger.debug('Rank 0: Unlinking shared memory')
                             self.share_memory.unlink()
                 except Exception as e:
-                    errors.append(f'Failed to cleanup shared memory: {e}')
+                    errors.append(
+                        f'Failed to cleanup shared memory (rank {self.rank}): {e}'
+                    )
+                    logger.error(f'Shared memory cleanup error: {e}',
+                                 exc_info=True)
 
-            # Step 2: Cleanup CUDA graphs
+            # Step 2: Cleanup CUDA graphs (must be done before CUDA sync)
             if not self.enforce_eager:
                 try:
                     if hasattr(self, 'graphs') and self.graphs is not None:
+                        logger.debug(
+                            f'Rank {self.rank}: Cleaning up {len(self.graphs)} CUDA graphs'
+                        )
                         del self.graphs
+                        self.graphs = None
+
                     if hasattr(self,
                                'graph_pool') and self.graph_pool is not None:
                         del self.graph_pool
+                        self.graph_pool = None
+
                     if hasattr(self,
                                'graph_vars') and self.graph_vars is not None:
                         del self.graph_vars
+                        self.graph_vars = None
                 except Exception as e:
-                    errors.append(f'Failed to cleanup CUDA graphs: {e}')
+                    errors.append(
+                        f'Failed to cleanup CUDA graphs (rank {self.rank}): {e}'
+                    )
+                    logger.error(f'CUDA graphs cleanup error: {e}',
+                                 exc_info=True)
 
-            # Step 3: Synchronize CUDA operations
+            # Step 3: Synchronize CUDA operations (critical for proper cleanup)
             try:
+                logger.debug(f'Rank {self.rank}: Synchronizing CUDA...')
                 torch.cuda.synchronize()
             except Exception as e:
-                errors.append(f'Failed to synchronize CUDA: {e}')
+                errors.append(
+                    f'Failed to synchronize CUDA (rank {self.rank}): {e}')
+                logger.error(f'CUDA synchronization error: {e}', exc_info=True)
 
-            # Step 4: Destroy distributed process group
+            # Step 4: Destroy distributed process group (lowest priority)
             if self.world_size > 1:
                 try:
                     if dist.is_initialized():
+                        logger.debug(
+                            f'Rank {self.rank}: Destroying process group...')
                         dist.destroy_process_group()
                 except Exception as e:
-                    errors.append(f'Failed to destroy process group: {e}')
+                    errors.append(
+                        f'Failed to destroy process group (rank {self.rank}): {e}'
+                    )
+                    logger.error(f'Process group destruction error: {e}',
+                                 exc_info=True)
 
         except Exception as e:
-            errors.append(f'Unexpected error during cleanup: {e}')
+            # Catch-all for unexpected errors
+            errors.append(
+                f'Unexpected error during model runner cleanup (rank {self.rank}): {e}'
+            )
+            logger.critical(f'Unexpected error in ModelRunner.exit(): {e}',
+                            exc_info=True)
 
         finally:
             # Log any errors that occurred
             if errors:
-                import warnings
                 warnings.warn(
                     f'Errors during model runner cleanup: {"; ".join(errors)}',
                     RuntimeWarning)
+                logger.warning(
+                    f'ModelRunner cleanup completed with errors: {errors}')
+            else:
+                logger.info(
+                    f'Rank {self.rank}: ModelRunner cleanup completed successfully'
+                )
 
     def loop(self) -> None:
         """Main event loop for worker processes.
