@@ -151,27 +151,63 @@ class ModelRunner:
         4. Destroys distributed process group
 
         Called by main process to gracefully shutdown inference.
+
+        Note:
+            This method swallows exceptions to ensure cleanup proceeds
+            even if individual steps fail. Errors are logged as warnings.
         """
+        errors: List[str] = []
+
         try:
+            # Step 1: Close shared memory for distributed inference
+            if self.world_size > 1 and hasattr(self, 'share_memory'):
+                try:
+                    if self.share_memory is not None:
+                        self.share_memory.close()
+                        dist.barrier()
+                        if self.rank == 0:
+                            self.share_memory.unlink()
+                except Exception as e:
+                    errors.append(f'Failed to cleanup shared memory: {e}')
+
+            # Step 2: Cleanup CUDA graphs
+            if not self.enforce_eager:
+                try:
+                    if hasattr(self, 'graphs') and self.graphs is not None:
+                        del self.graphs
+                    if hasattr(self,
+                               'graph_pool') and self.graph_pool is not None:
+                        del self.graph_pool
+                    if hasattr(self,
+                               'graph_vars') and self.graph_vars is not None:
+                        del self.graph_vars
+                except Exception as e:
+                    errors.append(f'Failed to cleanup CUDA graphs: {e}')
+
+            # Step 3: Synchronize CUDA operations
+            try:
+                torch.cuda.synchronize()
+            except Exception as e:
+                errors.append(f'Failed to synchronize CUDA: {e}')
+
+            # Step 4: Destroy distributed process group
             if self.world_size > 1:
-                self.share_memory.close()
-                dist.barrier()
-                if self.rank == 0:
-                    self.share_memory.unlink()
+                try:
+                    if dist.is_initialized():
+                        dist.destroy_process_group()
+                except Exception as e:
+                    errors.append(f'Failed to destroy process group: {e}')
 
-            # Cleanup CUDA graphs
-            if not self.enforce_eager and hasattr(self, 'graphs'):
-                del self.graphs
-                if hasattr(self, 'graph_pool'):
-                    del self.graph_pool
-
-            torch.cuda.synchronize()
-
-            if self.world_size > 1:
-                dist.destroy_process_group()
         except Exception as e:
-            import warnings
-            warnings.warn(f'Error during model runner cleanup: {e}')
+            errors.append(f'Unexpected error during cleanup: {e}')
+
+        finally:
+            # Log any errors that occurred
+            if errors:
+                import warnings
+                warnings.warn(
+                    f'Errors during model runner cleanup: {"; ".join(errors)}',
+                    RuntimeWarning)
 
     def loop(self) -> None:
         """Main event loop for worker processes.
