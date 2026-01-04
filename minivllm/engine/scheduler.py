@@ -3,6 +3,39 @@
 This module provides the Scheduler class which handles scheduling sequences
 for prefill and decode phases, managing the KV cache blocks through the
 BlockManager, and handling sequence preemption when needed.
+
+Scheduling Strategy:
+    The scheduler implements a two-phase policy:
+
+    1. Prefill Phase:
+       - Processes new sequences with their full prompts
+       - Computes initial KV cache for each sequence
+       - Schedules as many sequences as batch/cache constraints allow
+       - Priority: FIFO (first-in-first-out)
+
+    2. Decode Phase:
+       - Generates one token per running sequence
+       - Uses cached KV values from previous steps
+       - Handles cache pressure via sequence preemption
+       - Priority: Fair scheduling among running sequences
+
+Preemption Policy:
+    When KV cache is exhausted:
+    - Preempt the most recently scheduled sequence
+    - Deallocate its cache blocks
+    - Move back to waiting queue
+    - Will be rescheduled when cache space is available
+
+    This ensures:
+    - Forward progress for older sequences
+    - Fair treatment of all sequences
+    - Efficient cache utilization
+
+Performance Considerations:
+    - Prefill is compute-bound (large batches preferred)
+    - Decode is memory-bound (cache size limits batch)
+    - Balancing prefill/decode affects throughput
+    - Cache pressure may cause sequence starvation
 """
 
 from __future__ import annotations
