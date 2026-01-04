@@ -9,11 +9,27 @@ The module provides:
 - KV-cache management for efficient inference
 - Support for both prefill and decode phases
 - Tensor-parallel attention patterns
+- Fallback implementations when FlashAttention is unavailable
 
 Key components:
 - store_kvcache_kernel: Triton kernel for efficient KV cache updates
 - store_kvcache: Python wrapper for KV cache storage
 - Attention: Main attention module with flash attention integration
+
+Performance Notes:
+    FlashAttention provides significant speedups (2-4x) over standard
+    attention implementations by:
+    - Fusing attention operations
+    - Optimizing memory access patterns
+    - Reducing memory allocations
+
+    When FlashAttention is unavailable, the module falls back to a
+    standard PyTorch implementation with reduced performance.
+
+Dependencies:
+    - flash-attn: Required for optimal performance
+    - triton: Required for KV cache operations
+    - torch: Always required
 """
 
 import logging
