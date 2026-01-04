@@ -2,6 +2,43 @@
 
 This module provides the LLM class, which is the primary user-facing
 interface for interacting with the mini-vLLM engine.
+
+Quick Start:
+    >>> from minivllm import LLM, SamplingParams
+    >>>
+    >>> # Initialize LLM with default settings
+    >>> llm = LLM(model="path/to/model")
+    >>>
+    >>> # Generate text with custom parameters
+    >>> prompts = ["Hello, world!", "Once upon a time"]
+    >>> params = SamplingParams(temperature=0.8, max_tokens=100)
+    >>> outputs = llm.generate(prompts, params)
+    >>>
+    >>> # Access generated text
+    >>> for output in outputs:
+    ...     print(output['text'])
+
+Advanced Usage:
+    >>> # Multi-GPU inference with tensor parallelism
+    >>> llm = LLM(
+    ...     model="path/to/large/model",
+    ...     tensor_parallel_size=4,
+    ...     max_num_seqs=256,
+    ...     gpu_memory_utilization=0.9
+    ... )
+    >>>
+    >>> # Batch generation with different parameters
+    >>> params_list = [
+    ...     SamplingParams(temperature=0.7, max_tokens=50),
+    ...     SamplingParams(temperature=0.9, max_tokens=100),
+    ... ]
+    >>> outputs = llm.generate(prompts, params_list)
+
+Performance Tips:
+    - Use larger batch sizes for better throughput
+    - Increase gpu_memory_utilization if OOM doesn't occur
+    - Enable tensor parallelism for models > 13B parameters
+    - Adjust max_num_batched_tokens based on sequence lengths
 """
 
 from minivllm.engine.llm_engine import LLMEngine
