@@ -317,7 +317,7 @@ class ModelRunner:
                 module.v_cache = self.kv_cache[1, layer_id]
                 layer_id += 1
 
-    def prepare_block_tables(self, seqs: List[Sequence]) -> torch.Tensor:
+    def prepare_block_tables(self, sequences: List[Sequence]) -> torch.Tensor:
         """Prepare block tables for sequences.
 
         Creates a padded 2D tensor where each row is a sequence's block table,
@@ -330,10 +330,10 @@ class ModelRunner:
             A 2D integer tensor on GPU of shape (len(seqs), max_block_len)
             containing block table IDs with -1 padding.
         """
-        max_len: int = max(len(seq.block_table) for seq in seqs)
+        max_len: int = max(len(seq.block_table) for seq in sequences)
         block_tables: List[List[int]] = [
             seq.block_table + [-1] * (max_len - len(seq.block_table))
-            for seq in seqs
+            for seq in sequences
         ]
         block_tables_tensor: torch.Tensor = torch.tensor(
             block_tables, dtype=torch.int32,
@@ -341,14 +341,15 @@ class ModelRunner:
         return block_tables_tensor
 
     def prepare_prefill(
-            self, seqs: List[Sequence]) -> Tuple[torch.Tensor, torch.Tensor]:
+            self,
+            sequences: List[Sequence]) -> Tuple[torch.Tensor, torch.Tensor]:
         """Prepare input tensors for prefill phase.
 
         Gathers tokens from multiple sequences with cached prefix handling,
         computing positions and slot mappings for KV cache placement.
 
         Args:
-            seqs: List of sequences in prefill phase.
+            sequences: List of sequences in prefill phase.
 
         Returns:
             A tuple containing:
@@ -364,7 +365,7 @@ class ModelRunner:
         slot_mapping: List[int] = []
         block_tables: Optional[torch.Tensor] = None
 
-        for seq in seqs:
+        for seq in sequences:
             seqlen: int = len(seq)
             input_ids.extend(seq[seq.num_cached_tokens:])
             positions.extend(list(range(seq.num_cached_tokens, seqlen)))
@@ -384,7 +385,7 @@ class ModelRunner:
                     end = start + seq.last_block_num_tokens
                 slot_mapping.extend(list(range(start, end)))
         if cum_seqlens_k[-1] > cum_seqlens_q[-1]:  # prefix cache
-            block_tables = self.prepare_block_tables(seqs)
+            block_tables = self.prepare_block_tables(sequences)
         input_ids = torch.tensor(input_ids, dtype=torch.int64,
                                  pin_memory=True).cuda(non_blocking=True)
         positions = torch.tensor(positions, dtype=torch.int64,
@@ -411,7 +412,8 @@ class ModelRunner:
         return input_ids, positions
 
     def prepare_decode(
-            self, seqs: List[Sequence]) -> Tuple[torch.Tensor, torch.Tensor]:
+            self,
+            sequences: List[Sequence]) -> Tuple[torch.Tensor, torch.Tensor]:
         """Prepare input tensors for decode phase.
 
         Extracts the last token from each sequence and computes its position
@@ -419,7 +421,7 @@ class ModelRunner:
         token at a time.
 
         Args:
-            seqs: List of sequences in decode phase.
+            sequences: List of sequences in decode phase.
 
         Returns:
             A tuple containing:
@@ -431,7 +433,7 @@ class ModelRunner:
         slot_mapping: List[int] = []
         context_lens: List[int] = []
 
-        for seq in seqs:
+        for seq in sequences:
             input_ids.append(seq.last_token)
             positions.append(len(seq) - 1)
             context_lens.append(len(seq))
@@ -450,7 +452,7 @@ class ModelRunner:
         context_lens_tensor: torch.Tensor = torch.tensor(
             context_lens, dtype=torch.int32,
             pin_memory=True).cuda(non_blocking=True)
-        block_tables: torch.Tensor = self.prepare_block_tables(seqs)
+        block_tables: torch.Tensor = self.prepare_block_tables(sequences)
 
         set_context(False,
                     slot_mapping=slot_mapping_tensor,
@@ -459,20 +461,20 @@ class ModelRunner:
 
         return input_ids_tensor, positions_tensor
 
-    def prepare_sample(self, seqs: List[Sequence]) -> torch.Tensor:
+    def prepare_sample(self, sequences: List[Sequence]) -> torch.Tensor:
         """Prepare sampling parameters for sequences.
 
         Extracts temperature values from each sequence for use in
         token sampling.
 
         Args:
-            seqs: List of sequences to sample from.
+            sequences: List of sequences to sample from.
 
         Returns:
             A 1D tensor of temperature values on GPU (shape: [num_seqs]).
         """
         temperatures: List[float] = []
-        for seq in seqs:
+        for seq in sequences:
             temperatures.append(seq.temperature)
 
         temperatures_tensor: torch.Tensor = torch.tensor(
@@ -570,7 +572,7 @@ class ModelRunner:
             graph.replay()
             return self.model.compute_logits(graph_vars['outputs'][:bs])
 
-    def run(self, seqs: List[Sequence],
+    def run(self, sequences: List[Sequence],
             is_prefill: bool) -> Optional[List[int]]:
         """Execute inference on a batch of sequences.
 
@@ -578,7 +580,7 @@ class ModelRunner:
         sequence state. For distributed inference, only rank 0 returns tokens.
 
         Args:
-            seqs: Sequences to process.
+            sequences: Sequences to process.
             is_prefill: Whether this is prefill (True) or decode (False) phase.
 
         Returns:
@@ -588,11 +590,11 @@ class ModelRunner:
         # Prepare input tensors
         input_ids: torch.Tensor
         positions: torch.Tensor
-        input_ids, positions = (self.prepare_prefill(seqs)
-                                if is_prefill else self.prepare_decode(seqs))
+        input_ids, positions = (self.prepare_prefill(sequences) if is_prefill
+                                else self.prepare_decode(sequences))
 
         # Prepare sampling parameters (rank 0 only)
-        temperatures: Optional[torch.Tensor] = (self.prepare_sample(seqs)
+        temperatures: Optional[torch.Tensor] = (self.prepare_sample(sequences)
                                                 if self.rank == 0 else None)
 
         # Run model inference
