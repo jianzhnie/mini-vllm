@@ -93,7 +93,7 @@ class Scheduler:
         Raises:
             AssertionError: If scheduling invariants are violated.
         """
-        scheduled_seqs: List[Sequence] = []
+        scheduled_sequences: List[Sequence] = []
         num_seqs: int = 0
         num_batched_tokens: int = 0
 
@@ -120,11 +120,11 @@ class Scheduler:
             # Move from waiting to running queue
             self.waiting.popleft()
             self.running.append(sequence)
-            scheduled_seqs.append(sequence)
+            scheduled_sequences.append(sequence)
 
         # Return if prefill sequences were scheduled
-        if scheduled_seqs:
-            return scheduled_seqs, True
+        if scheduled_sequences:
+            return scheduled_sequences, True
 
         # Phase 2: Decode phase for running sequences
         # Generate one token per sequence while managing cache constraints
@@ -149,19 +149,19 @@ class Scheduler:
                 num_seqs += 1
                 # May allocate new block if we've crossed a block boundary
                 self.block_manager.may_append(sequence)
-                scheduled_seqs.append(sequence)
+                scheduled_sequences.append(sequence)
 
         # Safety check: ensure we scheduled something
-        if not scheduled_seqs:
+        if not scheduled_sequences:
             raise RuntimeError(
                 'No sequences scheduled. This should not happen as we check '
                 'is_finished() before calling schedule(). Check for logic errors.'
             )
 
         # Restore running sequences order (put back those not scheduled)
-        self.running.extendleft(reversed(scheduled_seqs))
+        self.running.extendleft(reversed(scheduled_sequences))
 
-        return scheduled_seqs, False
+        return scheduled_sequences, False
 
     def preempt(self, sequence: Sequence) -> None:
         """Preempt a sequence due to cache memory constraints.
