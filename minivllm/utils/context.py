@@ -1,10 +1,27 @@
 """Context management for inference parameters.
 
-This module provides a global context object that stores inference-related
+This module provides a thread-safe context object that stores inference-related
 parameters (such as KV cache mappings and sequence information) that need
 to be accessible across different parts of the inference pipeline.
+
+The module uses contextvars for thread-safe context management, ensuring that
+each thread or async task has its own independent context state.
+
+Typical usage:
+    >>> from minivllm.utils.context import set_context, get_context
+    >>>
+    >>> # Set context before inference
+    >>> set_context(is_prefill=True, max_seqlen_q=128)
+    >>>
+    >>> # Get context during inference
+    >>> ctx = get_context()
+    >>> print(ctx.is_prefill)  # True
+    >>>
+    >>> # Reset context after inference
+    >>> reset_context()
 """
 
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Optional
 
@@ -45,17 +62,26 @@ class Context:
     block_tables: Optional[torch.Tensor] = None
 
 
-# Global context instance
-_CONTEXT: Context = Context()
+# Thread-safe context variable
+# Using ContextVar ensures each thread/task has its own context instance
+_CONTEXT_VAR: ContextVar[Context] = ContextVar('inference_context',
+                                               default=Context())
 
 
 def get_context() -> Context:
-    """Get the current global inference context.
+    """Get the current thread-local inference context.
+
+    This function is thread-safe and returns the context for the current
+    execution context (thread or async task).
 
     Returns:
         The current Context object containing inference parameters.
+
+    Note:
+        This function will never return None. If no context has been set,
+        it returns a default Context with all fields set to their default values.
     """
-    return _CONTEXT
+    return _CONTEXT_VAR.get()
 
 
 def set_context(
@@ -68,10 +94,11 @@ def set_context(
     context_lens: Optional[torch.Tensor] = None,
     block_tables: Optional[torch.Tensor] = None,
 ) -> None:
-    """Set the global inference context.
+    """Set the thread-local inference context.
 
-    Updates the global context with new values. This is typically called
-    before model inference to set up the attention parameters.
+    Updates the context for the current execution context with new values.
+    This is typically called before model inference to set up the attention
+    parameters. This function is thread-safe.
 
     Args:
         is_prefill: Whether in prefill or decode phase.
@@ -84,11 +111,11 @@ def set_context(
         block_tables: Block tables for KV cache.
 
     Note:
-        This function modifies the global context state and should only
-        be called from the main inference thread.
+        This function is thread-safe and only affects the context in the
+        current thread or async task. Other threads will have their own
+        independent context.
     """
-    global _CONTEXT
-    _CONTEXT = Context(
+    ctx = Context(
         is_prefill,
         max_seqlen_q,
         max_seqlen_k,
@@ -98,17 +125,18 @@ def set_context(
         context_lens,
         block_tables,
     )
+    _CONTEXT_VAR.set(ctx)
 
 
 def reset_context() -> None:
-    """Reset the global inference context to default state.
+    """Reset the thread-local inference context to default state.
 
     Clears all context parameters, typically done after each inference step
-    to avoid stale data affecting the next step.
+    to avoid stale data affecting the next step. This function is thread-safe.
 
     Note:
-        This function modifies the global context state and should only
-        be called from the main inference thread.
+        This function is thread-safe and only affects the context in the
+        current thread or async task. Other threads will maintain their
+        own context state.
     """
-    global _CONTEXT
-    _CONTEXT = Context()
+    _CONTEXT_VAR.set(Context())
