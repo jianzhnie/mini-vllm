@@ -109,17 +109,48 @@ class LLMEngine:
         3. Cleans up distributed communication resources
 
         Called automatically at program exit via atexit handler.
+
+        Note:
+            This method attempts graceful shutdown with timeouts and
+            forced termination as fallback. Errors are logged as warnings.
         """
+        errors: List[str] = []
+
         try:
-            self.model_runner.call('exit')
-            del self.model_runner
-            for p in self.ps:
-                p.join(timeout=5)
-                if p.is_alive():
-                    p.terminate()
+            # Step 1: Signal model runner to exit
+            if hasattr(self, 'model_runner'):
+                try:
+                    self.model_runner.call('exit')
+                    del self.model_runner
+                except Exception as e:
+                    errors.append(f'Failed to exit model runner: {e}')
+
+            # Step 2: Terminate worker processes
+            if hasattr(self, 'ps'):
+                for i, p in enumerate(self.ps):
+                    try:
+                        p.join(timeout=5)
+                        if p.is_alive():
+                            import warnings
+                            warnings.warn(
+                                f'Worker process {i} did not terminate gracefully, '
+                                f'forcing termination', RuntimeWarning)
+                            p.terminate()
+                            p.join(timeout=2)
+                            if p.is_alive():
+                                p.kill()
+                    except Exception as e:
+                        errors.append(f'Failed to terminate worker {i}: {e}')
+
         except Exception as e:
-            import warnings
-            warnings.warn(f'Error during engine cleanup: {e}')
+            errors.append(f'Unexpected error during engine cleanup: {e}')
+
+        finally:
+            if errors:
+                import warnings
+                warnings.warn(
+                    f'Errors during engine cleanup: {"; ".join(errors)}',
+                    RuntimeWarning)
 
     def add_request(self,
                     prompt: Union[str, List[int]],
