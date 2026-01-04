@@ -182,11 +182,14 @@ class Sequence:
             List of token IDs in the specified block.
 
         Raises:
-            AssertionError: If block index i is out of valid range.
+            IndexError: If block index i is out of valid range [0, num_blocks).
         """
         if not (0 <= i < self.num_blocks):
             raise IndexError(
-                f'Block index {i} out of range [0, {self.num_blocks})')
+                f'Block index {i} out of range [0, {self.num_blocks}). '
+                f'Sequence ID: {self.seq_id}, '
+                f'Total tokens: {self.num_tokens}, '
+                f'Block size: {self.block_size}')
         return self.token_ids[i * self.block_size:(i + 1) * self.block_size]
 
     def append_token(self, token_id: int) -> None:
@@ -207,9 +210,16 @@ class Sequence:
 
         Raises:
             ValueError: If token_id is negative (invalid token).
+            RuntimeError: If sequence is already finished.
         """
         if token_id < 0:
-            raise ValueError(f'Token ID must be non-negative, got {token_id}')
+            raise ValueError(f'Token ID must be non-negative, got {token_id}. '
+                             f'Sequence ID: {self.seq_id}')
+
+        if self.status == SequenceStatus.FINISHED:
+            raise RuntimeError(
+                f'Cannot append token to finished sequence. '
+                f'Sequence ID: {self.seq_id}, Token ID: {token_id}')
 
         self.token_ids.append(token_id)
         self.last_token = token_id
