@@ -181,10 +181,12 @@ class Attention(nn.Module):
         self.scale: float = float(scale)
         self.num_kv_heads: int = num_kv_heads
 
-        # KV cache tensors are set later by the ModelRunner; initialize
-        # as empty tensors to avoid attribute errors during initialization
+        # KV cache tensors are set later by the ModelRunner
+        # Initialize as empty tensors to avoid attribute errors during initialization
         self.k_cache: torch.Tensor = torch.tensor([])
         self.v_cache: torch.Tensor = torch.tensor([])
+        # Track whether KV cache has been properly initialized by ModelRunner
+        self._cache_initialized: bool = False
 
     def forward(self, q: torch.Tensor, k: torch.Tensor,
                 v: torch.Tensor) -> torch.Tensor:
@@ -202,6 +204,9 @@ class Attention(nn.Module):
         Returns:
             Attention output tensor of shape (N, num_heads, head_dim)
 
+        Raises:
+            RuntimeError: If KV cache is accessed before being initialized by ModelRunner
+
         Note:
             The method interacts with the global inference context to:
             - Store new K/V pairs to cache during prefill
@@ -213,7 +218,13 @@ class Attention(nn.Module):
 
         # Store K/V to cache if cache is initialized
         if k_cache.numel() and v_cache.numel():
+            self._cache_initialized = True
             store_kvcache(k, v, k_cache, v_cache, context.slot_mapping)
+        elif not context.is_prefill and not self._cache_initialized:
+            # In decode phase, KV cache must be initialized
+            raise RuntimeError(
+                'KV cache has not been initialized. Ensure ModelRunner.allocate_kv_cache() '
+                'is called before inference.')
 
         if _FLASH_ATTN_AVAILABLE:
             if context.is_prefill:
@@ -248,114 +259,170 @@ class Attention(nn.Module):
         else:
             # Fallback to standard attention when FlashAttention is not available
             # This is less efficient but ensures compatibility
+            import warnings
+            warnings.warn(
+                'FlashAttention not available. Using fallback implementation which is significantly slower. '
+                'For optimal performance, install flash-attn: pip install flash-attn',
+                RuntimeWarning,
+                stacklevel=2)
+
             if context.is_prefill:
-                # For prefill, we need to reshape tensors for standard attention
-                # This is a simplified implementation that doesn't handle all edge cases
-                # but provides basic functionality when FlashAttention is unavailable
+                # For prefill, process complete sequences with causal masking
+                # Split concatenated batch by cumulative sequence lengths
+                if context.cum_seqlens_q is None or context.cum_seqlens_k is None:
+                    raise RuntimeError(
+                        'Cumulative sequence lengths not set in context for prefill phase. '
+                        'This is a bug in the inference pipeline.')
+
                 batch_size = context.cum_seqlens_q.size(0) - 1
-                q_reshaped = q.view(batch_size, -1, self.num_heads,
-                                    self.head_dim)
-                k_reshaped = k.view(batch_size, -1, self.num_kv_heads,
-                                    self.head_dim)
-                v_reshaped = v.view(batch_size, -1, self.num_kv_heads,
-                                    self.head_dim)
+                outputs = []
 
-                # Repeat k/v heads to match q heads if needed (for MQA/GQA)
-                if self.num_kv_heads != self.num_heads:
-                    k_reshaped = k_reshaped.repeat_interleave(
-                        self.num_heads // self.num_kv_heads, dim=2)
-                    v_reshaped = v_reshaped.repeat_interleave(
-                        self.num_heads // self.num_kv_heads, dim=2)
+                for i in range(batch_size):
+                    # Extract sequence i from concatenated batch
+                    q_start = context.cum_seqlens_q[i].item()
+                    q_end = context.cum_seqlens_q[i + 1].item()
+                    k_start = context.cum_seqlens_k[i].item()
+                    k_end = context.cum_seqlens_k[i + 1].item()
 
-                # Compute attention scores
-                attn_weights = torch.matmul(
-                    q_reshaped, k_reshaped.transpose(-2, -1)) * self.scale
+                    q_seq = q[q_start:q_end]  # [seqlen_q, num_heads, head_dim]
+                    k_seq = k[k_start:
+                              k_end]  # [seqlen_k, num_kv_heads, head_dim]
+                    v_seq = v[k_start:
+                              k_end]  # [seqlen_k, num_kv_heads, head_dim]
 
-                # Apply causal mask
-                seq_len = q_reshaped.size(1)
-                mask = torch.triu(torch.ones(seq_len,
-                                             seq_len,
-                                             device=attn_weights.device),
-                                  diagonal=1).bool()
-                attn_weights.masked_fill_(mask, float('-inf'))
+                    # Expand for attention computation: [1, seqlen, num_heads, head_dim]
+                    q_seq = q_seq.unsqueeze(0)
+                    k_seq = k_seq.unsqueeze(0)
+                    v_seq = v_seq.unsqueeze(0)
 
-                # Softmax and attention output
-                attn_probs = torch.softmax(attn_weights, dim=-1)
-                attn_out = torch.matmul(attn_probs, v_reshaped)
+                    # Handle GQA/MQA: repeat k/v heads to match q heads
+                    if self.num_kv_heads != self.num_heads:
+                        repeat_factor = self.num_heads // self.num_kv_heads
+                        k_seq = k_seq.repeat_interleave(repeat_factor, dim=2)
+                        v_seq = v_seq.repeat_interleave(repeat_factor, dim=2)
 
-                # Extract last token output for each sequence
-                attn_out = attn_out[:, -1, :, :].contiguous().view(
-                    -1, self.num_heads, self.head_dim)
+                    # Compute attention: [1, seqlen_q, num_heads, seqlen_k]
+                    attn_weights = torch.matmul(
+                        q_seq.transpose(
+                            1, 2),  # [1, num_heads, seqlen_q, head_dim]
+                        k_seq.transpose(1, 2).transpose(
+                            -2, -1)  # [1, num_heads, head_dim, seqlen_k]
+                    ) * self.scale  # [1, num_heads, seqlen_q, seqlen_k]
+
+                    # Apply causal mask (lower triangular)
+                    seqlen_q = q_seq.size(1)
+                    seqlen_k = k_seq.size(1)
+                    if seqlen_q > 1:
+                        # Create causal mask: allow attending to all keys up to current position
+                        causal_mask = torch.triu(torch.ones(seqlen_q,
+                                                            seqlen_k,
+                                                            device=q.device,
+                                                            dtype=torch.bool),
+                                                 diagonal=seqlen_k - seqlen_q +
+                                                 1)
+                        attn_weights = attn_weights.masked_fill(
+                            causal_mask, float('-inf'))
+
+                    # Softmax and weighted sum
+                    attn_probs = torch.softmax(attn_weights, dim=-1)
+                    out_seq = torch.matmul(
+                        attn_probs,  # [1, num_heads, seqlen_q, seqlen_k]
+                        v_seq.transpose(
+                            1, 2)  # [1, num_heads, seqlen_k, head_dim]
+                    )  # [1, num_heads, seqlen_q, head_dim]
+
+                    # Reshape back to original format
+                    out_seq = out_seq.squeeze(0).transpose(
+                        0, 1)  # [seqlen_q, num_heads, head_dim]
+                    outputs.append(out_seq)
+
+                # Concatenate outputs from all sequences
+                attn_out = torch.cat(
+                    outputs, dim=0)  # [total_tokens, num_heads, head_dim]
+
             else:
-                # For decode, we use cached k/v
+                # For decode, use cached k/v for efficient single-token generation
+                if not self._cache_initialized:
+                    raise RuntimeError(
+                        'KV cache must be initialized before decode phase. '
+                        'This indicates a problem with the inference pipeline.'
+                    )
+
                 batch_size = q.size(0)
 
-                # Get cached k/v from previous steps
-                cached_k = []
-                cached_v = []
+                # Validate context information
+                if context.context_lens is None or context.block_tables is None:
+                    raise RuntimeError(
+                        'Context lengths or block tables not set for decode phase. '
+                        'This is a bug in the inference pipeline.')
+
+                # Collect cached k/v for all sequences in batch
+                max_seqlen = context.context_lens.max().item()
+                cached_k = torch.zeros(batch_size,
+                                       max_seqlen,
+                                       self.num_kv_heads,
+                                       self.head_dim,
+                                       device=q.device,
+                                       dtype=q.dtype)
+                cached_v = torch.zeros(batch_size,
+                                       max_seqlen,
+                                       self.num_kv_heads,
+                                       self.head_dim,
+                                       device=q.device,
+                                       dtype=q.dtype)
+
+                block_size = k_cache.size(1)  # Tokens per block
                 for i in range(batch_size):
-                    seq_len = context.context_lens[i]
+                    seqlen = context.context_lens[i].item()
                     block_table = context.block_tables[i]
-                    # Collect cached k/v blocks for this sequence
-                    k_blocks = [
-                        k_cache[:, block_idx] for block_idx in block_table
-                        if block_idx != -1
-                    ]
-                    v_blocks = [
-                        v_cache[:, block_idx] for block_idx in block_table
-                        if block_idx != -1
-                    ]
 
-                    if k_blocks:
-                        # Concatenate blocks and truncate to actual sequence length
-                        cached_k_seq = torch.cat(k_blocks, dim=0)[:seq_len]
-                        cached_v_seq = torch.cat(v_blocks, dim=0)[:seq_len]
-                    else:
-                        # No cached k/v yet
-                        cached_k_seq = k[i].unsqueeze(0)
-                        cached_v_seq = v[i].unsqueeze(0)
+                    # Gather tokens from blocks
+                    token_idx = 0
+                    for block_id in block_table:
+                        if block_id == -1:
+                            break
+                        tokens_in_block = min(block_size, seqlen - token_idx)
+                        cached_k[i, token_idx:token_idx +
+                                 tokens_in_block] = k_cache[:tokens_in_block,
+                                                            block_id]
+                        cached_v[i, token_idx:token_idx +
+                                 tokens_in_block] = v_cache[:tokens_in_block,
+                                                            block_id]
+                        token_idx += tokens_in_block
+                        if token_idx >= seqlen:
+                            break
 
-                    cached_k.append(cached_k_seq)
-                    cached_v.append(cached_v_seq)
-
-                # Pad to maximum sequence length
-                max_len = max(k_seq.size(0) for k_seq in cached_k)
-                cached_k_padded = torch.zeros(batch_size,
-                                              max_len,
-                                              self.num_kv_heads,
-                                              self.head_dim,
-                                              device=q.device)
-                cached_v_padded = torch.zeros(batch_size,
-                                              max_len,
-                                              self.num_kv_heads,
-                                              self.head_dim,
-                                              device=q.device)
-
-                for i, (k_seq, v_seq) in enumerate(zip(cached_k, cached_v)):
-                    cached_k_padded[i, :k_seq.size(0)] = k_seq
-                    cached_v_padded[i, :v_seq.size(0)] = v_seq
-
-                # Expand q to match k/v dimensions
-                q_expanded = q.unsqueeze(1)  # [batch, 1, num_heads, head_dim]
-
-                # Repeat k/v heads to match q heads if needed (for MQA/GQA)
+                # Handle GQA/MQA: repeat k/v heads to match q heads
                 if self.num_kv_heads != self.num_heads:
-                    cached_k_padded = cached_k_padded.repeat_interleave(
-                        self.num_heads // self.num_kv_heads, dim=2)
-                    cached_v_padded = cached_v_padded.repeat_interleave(
-                        self.num_heads // self.num_kv_heads, dim=2)
+                    repeat_factor = self.num_heads // self.num_kv_heads
+                    cached_k = cached_k.repeat_interleave(repeat_factor, dim=2)
+                    cached_v = cached_v.repeat_interleave(repeat_factor, dim=2)
 
-                # Compute attention scores
+                # Compute attention for single query token per sequence
+                # q: [batch, num_heads, head_dim]
+                # cached_k: [batch, seqlen, num_heads, head_dim]
+                q_expanded = q.unsqueeze(2)  # [batch, num_heads, 1, head_dim]
                 attn_weights = torch.matmul(
-                    q_expanded, cached_k_padded.transpose(-2, -1)) * self.scale
+                    q_expanded,  # [batch, num_heads, 1, head_dim]
+                    cached_k.transpose(1, 2).transpose(
+                        -2, -1)  # [batch, num_heads, head_dim, seqlen]
+                ) * self.scale  # [batch, num_heads, 1, seqlen]
 
-                # Apply causal mask (not needed for decode with single token)
+                # Create attention mask based on actual sequence lengths
+                seqlen_mask = torch.arange(max_seqlen, device=q.device).expand(
+                    batch_size, max_seqlen)
+                seqlen_mask = seqlen_mask >= context.context_lens.unsqueeze(1)
+                seqlen_mask = seqlen_mask.unsqueeze(1).unsqueeze(
+                    2)  # [batch, 1, 1, seqlen]
+                attn_weights = attn_weights.masked_fill(
+                    seqlen_mask, float('-inf'))
 
-                # Softmax and attention output
+                # Softmax and weighted sum
                 attn_probs = torch.softmax(attn_weights, dim=-1)
-                attn_out = torch.matmul(attn_probs, cached_v_padded)
-
-                # Remove sequence dimension
-                attn_out = attn_out.squeeze(1)
+                attn_out = torch.matmul(
+                    attn_probs,  # [batch, num_heads, 1, seqlen]
+                    cached_v.transpose(
+                        1, 2)  # [batch, num_heads, seqlen, head_dim]
+                ).squeeze(2)  # [batch, num_heads, head_dim]
 
         return attn_out
