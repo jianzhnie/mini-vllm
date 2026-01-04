@@ -117,9 +117,28 @@ class Qwen3MLP(nn.Module):
     """Feed-forward (MLP) block with gated activation used in Qwen3.
 
     The implementation uses a merged column-parallel linear layer for the
-    gate and up projections, followed by a down projection. Only SiLU+mul
-    activation ('silu') is supported at the moment.
+    gate and up projections, followed by a down projection.
+
+    Supported activation functions:
+    - 'silu': SiLU activation with gating (SwiGLU variant)
+    - Additional activations can be added by extending the mapping
+
+    Args:
+        hidden_size: Dimension of the hidden layer.
+        intermediate_size: Dimension of the intermediate layer.
+        hidden_act: Name of the activation function (e.g., 'silu').
+
+    Raises:
+        ValueError: If activation function is not supported.
     """
+
+    # Mapping of activation function names to implementations
+    _ACTIVATION_FN_MAP = {
+        'silu': SiluAndMul,
+        # Future activations can be added here
+        # 'gelu': GeluAndMul,
+        # 'relu': ReluAndMul,
+    }
 
     def __init__(self, hidden_size: int, intermediate_size: int,
                  hidden_act: str) -> None:
@@ -134,8 +153,16 @@ class Qwen3MLP(nn.Module):
             hidden_size,
             bias=False,
         )
-        assert hidden_act == 'silu'
-        self.act_fn = SiluAndMul()
+
+        # Select activation function
+        if hidden_act not in self._ACTIVATION_FN_MAP:
+            raise ValueError(
+                f"Unsupported activation function: '{hidden_act}'. "
+                f'Supported activations: {list(self._ACTIVATION_FN_MAP.keys())}'
+            )
+
+        activation_cls = self._ACTIVATION_FN_MAP[hidden_act]
+        self.act_fn = activation_cls()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         gate_up = self.gate_up_proj(x)
