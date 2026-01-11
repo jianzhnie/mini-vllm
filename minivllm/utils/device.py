@@ -11,15 +11,38 @@ from minivllm.utils.logger_utils import get_logger
 
 logger = get_logger(__name__)
 
+# Device type constants for easier reference and type checking
+DEVICE_TYPE_CUDA = 'cuda'
+DEVICE_TYPE_NPU = 'npu'
+DEVICE_TYPE_XPU = 'xpu'
+DEVICE_TYPE_MPS = 'mps'
+DEVICE_TYPE_MLU = 'mlu'
+DEVICE_TYPE_MUSA = 'musa'
+DEVICE_TYPE_CPU = 'cpu'
+
 
 def get_visible_devices_keyword() -> str:
     """Get the environment variable keyword for visible devices.
 
+    Different device types use different environment variables to control
+    which devices are visible to the process.
+
     Returns:
-        'CUDA_VISIBLE_DEVICES' for CUDA devices or 'ASCEND_RT_VISIBLE_DEVICES' for NPU devices.
+        Environment variable name for visible devices:
+        - 'CUDA_VISIBLE_DEVICES' for CUDA devices
+        - 'ASCEND_RT_VISIBLE_DEVICES' for NPU devices
+        - 'XPU_VISIBLE_DEVICES' for XPU devices (if supported)
+        - Empty string for other device types
     """
-    return 'CUDA_VISIBLE_DEVICES' if is_torch_cuda_available(
-    ) else 'ASCEND_RT_VISIBLE_DEVICES'
+    if is_torch_cuda_available():
+        return 'CUDA_VISIBLE_DEVICES'
+    elif is_torch_npu_available():
+        return 'ASCEND_RT_VISIBLE_DEVICES'
+    elif is_torch_xpu_available():
+        # Intel XPU may use different env var, adjust if needed
+        return 'XPU_VISIBLE_DEVICES'
+    else:
+        return ''
 
 
 def get_dist_info() -> Tuple[int, int, int]:
@@ -91,8 +114,10 @@ def get_current_device(use_cpu: bool = False) -> torch.device:
 
 
 def get_device_count() -> int:
-    r"""
-    Gets the number of available GPU or NPU devices.
+    """Get the number of available devices for the current device type.
+
+    Returns:
+        Number of available devices. Returns 0 for CPU or unsupported devices.
     """
     if is_torch_npu_available():
         num_devices = torch.npu.device_count()
@@ -100,6 +125,19 @@ def get_device_count() -> int:
         num_devices = torch.xpu.device_count()
     elif is_torch_cuda_available():
         num_devices = torch.cuda.device_count()
+    elif is_torch_mps_available():
+        # MPS typically supports only one device
+        num_devices = 1 if torch.backends.mps.is_available() else 0
+    elif is_torch_mlu_available():
+        try:
+            num_devices = torch.mlu.device_count()
+        except AttributeError:
+            num_devices = 0
+    elif is_torch_musa_available():
+        try:
+            num_devices = torch.musa.device_count()
+        except AttributeError:
+            num_devices = 0
     else:
         num_devices = 0
     return num_devices
@@ -110,15 +148,26 @@ def set_device(device: torch.device) -> None:
 
     Args:
         device: The device to set as current.
+
+    Note:
+        Some device types (MPS, MLU, MUSA) don't have set_device methods
+        and will be silently ignored.
     """
     device_type = device.type
-    if device_type == 'cuda':
-        torch.cuda.set_device(device)
-    elif device_type == 'npu':
-        torch.npu.set_device(device)
-    elif device_type == 'xpu':
-        torch.xpu.set_device(device)
-    # Other device types (mps, mlu, musa) don't have set_device methods
+    try:
+        if device_type == 'cuda':
+            torch.cuda.set_device(device)
+        elif device_type == 'npu':
+            torch.npu.set_device(device)
+        elif device_type == 'xpu':
+            torch.xpu.set_device(device)
+        # Other device types (mps, mlu, musa) don't have set_device methods
+        # and are handled automatically by PyTorch
+    except Exception as e:
+        logger.warning(
+            f'Failed to set device {device}: {e}. '
+            f'This may be normal for device types that don\'t support set_device.'
+        )
 
 
 def get_default_device_name() -> str:
@@ -160,18 +209,32 @@ def get_distributed_backend() -> str:
 
 
 def empty_cache() -> None:
-    """Empty the cache for the current device."""
-    if is_torch_npu_available():
-        torch.npu.empty_cache()
-    elif is_torch_cuda_available():
-        torch.cuda.empty_cache()
-    elif is_torch_xpu_available():
-        torch.xpu.empty_cache()
-    # Other devices don't have empty_cache methods
+    """Empty the cache for the current device.
+
+    This function attempts to free unused memory cached by the device.
+    Not all device types support this operation, in which case it will
+    be silently ignored.
+    """
+    try:
+        if is_torch_npu_available():
+            torch.npu.empty_cache()
+        elif is_torch_cuda_available():
+            torch.cuda.empty_cache()
+        elif is_torch_xpu_available():
+            torch.xpu.empty_cache()
+        # Other devices (MPS, MLU, MUSA, CPU) don't have empty_cache methods
+        # or don't need explicit cache clearing
+    except Exception as e:
+        logger.debug(
+            f'Failed to empty cache: {e}. This may be normal for some device types.'
+        )
 
 
 def synchronize(device: Optional[torch.device] = None) -> None:
     """Synchronize operations on the given device.
+
+    This ensures all pending operations on the device are completed.
+    For devices that don't support synchronization (MPS, CPU), this is a no-op.
 
     Args:
         device: The device to synchronize. If None, uses current device.
@@ -180,13 +243,20 @@ def synchronize(device: Optional[torch.device] = None) -> None:
         device = get_current_device()
 
     device_type = device.type
-    if device_type == 'cuda':
-        torch.cuda.synchronize(device)
-    elif device_type == 'npu':
-        torch.npu.synchronize(device)
-    elif device_type == 'xpu':
-        torch.xpu.synchronize(device)
-    # Other devices don't have synchronize methods or don't need it
+    try:
+        if device_type == 'cuda':
+            torch.cuda.synchronize(device)
+        elif device_type == 'npu':
+            torch.npu.synchronize(device)
+        elif device_type == 'xpu':
+            torch.xpu.synchronize(device)
+        # Other devices (MPS, MLU, MUSA, CPU) don't have synchronize methods
+        # or don't need explicit synchronization
+    except Exception as e:
+        logger.debug(
+            f'Failed to synchronize device {device}: {e}. '
+            f'This may be normal for devices that don\'t support synchronization.'
+        )
 
 
 def reset_peak_memory_stats(device: Optional[torch.device] = None) -> None:
@@ -294,11 +364,48 @@ def memory_stats(device: Optional[torch.device] = None) -> Dict[str, Any]:
 def supports_cuda_graph() -> bool:
     """Check if the current device supports CUDA Graph optimization.
 
+    Currently, only CUDA devices support graph optimization. Other devices
+    may support similar optimizations in the future.
+
     Returns:
         True if CUDA Graph is supported, False otherwise.
     """
-    # Only CUDA devices support CUDA Graph
+    # Only CUDA devices support CUDA Graph currently
+    # Note: Other devices may have similar graph optimizations in the future
     return is_torch_cuda_available()
+
+
+def get_device_capabilities(
+        device: Optional[torch.device] = None) -> Dict[str, Any]:
+    """Get capabilities and features supported by the device.
+
+    This function returns a dictionary describing what features are available
+    on the given device, such as graph optimization, memory management, etc.
+
+    Args:
+        device: The device to query. If None, uses current device.
+
+    Returns:
+        Dictionary with device capabilities:
+        - 'supports_graph': Whether device supports graph optimization
+        - 'supports_empty_cache': Whether device supports cache clearing
+        - 'supports_synchronize': Whether device supports synchronization
+        - 'supports_memory_stats': Whether device supports memory statistics
+        - 'device_type': Type of device ('cuda', 'npu', 'xpu', etc.)
+    """
+    if device is None:
+        device = get_current_device()
+
+    device_type = device.type
+    capabilities = {
+        'device_type': device_type,
+        'supports_graph': device_type == 'cuda',
+        'supports_empty_cache': device_type in ('cuda', 'npu', 'xpu'),
+        'supports_synchronize': device_type in ('cuda', 'npu', 'xpu'),
+        'supports_memory_stats': device_type in ('cuda', 'npu', 'xpu'),
+    }
+
+    return capabilities
 
 
 def move_tensor_to_device(tensor: torch.Tensor,

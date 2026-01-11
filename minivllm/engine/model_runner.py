@@ -391,16 +391,38 @@ class ModelRunner:
         empty_cache()
 
     def allocate_kv_cache(self) -> None:
-        """Allocate KV cache memory based on device memory availability."""
+        """Allocate KV cache memory based on device memory availability.
+
+        This method calculates the optimal number of KV cache blocks based on:
+        - Available device memory
+        - Memory utilization configuration
+        - Model architecture (number of layers, heads, etc.)
+
+        Raises:
+            RuntimeError: If insufficient memory is available for KV cache allocation.
+            ValueError: If calculated number of cache blocks is invalid.
+        """
         config: Config = self.config
         hf_config: Any = config.hf_config
+
+        # Get device memory information
         free: int
         total: int
-        free, total = mem_get_info(self.device)
+        try:
+            free, total = mem_get_info(self.device)
+        except Exception as e:
+            logger.error(
+                f'Failed to get memory info for device {self.device}: {e}')
+            raise RuntimeError(
+                f'Cannot allocate KV cache: failed to query device memory. '
+                f'Device: {self.device.type}, Error: {e}') from e
+
         used: int = total - free
         stats: Dict[str, Any] = memory_stats(self.device)
         peak: int = stats.get('allocated_bytes.all.peak', 0)
         current: int = stats.get('allocated_bytes.all.current', 0)
+
+        # Calculate KV cache requirements
         num_kv_heads: int = (hf_config.num_key_value_heads // self.world_size)
         head_dim: int = getattr(
             hf_config, 'head_dim',
@@ -408,19 +430,54 @@ class ModelRunner:
         block_bytes: int = (2 * hf_config.num_hidden_layers * self.block_size *
                             num_kv_heads * head_dim *
                             hf_config.torch_dtype.itemsize)
-        config.num_kvcache_blocks = int(
-            (total * config.gpu_memory_utilization - used - peak + current) //
-            block_bytes)
-        assert config.num_kvcache_blocks > 0
-        self.kv_cache = torch.empty(2, hf_config.num_hidden_layers,
-                                    config.num_kvcache_blocks, self.block_size,
-                                    num_kv_heads, head_dim)
+
+        # Calculate number of cache blocks that fit in available memory
+        available_memory: int = int(total * config.gpu_memory_utilization -
+                                    used - peak + current)
+
+        if available_memory <= 0:
+            raise RuntimeError(
+                f'Insufficient memory for KV cache allocation. '
+                f'Device: {self.device.type}, Available: {available_memory} bytes, '
+                f'Required per block: {block_bytes} bytes. '
+                f'Try reducing gpu_memory_utilization or max_model_len.')
+
+        config.num_kvcache_blocks = int(available_memory // block_bytes)
+
+        if config.num_kvcache_blocks <= 0:
+            raise ValueError(
+                f'Calculated KV cache blocks ({config.num_kvcache_blocks}) must be > 0. '
+                f'Available memory: {available_memory} bytes, '
+                f'Block size: {block_bytes} bytes. '
+                f'Device: {self.device.type}')
+
+        logger.info(
+            f'Allocating KV cache: {config.num_kvcache_blocks} blocks, '
+            f'{config.num_kvcache_blocks * block_bytes / (1024**3):.2f} GB, '
+            f'device: {self.device.type}')
+
+        # Allocate KV cache tensor
+        self.kv_cache = torch.empty(2,
+                                    hf_config.num_hidden_layers,
+                                    config.num_kvcache_blocks,
+                                    self.block_size,
+                                    num_kv_heads,
+                                    head_dim,
+                                    device=self.device,
+                                    dtype=hf_config.torch_dtype)
+
+        # Assign cache slices to model layers
         layer_id: int = 0
         for module in self.model.modules():
             if hasattr(module, 'k_cache') and hasattr(module, 'v_cache'):
                 module.k_cache = self.kv_cache[0, layer_id]
                 module.v_cache = self.kv_cache[1, layer_id]
                 layer_id += 1
+
+        if layer_id == 0:
+            logger.warning(
+                'No attention layers found with k_cache/v_cache attributes. '
+                'KV cache may not be properly initialized.')
 
     def prepare_block_tables(self, sequences: List[Sequence]) -> torch.Tensor:
         """Prepare block tables for sequences.
@@ -818,21 +875,31 @@ class ModelRunner:
         self.graph_pool: Optional[Any] = None
 
         # Capture graphs in reverse order for efficiency
+        # Note: Currently only CUDA devices support graph optimization
+        # Other devices may support similar optimizations in the future
         for bs in reversed(self.graph_bs):
+            # Create CUDA graph for this batch size
+            # This is device-specific and only works on CUDA devices
+            if self.device.type != 'cuda':
+                logger.warning(
+                    f'Graph optimization requested but device {self.device.type} '
+                    f'does not support CUDA Graph. Skipping graph capture.')
+                break
+
             graph: Any = torch.cuda.CUDAGraph()
             set_context(False,
                         slot_mapping=slot_mapping[:bs],
                         context_lens=context_lens[:bs],
                         block_tables=block_tables[:bs])
 
-            # Warmup
+            # Warmup: run model once to establish memory patterns
             outputs[:bs] = self.model(input_ids[:bs], positions[:bs])
 
-            # Capture
+            # Capture: record the computation graph for replay
             with torch.cuda.graph(graph, self.graph_pool):
                 outputs[:bs] = self.model(input_ids[:bs], positions[:bs])
 
-            # Create graph pool on first iteration
+            # Create graph pool on first iteration for memory efficiency
             if self.graph_pool is None:
                 self.graph_pool = graph.pool()
 
