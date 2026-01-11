@@ -196,16 +196,21 @@ def get_distributed_backend() -> str:
     """Get the appropriate distributed backend for the current device.
 
     Returns:
-        Backend name: 'nccl' for CUDA, 'hccl' for NPU, 'gloo' for CPU, etc.
+        Backend name: 'nccl' for CUDA, 'hccl' for NPU, 'ccl' for XPU,
+        'gloo' for CPU and other devices.
     """
     if is_torch_npu_available():
-        return 'hccl'
+        return 'hccl'  # Huawei NPU backend
     elif is_torch_cuda_available():
-        return 'nccl'
+        return 'nccl'  # NVIDIA CUDA backend
     elif is_torch_xpu_available():
-        return 'ccl'  # Intel oneCCL
+        return 'ccl'  # Intel XPU backend (oneCCL)
+    elif is_torch_mlu_available():
+        return 'cncl'  # Cambricon MLU backend
+    elif is_torch_musa_available():
+        return 'musa'  # Moonshot MUSA backend
     else:
-        return 'gloo'  # Fallback to gloo for CPU and other devices
+        return 'gloo'  # Fallback to gloo for CPU, MPS and other devices
 
 
 def empty_cache() -> None:
@@ -361,18 +366,29 @@ def memory_stats(device: Optional[torch.device] = None) -> Dict[str, Any]:
         return {}
 
 
-def supports_cuda_graph() -> bool:
-    """Check if the current device supports CUDA Graph optimization.
+def supports_device_graph() -> bool:
+    """Check if the current device supports device graph optimization.
 
     Currently, only CUDA devices support graph optimization. Other devices
     may support similar optimizations in the future.
 
     Returns:
-        True if CUDA Graph is supported, False otherwise.
+        True if device graph is supported, False otherwise.
     """
-    # Only CUDA devices support CUDA Graph currently
+    # Only CUDA devices support graph optimization currently
     # Note: Other devices may have similar graph optimizations in the future
     return is_torch_cuda_available()
+
+
+def supports_cuda_graph() -> bool:
+    """Check if the current device supports CUDA Graph optimization.
+
+    This is an alias for supports_device_graph() for backward compatibility.
+
+    Returns:
+        True if CUDA Graph is supported, False otherwise.
+    """
+    return supports_device_graph()
 
 
 def get_device_capabilities(

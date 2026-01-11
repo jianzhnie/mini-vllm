@@ -17,11 +17,9 @@ import torch.distributed as dist
 from minivllm.config import Config
 from minivllm.engine.sequence import Sequence
 from minivllm.models.layers import Sampler
-from minivllm.models.qwen3 import Qwen3ForCausalLM
 from minivllm.utils.context import (Context, get_context, reset_context,
                                     set_context)
 from minivllm.utils.device import (empty_cache, get_current_device,
-                                   get_default_device_name,
                                    get_distributed_backend, mem_get_info,
                                    memory_stats, move_tensor_to_device,
                                    reset_peak_memory_stats, set_device,
@@ -117,7 +115,8 @@ class ModelRunner:
 
         # Get current device for this rank
         self.device: torch.device = get_current_device()
-        self.device_name: str = get_default_device_name()
+        self.device_name: str = self.device.type
+        self.device_index: int = self.device.index if self.device.index is not None else 0
 
         # Initialize distributed communication
         if self.world_size > 1:
@@ -131,11 +130,16 @@ class ModelRunner:
         set_device(self.device)
         default_dtype: torch.dtype = torch.get_default_dtype()
         torch.set_default_dtype(hf_config.torch_dtype)
-        torch.set_default_device(self.device_name)
+        torch.set_default_device(self.device)
 
-        # Load model (NOTE: These functions need to be implemented)
-        self.model = Qwen3ForCausalLM(hf_config)
+        # Load model based on HuggingFace config
+        from minivllm.models import create_model
+        self.model = create_model(hf_config)
         self.sampler = Sampler()
+
+        # Move model and sampler to device
+        self.model = self.model.to(self.device)
+        self.sampler = self.sampler.to(self.device)
 
         # Allocate KV cache and warmup
         self.warmup_model()
@@ -699,50 +703,50 @@ class ModelRunner:
         Raises:
             RuntimeError: If device graph inference fails due to missing graph attributes.
         """
-        # Use eager execution for prefill, eager mode, large batches, or non-CUDA devices
+        # Use eager execution for prefill, eager mode, large batches, or non-graph devices
         if (is_prefill or self.enforce_eager or input_ids.size(0) > 512
                 or not supports_cuda_graph()):
             # Prefill: Long sequences, better to use eager execution
             # Eager mode: User has requested no graph optimization
             # Large batches: Graphs are cached for specific batch sizes, large batches
             # may not match any cached graph size efficiently
-            # Non-CUDA devices: Graph optimization not supported
+            # Non-graph devices: Graph optimization not supported
             return self.model.compute_logits(self.model(input_ids, positions))
         else:
-            # Use CUDA graph replay for decode phase (small batches, CUDA devices only)
-            # CUDA graphs provide significant speedups for small, repeated workloads
+            # Use device graph replay for decode phase (small batches, supported devices only)
+            # Device graphs provide significant speedups for small, repeated workloads
             # like the decode phase where we generate one token at a time
             bs: int = input_ids.size(0)
             context: Context = get_context()
 
-            # Validate CUDA graph attributes are initialized
+            # Validate device graph attributes are initialized
             if not hasattr(self, 'graphs') or self.graphs is None:
                 raise RuntimeError(
-                    'CUDA graphs not initialized. This may happen if enforce_eager=True '
+                    'Device graphs not initialized. This may happen if enforce_eager=True '
                     'or if graph capture failed during initialization.')
 
             if not hasattr(self, 'graph_bs') or self.graph_bs is None:
                 raise RuntimeError(
-                    'CUDA graph batch sizes not initialized. This may happen if enforce_eager=True '
+                    'Device graph batch sizes not initialized. This may happen if enforce_eager=True '
                     'or if graph capture failed during initialization.')
 
             if not hasattr(self, 'graph_vars') or self.graph_vars is None:
                 raise RuntimeError(
-                    'CUDA graph variables not initialized. This may happen if enforce_eager=True '
+                    'Device graph variables not initialized. This may happen if enforce_eager=True '
                     'or if graph capture failed during initialization.')
 
             # Find smallest graph batch size >= current batch size
-            # This ensures we can reuse the captured CUDA graph for efficient decode
+            # This ensures we can reuse the captured device graph for efficient decode
             try:
                 graph_bs_idx: int = next(x for x in self.graph_bs if x >= bs)
             except StopIteration:
                 raise RuntimeError(
-                    f'No cached CUDA graph found for batch size {bs}. '
+                    f'No cached device graph found for batch size {bs}. '
                     f'Available graph batch sizes: {self.graph_bs}')
 
             if graph_bs_idx not in self.graphs:
                 raise RuntimeError(
-                    f'CUDA graph not found for batch size {graph_bs_idx}. '
+                    f'Device graph not found for batch size {graph_bs_idx}. '
                     f'Available graph batch sizes: {list(self.graphs.keys())}')
 
             graph: Any = self.graphs[graph_bs_idx]
@@ -767,7 +771,7 @@ class ModelRunner:
                 graph_vars[
                     'block_tables'][:bs, :max_blocks] = context.block_tables
 
-            # Replay the captured CUDA graph for efficient inference
+            # Replay the captured device graph for efficient inference
             # This avoids the overhead of repeated kernel launches
             graph.replay()
             return self.model.compute_logits(graph_vars['outputs'][:bs])
@@ -812,17 +816,20 @@ class ModelRunner:
         return token_ids
 
     @torch.inference_mode()
-    def capture_cudagraph(self) -> None:
-        """Capture device graphs (CUDA Graph on CUDA devices) for efficient decode phase execution.
+    def capture_device_graph(self) -> None:
+        """Capture device graphs for efficient decode phase execution.
 
         Captures graphs for different batch sizes to accelerate the decode
         phase where token-by-token generation happens. The graphs are captured
         with representative batch sizes: [1, 2, 4, 8, 16, 32, ...].
 
+        Currently, only CUDA devices support graph optimization, but the code
+        is structured to support other devices with similar capabilities in the future.
+
         This method:
         1. Pre-allocates tensors for graph variables on the correct device
         2. Iterates through predefined batch sizes in reverse
-        3. Warms up and captures CUDA graphs for each batch size (CUDA devices only)
+        3. Warms up and captures device graphs for each batch size (CUDA devices only)
         4. Stores graphs for later replay during inference
 
         Side Effects:
@@ -831,10 +838,10 @@ class ModelRunner:
 
         Note:
             This is skipped if enforce_eager=True or if the device does not
-            support graph capture (only CUDA devices support CUDA Graph).
+            support graph capture.
             On non-CUDA devices, this method will log a warning and return early.
         """
-        # Only CUDA devices support CUDA Graph
+        # Only CUDA devices support graph optimization currently
         if not supports_cuda_graph():
             logger.warning(
                 f'CUDA Graph optimization not supported on {self.device.type} device. '
@@ -875,37 +882,32 @@ class ModelRunner:
         self.graph_pool: Optional[Any] = None
 
         # Capture graphs in reverse order for efficiency
-        # Note: Currently only CUDA devices support graph optimization
-        # Other devices may support similar optimizations in the future
         for bs in reversed(self.graph_bs):
-            # Create CUDA graph for this batch size
-            # This is device-specific and only works on CUDA devices
-            if self.device.type != 'cuda':
-                logger.warning(
-                    f'Graph optimization requested but device {self.device.type} '
-                    f'does not support CUDA Graph. Skipping graph capture.')
-                break
+            # Create device graph for this batch size
+            if self.device.type == 'cuda':
+                graph: Any = torch.cuda.CUDAGraph()
+                set_context(False,
+                            slot_mapping=slot_mapping[:bs],
+                            context_lens=context_lens[:bs],
+                            block_tables=block_tables[:bs])
 
-            graph: Any = torch.cuda.CUDAGraph()
-            set_context(False,
-                        slot_mapping=slot_mapping[:bs],
-                        context_lens=context_lens[:bs],
-                        block_tables=block_tables[:bs])
-
-            # Warmup: run model once to establish memory patterns
-            outputs[:bs] = self.model(input_ids[:bs], positions[:bs])
-
-            # Capture: record the computation graph for replay
-            with torch.cuda.graph(graph, self.graph_pool):
+                # Warmup: run model once to establish memory patterns
                 outputs[:bs] = self.model(input_ids[:bs], positions[:bs])
 
-            # Create graph pool on first iteration for memory efficiency
-            if self.graph_pool is None:
-                self.graph_pool = graph.pool()
+                # Capture: record the computation graph for replay
+                with torch.cuda.graph(graph, self.graph_pool):
+                    outputs[:bs] = self.model(input_ids[:bs], positions[:bs])
 
-            self.graphs[bs] = graph
-            synchronize(self.device)
-            reset_context()
+                # Create graph pool on first iteration for memory efficiency
+                if self.graph_pool is None:
+                    self.graph_pool = graph.pool()
+
+                self.graphs[bs] = graph
+                synchronize(self.device)
+                reset_context()
+            else:
+                # Other devices don't support graph capture yet
+                break
 
         # Store graph variables for use during inference
         self.graph_vars: Dict[str, torch.Tensor] = dict(
