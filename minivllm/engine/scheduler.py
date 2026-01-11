@@ -191,7 +191,7 @@ class Scheduler:
             error_msg = (
                 'No sequences scheduled, but scheduler is not finished. '
                 f'State: waiting={len(self.waiting)}, running={len(self.running)}, '
-                f'max_seqs={self.max_num_seqs}, max_tokens={self.max_num_batched_tokens}'
+                f'max_num_seqs={self.max_num_seqs}, max_num_batched_tokens={self.max_num_batched_tokens}'
             )
             if self.waiting:
                 first_waiting = self.waiting[0]
