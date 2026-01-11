@@ -23,7 +23,8 @@ from minivllm.utils.device import (empty_cache, get_current_device,
                                    get_distributed_backend, mem_get_info,
                                    memory_stats, move_tensor_to_device,
                                    reset_peak_memory_stats, set_device,
-                                   supports_cuda_graph, synchronize)
+                                   should_use_pin_memory, supports_cuda_graph,
+                                   synchronize, validate_device)
 from minivllm.utils.logger_utils import get_logger
 
 logger = get_logger(__name__)
@@ -118,9 +119,18 @@ class ModelRunner:
         self.device_name: str = self.device.type
         self.device_index: int = self.device.index if self.device.index is not None else 0
 
+        # Validate device is available
+        validate_device(self.device)
+        logger.info(
+            f'Rank {self.rank}: Using device {self.device} ({self.device_name})'
+        )
+
         # Initialize distributed communication
         if self.world_size > 1:
             backend: str = get_distributed_backend()
+            logger.info(
+                f'Rank {self.rank}: Initializing distributed backend {backend}'
+            )
             dist.init_process_group(backend,
                                     'tcp://localhost:2333',
                                     world_size=self.world_size,
@@ -130,7 +140,15 @@ class ModelRunner:
         set_device(self.device)
         default_dtype: torch.dtype = torch.get_default_dtype()
         torch.set_default_dtype(hf_config.torch_dtype)
-        torch.set_default_device(self.device)
+        # torch.set_default_device is available in PyTorch 2.0+
+        # It's device-agnostic and works with all device types
+        try:
+            torch.set_default_device(self.device)
+        except AttributeError:
+            # Fallback for older PyTorch versions
+            logger.debug(
+                'torch.set_default_device not available, using device context manager'
+            )
 
         # Load model based on HuggingFace config
         from minivllm.models import create_model
@@ -148,9 +166,14 @@ class ModelRunner:
         # Capture device graphs for efficient decode (optional)
         # Only CUDA devices support graph optimization currently
         if not self.enforce_eager and supports_cuda_graph():
-            self.capture_cudagraph()
+            self.capture_device_graph()
 
-        torch.set_default_device('cpu')
+        # Reset default device and dtype to avoid affecting other code
+        try:
+            torch.set_default_device('cpu')
+        except AttributeError:
+            # Fallback for older PyTorch versions
+            pass
         torch.set_default_dtype(default_dtype)
 
         # Setup IPC for distributed inference
@@ -436,7 +459,8 @@ class ModelRunner:
                             hf_config.torch_dtype.itemsize)
 
         # Calculate number of cache blocks that fit in available memory
-        available_memory: int = int(total * config.gpu_memory_utilization -
+        # Use device_memory_utilization (backward compatible with gpu_memory_utilization)
+        available_memory: int = int(total * config.device_memory_utilization -
                                     used - peak + current)
 
         if available_memory <= 0:
@@ -444,7 +468,7 @@ class ModelRunner:
                 f'Insufficient memory for KV cache allocation. '
                 f'Device: {self.device.type}, Available: {available_memory} bytes, '
                 f'Required per block: {block_bytes} bytes. '
-                f'Try reducing gpu_memory_utilization or max_model_len.')
+                f'Try reducing device_memory_utilization or max_model_len.')
 
         config.num_kvcache_blocks = int(available_memory // block_bytes)
 
@@ -501,9 +525,10 @@ class ModelRunner:
             seq.block_table + [-1] * (max_len - len(seq.block_table))
             for seq in sequences
         ]
-        block_tables_tensor: torch.Tensor = torch.tensor(block_tables,
-                                                         dtype=torch.int32,
-                                                         pin_memory=True)
+        block_tables_tensor: torch.Tensor = torch.tensor(
+            block_tables,
+            dtype=torch.int32,
+            pin_memory=should_use_pin_memory(self.device))
         return move_tensor_to_device(block_tables_tensor,
                                      self.device,
                                      non_blocking=True)
@@ -561,29 +586,34 @@ class ModelRunner:
         # making block_tables non-empty for prefix cache scenarios
         if cum_seqlens_k[-1] > cum_seqlens_q[-1]:  # prefix cache
             block_tables = self.prepare_block_tables(sequences)
-        input_ids = torch.tensor(input_ids, dtype=torch.int64, pin_memory=True)
+        pin_mem = should_use_pin_memory(self.device)
+        input_ids = torch.tensor(input_ids,
+                                 dtype=torch.int64,
+                                 pin_memory=pin_mem)
         input_ids = move_tensor_to_device(input_ids,
                                           self.device,
                                           non_blocking=True)
-        positions = torch.tensor(positions, dtype=torch.int64, pin_memory=True)
+        positions = torch.tensor(positions,
+                                 dtype=torch.int64,
+                                 pin_memory=pin_mem)
         positions = move_tensor_to_device(positions,
                                           self.device,
                                           non_blocking=True)
         cum_seqlens_q = torch.tensor(cum_seqlens_q,
                                      dtype=torch.int32,
-                                     pin_memory=True)
+                                     pin_memory=pin_mem)
         cum_seqlens_q = move_tensor_to_device(cum_seqlens_q,
                                               self.device,
                                               non_blocking=True)
         cum_seqlens_k = torch.tensor(cum_seqlens_k,
                                      dtype=torch.int32,
-                                     pin_memory=True)
+                                     pin_memory=pin_mem)
         cum_seqlens_k = move_tensor_to_device(cum_seqlens_k,
                                               self.device,
                                               non_blocking=True)
         slot_mapping = torch.tensor(slot_mapping,
                                     dtype=torch.int32,
-                                    pin_memory=True)
+                                    pin_memory=pin_mem)
         slot_mapping = move_tensor_to_device(slot_mapping,
                                              self.device,
                                              non_blocking=True)
@@ -628,27 +658,28 @@ class ModelRunner:
             slot_mapping.append(seq.block_table[-1] * self.block_size +
                                 seq.last_block_num_tokens - 1)
 
+        pin_mem = should_use_pin_memory(self.device)
         input_ids_tensor: torch.Tensor = torch.tensor(input_ids,
                                                       dtype=torch.int64,
-                                                      pin_memory=True)
+                                                      pin_memory=pin_mem)
         input_ids_tensor = move_tensor_to_device(input_ids_tensor,
                                                  self.device,
                                                  non_blocking=True)
         positions_tensor: torch.Tensor = torch.tensor(positions,
                                                       dtype=torch.int64,
-                                                      pin_memory=True)
+                                                      pin_memory=pin_mem)
         positions_tensor = move_tensor_to_device(positions_tensor,
                                                  self.device,
                                                  non_blocking=True)
         slot_mapping_tensor: torch.Tensor = torch.tensor(slot_mapping,
                                                          dtype=torch.int32,
-                                                         pin_memory=True)
+                                                         pin_memory=pin_mem)
         slot_mapping_tensor = move_tensor_to_device(slot_mapping_tensor,
                                                     self.device,
                                                     non_blocking=True)
         context_lens_tensor: torch.Tensor = torch.tensor(context_lens,
                                                          dtype=torch.int32,
-                                                         pin_memory=True)
+                                                         pin_memory=pin_mem)
         context_lens_tensor = move_tensor_to_device(context_lens_tensor,
                                                     self.device,
                                                     non_blocking=True)
@@ -677,9 +708,10 @@ class ModelRunner:
         for seq in sequences:
             temperatures.append(seq.temperature)
 
-        temperatures_tensor: torch.Tensor = torch.tensor(temperatures,
-                                                         dtype=torch.float32,
-                                                         pin_memory=True)
+        temperatures_tensor: torch.Tensor = torch.tensor(
+            temperatures,
+            dtype=torch.float32,
+            pin_memory=should_use_pin_memory(self.device))
         return move_tensor_to_device(temperatures_tensor,
                                      self.device,
                                      non_blocking=True)
