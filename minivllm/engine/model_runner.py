@@ -448,25 +448,29 @@ class ModelRunner:
         slot_mapping: List[int] = []
         block_tables: Optional[torch.Tensor] = None
 
-        for seq in sequences:
-            seqlen: int = len(seq)
-            input_ids.extend(seq[seq.num_cached_tokens:])
-            positions.extend(list(range(seq.num_cached_tokens, seqlen)))
-            seqlen_q = seqlen - seq.num_cached_tokens
+        for sequence in sequences:
+            seqlen: int = len(sequence)
+            input_ids.extend(sequence[sequence.num_cached_tokens:])
+            positions.extend(list(range(sequence.num_cached_tokens, seqlen)))
+            seqlen_q = seqlen - sequence.num_cached_tokens
             seqlen_k = seqlen
             cum_seqlens_q.append(cum_seqlens_q[-1] + seqlen_q)
             cum_seqlens_k.append(cum_seqlens_k[-1] + seqlen_k)
             max_seqlen_q = max(seqlen_q, max_seqlen_q)
             max_seqlen_k = max(seqlen_k, max_seqlen_k)
-            if not seq.block_table:  # warmup
+            if not sequence.block_table:  # warmup
                 continue
-            for i in range(seq.num_cached_blocks, seq.num_blocks):
-                start = seq.block_table[i] * self.block_size
-                if i != seq.num_blocks - 1:
+
+        # slot mapping 为 token 到 KV cache 全局 slot index 的映射
+            for i in range(sequence.num_cached_blocks, sequence.num_blocks):
+                start = sequence.block_table[i] * self.block_size
+                if i != sequence.num_blocks - 1:
                     end = start + self.block_size
                 else:
-                    end = start + seq.last_block_num_tokens
+                    end = start + sequence.last_block_num_tokens
                 slot_mapping.extend(list(range(start, end)))
+        # 当从 prefill 切换到 decode 时，需要开始使用历史 KV
+        # 这时使用 prepare_block_tables 将多个 sequence 的 block table 拼在一起，block_tables 不再为空。
         if cum_seqlens_k[-1] > cum_seqlens_q[-1]:  # prefix cache
             block_tables = self.prepare_block_tables(sequences)
         input_ids = torch.tensor(input_ids, dtype=torch.int64,

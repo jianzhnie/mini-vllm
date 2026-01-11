@@ -167,14 +167,17 @@ class Scheduler:
             # Ensure space for appending next token during decode
             # Handle cache pressure by preempting sequences when necessary
             while not self.block_manager.can_append(sequence):
+                # 若当前无法为该序列追加 KV（资源不足），则尝试抢占其他序列
                 if self.running:
                     # Preempt another sequence to make space for current one
                     # This maintains fairness by preempting the most recently scheduled
+                    # 先抢占队尾的一个运行序列，释放其 KV 块
                     preempted_seq = self.running.pop()
                     self.preempt(preempted_seq)
                 else:
                     # No other sequences available: preempt current sequence
                     # It will be rescheduled when cache space becomes available
+                    # 若没有可抢占对象，只能将自己抢占回 waiting
                     self.preempt(sequence)
                     break
             else:
