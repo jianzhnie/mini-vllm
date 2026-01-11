@@ -19,6 +19,9 @@ from minivllm.models.layers import Sampler
 from minivllm.models.qwen3 import Qwen3ForCausalLM
 from minivllm.utils.context import (Context, get_context, reset_context,
                                     set_context)
+from minivllm.utils.logger_utils import get_logger
+
+logger = get_logger(__name__)
 
 
 class ModelRunner:
@@ -156,10 +159,8 @@ class ModelRunner:
             This method uses ordered cleanup to respect resource dependencies.
             Errors in individual steps are logged but don't prevent subsequent cleanup.
         """
-        import logging
         import warnings
 
-        logger = logging.getLogger(__name__)
         errors: List[str] = []
 
         try:

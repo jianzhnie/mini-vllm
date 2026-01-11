@@ -32,14 +32,13 @@ Dependencies:
     - torch: Always required
 """
 
-import logging
-
 import torch
 from torch import nn
 
 from minivllm.utils.context import get_context
+from minivllm.utils.logger_utils import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Optional imports for high-performance attention
 try:
