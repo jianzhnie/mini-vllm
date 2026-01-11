@@ -37,7 +37,7 @@ Dependencies:
     - torch: Always required
 """
 
-from typing import Any
+from typing import Any, Tuple
 
 import torch
 from torch import nn
@@ -463,7 +463,7 @@ class Attention(nn.Module):
         self,
         k: torch.Tensor,
         v: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Repeat key/value heads to match query heads for GQA/MQA.
 
         Args:

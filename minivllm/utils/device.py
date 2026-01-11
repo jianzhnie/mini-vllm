@@ -13,11 +13,13 @@ logger = get_logger(__name__)
 
 
 def get_visible_devices_keyword() -> str:
-    """Function that gets visible devices keyword name.
+    """Get the environment variable keyword for visible devices.
+
     Returns:
-        'CUDA_VISIBLE_DEVICES' or `ASCEND_RT_VISIBLE_DEVICES`
+        'CUDA_VISIBLE_DEVICES' for CUDA devices or 'ASCEND_RT_VISIBLE_DEVICES' for NPU devices.
     """
-    return 'CUDA_VISIBLE_DEVICES' if is_torch_cuda_available else 'ASCEND_RT_VISIBLE_DEVICES'
+    return 'CUDA_VISIBLE_DEVICES' if is_torch_cuda_available(
+    ) else 'ASCEND_RT_VISIBLE_DEVICES'
 
 
 def get_dist_info() -> Tuple[int, int, int]:

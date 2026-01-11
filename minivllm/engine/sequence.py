@@ -270,22 +270,28 @@ class Sequence:
             self.block_table,
         ) = state[:-1]
 
-        if self.num_completion_tokens == 0:
+        # Restore token data based on serialization format
+        token_data: Union[List[int], int] = state[-1]
+
+        # Calculate completion tokens count for logic check
+        num_completion_tokens = self.num_tokens - self.num_prompt_tokens
+
+        if num_completion_tokens == 0:
             # If no completion tokens, restore full token list
-            token_data: Union[List[int], int] = state[-1]
             if isinstance(token_data, list):
                 self.token_ids = token_data
             else:
-                # This should not happen for sequences with no completion tokens
+                # Fallback: single token as list
                 self.token_ids = [token_data]
             self.last_token = self.token_ids[-1]
         else:
             # If has completions, only last token was serialized
-            last_token_data: Union[List[int], int] = state[-1]
-            if isinstance(last_token_data, int):
+            if isinstance(token_data, int):
+                # Reconstruct prompt tokens (zeros as placeholder) and last token
                 self.token_ids = [0] * self.num_prompt_tokens
-                self.last_token = last_token_data
+                self.last_token = token_data
             else:
-                # This should not happen for sequences with completion tokens
-                self.token_ids = last_token_data
-                self.last_token = self.token_ids[-1]
+                # Unexpected: list provided but should be int for sequences with completions
+                # This might happen if serialization format changed - restore what we can
+                self.token_ids = token_data
+                self.last_token = self.token_ids[-1] if self.token_ids else 0

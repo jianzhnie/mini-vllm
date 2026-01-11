@@ -261,11 +261,20 @@ class BlockManager:
 
             # Validate cache hit: hash match AND token ID match
             # This double-check ensures we don't have hash collisions
-            if block_id == -1 or self.blocks[block_id].token_ids != token_ids:
-                cache_miss = True  # No match found, need to allocate new block
+            if block_id == -1:
+                cache_miss = True  # No hash match found
+            elif block_id not in range(len(self.blocks)):
+                cache_miss = True  # Invalid block_id
+            elif self.blocks[block_id].token_ids != token_ids:
+                cache_miss = True  # Hash collision detected - token IDs don't match
 
             if cache_miss:
                 # Cache miss: allocate a new block from free pool
+                if not self.free_block_ids:
+                    raise ValueError(
+                        f'No free blocks available for allocation. '
+                        f'Need {sequence.num_blocks} blocks, '
+                        f'have {len(self.free_block_ids)} free blocks.')
                 block_id = self.free_block_ids[0]
                 block: Block = self._allocate_block(block_id)
             else:

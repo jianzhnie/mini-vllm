@@ -112,6 +112,8 @@ class ModelRunner:
         # Use Any type for graphs to support different device graph types
         self.graphs: Optional[Dict[int, Any]] = None
         self.graph_vars: Optional[Dict[str, torch.Tensor]] = None
+        self.graph_bs: Optional[List[int]] = None
+        self.graph_pool: Optional[Any] = None
 
         # Get current device for this rank
         self.device: torch.device = get_current_device()
@@ -483,7 +485,8 @@ class ModelRunner:
             if not sequence.block_table:  # warmup
                 continue
 
-        # slot mapping 为 token 到 KV cache 全局 slot index 的映射
+            # Slot mapping: maps tokens to global KV cache slot indices
+            # This allows efficient placement of KV values in the cache
             for i in range(sequence.num_cached_blocks, sequence.num_blocks):
                 start = sequence.block_table[i] * self.block_size
                 if i != sequence.num_blocks - 1:
@@ -491,8 +494,10 @@ class ModelRunner:
                 else:
                     end = start + sequence.last_block_num_tokens
                 slot_mapping.extend(list(range(start, end)))
-        # 当从 prefill 切换到 decode 时，需要开始使用历史 KV
-        # 这时使用 prepare_block_tables 将多个 sequence 的 block table 拼在一起，block_tables 不再为空。
+
+        # When transitioning from prefill to decode, we need to start using cached KV
+        # Use prepare_block_tables to combine multiple sequence block tables,
+        # making block_tables non-empty for prefix cache scenarios
         if cum_seqlens_k[-1] > cum_seqlens_q[-1]:  # prefix cache
             block_tables = self.prepare_block_tables(sequences)
         input_ids = torch.tensor(input_ids, dtype=torch.int64, pin_memory=True)
