@@ -6,8 +6,9 @@ engine with support for:
 - KV cache with block-level management and prefix caching
 - Configurable sampling parameters
 - Efficient batching and scheduling
-- Multi-GPU tensor parallelism
-- CUDA graph optimization for decode phase
+- Multi-device tensor parallelism (CUDA, NPU, XPU, etc.)
+- Device graph optimization for decode phase (CUDA Graph on CUDA devices)
+- Multi-device support (CUDA, NPU, XPU, MPS, MLU, MUSA)
 
 The main entry point is the LLM class, which provides a simple interface
 for text generation on pre-trained language models.

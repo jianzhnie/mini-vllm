@@ -1,8 +1,9 @@
 """Model Runner module for executing model inference.
 
 This module provides the ModelRunner class which handles model loading,
-KV cache management, CUDA graph capture for efficient batching, and
-distributed tensor parallelism using PyTorch's distributed backend.
+KV cache management, device graph capture for efficient batching (CUDA Graph
+on CUDA devices), and distributed tensor parallelism using PyTorch's distributed
+backend. Supports multiple device types including CUDA, NPU, XPU, etc.
 """
 
 import pickle
@@ -19,6 +20,12 @@ from minivllm.models.layers import Sampler
 from minivllm.models.qwen3 import Qwen3ForCausalLM
 from minivllm.utils.context import (Context, get_context, reset_context,
                                     set_context)
+from minivllm.utils.device import (empty_cache, get_current_device,
+                                   get_default_device_name,
+                                   get_distributed_backend, mem_get_info,
+                                   memory_stats, move_tensor_to_device,
+                                   reset_peak_memory_stats, set_device,
+                                   supports_cuda_graph, synchronize)
 from minivllm.utils.logger_utils import get_logger
 
 logger = get_logger(__name__)
@@ -26,32 +33,35 @@ logger = get_logger(__name__)
 
 class ModelRunner:
     """Executes model inference with distributed tensor parallelism
-    and CUDA graph optimization.
+    and device graph optimization (CUDA Graph on CUDA devices).
 
     The ModelRunner handles:
     - Loading pre-trained language models
     - Allocating and managing KV cache memory
     - Batching sequences efficiently
-    - Capturing and replaying CUDA graphs for decode phase
-    - Distributed inference across multiple GPUs using tensor parallelism
+    - Capturing and replaying device graphs for decode phase (CUDA Graph on CUDA)
+    - Distributed inference across multiple devices using tensor parallelism
     - Token sampling based on model logits
+    - Multi-device support (CUDA, NPU, XPU, etc.)
 
-    For single-GPU inference (tensor_parallel_size=1), the ModelRunner runs
-    in the main process. For multi-GPU inference, worker processes are spawned
+    For single-device inference (tensor_parallel_size=1), the ModelRunner runs
+    in the main process. For multi-device inference, worker processes are spawned
     that communicate via shared memory.
 
     Attributes:
         config: Engine configuration.
-        rank: GPU rank in distributed setup (0 = main process).
-        world_size: Total number of GPUs.
+        rank: Device rank in distributed setup (0 = main process).
+        world_size: Total number of devices.
+        device: Current device (torch.device).
+        device_name: Device name string ('cuda', 'npu', etc.).
         model: The loaded language model.
         tokenizer: Tokenizer for text processing.
         sampler: Token sampler for generation.
         kv_cache: Pre-allocated tensor for KV cache.
         block_size: Number of tokens per cache block.
-        enforce_eager: Whether to skip CUDA graph optimization.
-        graphs: Dictionary of captured CUDA graphs for different batch sizes.
-        graph_vars: Shared tensors for CUDA graphs.
+        enforce_eager: Whether to skip device graph optimization.
+        graphs: Dictionary of captured device graphs for different batch sizes.
+        graph_vars: Shared tensors for device graphs.
         shm: Shared memory for IPC with worker processes.
     """
 
@@ -68,7 +78,7 @@ class ModelRunner:
 
         Args:
             config: Engine configuration with model path and settings.
-            rank: GPU rank (0 = main GPU in distributed setup).
+            rank: Device rank (0 = main device in distributed setup).
             event: Synchronization event(s) for distributed coordination.
                 If single Event, used for worker process synchronization.
                 If List[Event], multiple events for synchronizing with
@@ -80,8 +90,9 @@ class ModelRunner:
             ValueError: If configuration is invalid.
 
         Note:
-            For multi-GPU inference, worker processes (rank > 0) will block
+            For multi-device inference, worker processes (rank > 0) will block
             in the __init__ loop waiting for commands from the main process.
+            Device graph optimization (CUDA Graph) is only supported on CUDA devices.
         """
         self.config: Config = config
         hf_config: Any = config.hf_config
@@ -98,21 +109,27 @@ class ModelRunner:
         self.sampler: Optional[Any] = None
         self.kv_cache: Optional[torch.Tensor] = None
         self.share_memory: Optional[SharedMemory] = None
-        self.graphs: Optional[Dict[int, torch.cuda.CUDAGraph]] = None
+        # Use Any type for graphs to support different device graph types
+        self.graphs: Optional[Dict[int, Any]] = None
         self.graph_vars: Optional[Dict[str, torch.Tensor]] = None
+
+        # Get current device for this rank
+        self.device: torch.device = get_current_device()
+        self.device_name: str = get_default_device_name()
 
         # Initialize distributed communication
         if self.world_size > 1:
-            dist.init_process_group('nccl',
+            backend: str = get_distributed_backend()
+            dist.init_process_group(backend,
                                     'tcp://localhost:2333',
                                     world_size=self.world_size,
                                     rank=rank)
 
-        # Set CUDA device and dtype
-        torch.cuda.set_device(rank)
+        # Set device and dtype
+        set_device(self.device)
         default_dtype: torch.dtype = torch.get_default_dtype()
         torch.set_default_dtype(hf_config.torch_dtype)
-        torch.set_default_device('cuda')
+        torch.set_default_device(self.device_name)
 
         # Load model (NOTE: These functions need to be implemented)
         self.model = Qwen3ForCausalLM(hf_config)
@@ -122,8 +139,9 @@ class ModelRunner:
         self.warmup_model()
         self.allocate_kv_cache()
 
-        # Capture CUDA graphs for efficient decode (optional)
-        if not self.enforce_eager:
+        # Capture device graphs for efficient decode (optional)
+        # Only CUDA devices support graph optimization currently
+        if not self.enforce_eager and supports_cuda_graph():
             self.capture_cudagraph()
 
         torch.set_default_device('cpu')
@@ -187,12 +205,12 @@ class ModelRunner:
                     logger.error(f'Shared memory cleanup error: {e}',
                                  exc_info=True)
 
-            # Step 2: Cleanup CUDA graphs (must be done before CUDA sync)
-            if not self.enforce_eager:
+            # Step 2: Cleanup device graphs (must be done before device sync)
+            if not self.enforce_eager and supports_cuda_graph():
                 try:
                     if hasattr(self, 'graphs') and self.graphs is not None:
                         logger.debug(
-                            f'Rank {self.rank}: Cleaning up {len(self.graphs)} CUDA graphs'
+                            f'Rank {self.rank}: Cleaning up {len(self.graphs)} device graphs'
                         )
                         del self.graphs
                         self.graphs = None
@@ -208,19 +226,20 @@ class ModelRunner:
                         self.graph_vars = None
                 except Exception as e:
                     errors.append(
-                        f'Failed to cleanup CUDA graphs (rank {self.rank}): {e}'
+                        f'Failed to cleanup device graphs (rank {self.rank}): {e}'
                     )
-                    logger.error(f'CUDA graphs cleanup error: {e}',
+                    logger.error(f'Device graphs cleanup error: {e}',
                                  exc_info=True)
 
-            # Step 3: Synchronize CUDA operations (critical for proper cleanup)
+            # Step 3: Synchronize device operations (critical for proper cleanup)
             try:
-                logger.debug(f'Rank {self.rank}: Synchronizing CUDA...')
-                torch.cuda.synchronize()
+                logger.debug(f'Rank {self.rank}: Synchronizing device...')
+                synchronize(self.device)
             except Exception as e:
                 errors.append(
-                    f'Failed to synchronize CUDA (rank {self.rank}): {e}')
-                logger.error(f'CUDA synchronization error: {e}', exc_info=True)
+                    f'Failed to synchronize device (rank {self.rank}): {e}')
+                logger.error(f'Device synchronization error: {e}',
+                             exc_info=True)
 
             # Step 4: Destroy distributed process group (lowest priority)
             if self.world_size > 1:
@@ -357,8 +376,8 @@ class ModelRunner:
 
     def warmup_model(self) -> None:
         """Warmup model by running inference on dummy data."""
-        torch.cuda.empty_cache()
-        torch.cuda.reset_peak_memory_stats()
+        empty_cache()
+        reset_peak_memory_stats(self.device)
         max_batched_tokens = self.config.max_num_batched_tokens
         max_model_len = self.config.max_model_len
         num_seqs = min(max_batched_tokens // max_model_len,
@@ -367,19 +386,19 @@ class ModelRunner:
             Sequence([0] * max_model_len) for _ in range(num_seqs)
         ]
         self.run(seqs, True)
-        torch.cuda.empty_cache()
+        empty_cache()
 
     def allocate_kv_cache(self) -> None:
-        """Allocate KV cache memory based on GPU memory availability."""
+        """Allocate KV cache memory based on device memory availability."""
         config: Config = self.config
         hf_config: Any = config.hf_config
         free: int
         total: int
-        free, total = torch.cuda.mem_get_info()
+        free, total = mem_get_info(self.device)
         used: int = total - free
-        peak: int = torch.cuda.memory_stats()['allocated_bytes.all.peak']
-        current: int = (
-            torch.cuda.memory_stats()['allocated_bytes.all.current'])
+        stats: Dict[str, Any] = memory_stats(self.device)
+        peak: int = stats.get('allocated_bytes.all.peak', 0)
+        current: int = stats.get('allocated_bytes.all.current', 0)
         num_kv_heads: int = (hf_config.num_key_value_heads // self.world_size)
         head_dim: int = getattr(
             hf_config, 'head_dim',
@@ -419,10 +438,12 @@ class ModelRunner:
             seq.block_table + [-1] * (max_len - len(seq.block_table))
             for seq in sequences
         ]
-        block_tables_tensor: torch.Tensor = torch.tensor(
-            block_tables, dtype=torch.int32,
-            pin_memory=True).cuda(non_blocking=True)
-        return block_tables_tensor
+        block_tables_tensor: torch.Tensor = torch.tensor(block_tables,
+                                                         dtype=torch.int32,
+                                                         pin_memory=True)
+        return move_tensor_to_device(block_tables_tensor,
+                                     self.device,
+                                     non_blocking=True)
 
     def prepare_prefill(
             self,
@@ -474,19 +495,32 @@ class ModelRunner:
         # 这时使用 prepare_block_tables 将多个 sequence 的 block table 拼在一起，block_tables 不再为空。
         if cum_seqlens_k[-1] > cum_seqlens_q[-1]:  # prefix cache
             block_tables = self.prepare_block_tables(sequences)
-        input_ids = torch.tensor(input_ids, dtype=torch.int64,
-                                 pin_memory=True).cuda(non_blocking=True)
-        positions = torch.tensor(positions, dtype=torch.int64,
-                                 pin_memory=True).cuda(non_blocking=True)
+        input_ids = torch.tensor(input_ids, dtype=torch.int64, pin_memory=True)
+        input_ids = move_tensor_to_device(input_ids,
+                                          self.device,
+                                          non_blocking=True)
+        positions = torch.tensor(positions, dtype=torch.int64, pin_memory=True)
+        positions = move_tensor_to_device(positions,
+                                          self.device,
+                                          non_blocking=True)
         cum_seqlens_q = torch.tensor(cum_seqlens_q,
                                      dtype=torch.int32,
-                                     pin_memory=True).cuda(non_blocking=True)
+                                     pin_memory=True)
+        cum_seqlens_q = move_tensor_to_device(cum_seqlens_q,
+                                              self.device,
+                                              non_blocking=True)
         cum_seqlens_k = torch.tensor(cum_seqlens_k,
                                      dtype=torch.int32,
-                                     pin_memory=True).cuda(non_blocking=True)
+                                     pin_memory=True)
+        cum_seqlens_k = move_tensor_to_device(cum_seqlens_k,
+                                              self.device,
+                                              non_blocking=True)
         slot_mapping = torch.tensor(slot_mapping,
                                     dtype=torch.int32,
-                                    pin_memory=True).cuda(non_blocking=True)
+                                    pin_memory=True)
+        slot_mapping = move_tensor_to_device(slot_mapping,
+                                             self.device,
+                                             non_blocking=True)
         set_context(
             True,
             max_seqlen_q,
@@ -528,18 +562,30 @@ class ModelRunner:
             slot_mapping.append(seq.block_table[-1] * self.block_size +
                                 seq.last_block_num_tokens - 1)
 
-        input_ids_tensor: torch.Tensor = torch.tensor(
-            input_ids, dtype=torch.int64,
-            pin_memory=True).cuda(non_blocking=True)
-        positions_tensor: torch.Tensor = torch.tensor(
-            positions, dtype=torch.int64,
-            pin_memory=True).cuda(non_blocking=True)
-        slot_mapping_tensor: torch.Tensor = torch.tensor(
-            slot_mapping, dtype=torch.int32,
-            pin_memory=True).cuda(non_blocking=True)
-        context_lens_tensor: torch.Tensor = torch.tensor(
-            context_lens, dtype=torch.int32,
-            pin_memory=True).cuda(non_blocking=True)
+        input_ids_tensor: torch.Tensor = torch.tensor(input_ids,
+                                                      dtype=torch.int64,
+                                                      pin_memory=True)
+        input_ids_tensor = move_tensor_to_device(input_ids_tensor,
+                                                 self.device,
+                                                 non_blocking=True)
+        positions_tensor: torch.Tensor = torch.tensor(positions,
+                                                      dtype=torch.int64,
+                                                      pin_memory=True)
+        positions_tensor = move_tensor_to_device(positions_tensor,
+                                                 self.device,
+                                                 non_blocking=True)
+        slot_mapping_tensor: torch.Tensor = torch.tensor(slot_mapping,
+                                                         dtype=torch.int32,
+                                                         pin_memory=True)
+        slot_mapping_tensor = move_tensor_to_device(slot_mapping_tensor,
+                                                    self.device,
+                                                    non_blocking=True)
+        context_lens_tensor: torch.Tensor = torch.tensor(context_lens,
+                                                         dtype=torch.int32,
+                                                         pin_memory=True)
+        context_lens_tensor = move_tensor_to_device(context_lens_tensor,
+                                                    self.device,
+                                                    non_blocking=True)
         block_tables: torch.Tensor = self.prepare_block_tables(sequences)
 
         set_context(False,
@@ -565,10 +611,12 @@ class ModelRunner:
         for seq in sequences:
             temperatures.append(seq.temperature)
 
-        temperatures_tensor: torch.Tensor = torch.tensor(
-            temperatures, dtype=torch.float32,
-            pin_memory=True).cuda(non_blocking=True)
-        return temperatures_tensor
+        temperatures_tensor: torch.Tensor = torch.tensor(temperatures,
+                                                         dtype=torch.float32,
+                                                         pin_memory=True)
+        return move_tensor_to_device(temperatures_tensor,
+                                     self.device,
+                                     non_blocking=True)
 
     @torch.inference_mode()
     def run_model(self, input_ids: torch.Tensor, positions: torch.Tensor,
@@ -576,28 +624,30 @@ class ModelRunner:
         """Run model inference and compute logits.
 
         For prefill or small batches, uses eager execution. For decode with
-        larger batches, replays captured CUDA graphs for efficiency.
+        larger batches on CUDA devices, replays captured CUDA graphs for efficiency.
 
         Args:
-            input_ids: Input token IDs tensor on GPU.
-            positions: Token position tensor on GPU.
+            input_ids: Input token IDs tensor on device.
+            positions: Token position tensor on device.
             is_prefill: Whether this is prefill (True) or decode (False) phase.
 
         Returns:
             Logits tensor of shape (batch_size, vocab_size).
 
         Raises:
-            RuntimeError: If CUDA graph inference fails due to missing graph attributes.
+            RuntimeError: If device graph inference fails due to missing graph attributes.
         """
-        if is_prefill or self.enforce_eager or input_ids.size(0) > 512:
-            # Use eager execution for prefill, eager mode, or large batches
+        # Use eager execution for prefill, eager mode, large batches, or non-CUDA devices
+        if (is_prefill or self.enforce_eager or input_ids.size(0) > 512
+                or not supports_cuda_graph()):
             # Prefill: Long sequences, better to use eager execution
             # Eager mode: User has requested no graph optimization
             # Large batches: Graphs are cached for specific batch sizes, large batches
             # may not match any cached graph size efficiently
+            # Non-CUDA devices: Graph optimization not supported
             return self.model.compute_logits(self.model(input_ids, positions))
         else:
-            # Use CUDA graph replay for decode phase (small batches)
+            # Use CUDA graph replay for decode phase (small batches, CUDA devices only)
             # CUDA graphs provide significant speedups for small, repeated workloads
             # like the decode phase where we generate one token at a time
             bs: int = input_ids.size(0)
@@ -633,7 +683,7 @@ class ModelRunner:
                     f'CUDA graph not found for batch size {graph_bs_idx}. '
                     f'Available graph batch sizes: {list(self.graphs.keys())}')
 
-            graph: torch.cuda.CUDAGraph = self.graphs[graph_bs_idx]
+            graph: Any = self.graphs[graph_bs_idx]
             graph_vars: Dict[str, torch.Tensor] = self.graph_vars
 
             # Update graph variables with current batch data
@@ -701,16 +751,16 @@ class ModelRunner:
 
     @torch.inference_mode()
     def capture_cudagraph(self) -> None:
-        """Capture CUDA graphs for efficient decode phase execution.
+        """Capture device graphs (CUDA Graph on CUDA devices) for efficient decode phase execution.
 
         Captures graphs for different batch sizes to accelerate the decode
         phase where token-by-token generation happens. The graphs are captured
         with representative batch sizes: [1, 2, 4, 8, 16, 32, ...].
 
         This method:
-        1. Pre-allocates tensors for graph variables
+        1. Pre-allocates tensors for graph variables on the correct device
         2. Iterates through predefined batch sizes in reverse
-        3. Warms up and captures CUDA graphs for each batch size
+        3. Warms up and captures CUDA graphs for each batch size (CUDA devices only)
         4. Stores graphs for later replay during inference
 
         Side Effects:
@@ -718,39 +768,53 @@ class ModelRunner:
             self.graph_vars which are used during inference in run_model.
 
         Note:
-            This is skipped if enforce_eager=True or if the model does not
-            support graph capture.
+            This is skipped if enforce_eager=True or if the device does not
+            support graph capture (only CUDA devices support CUDA Graph).
+            On non-CUDA devices, this method will log a warning and return early.
         """
+        # Only CUDA devices support CUDA Graph
+        if not supports_cuda_graph():
+            logger.warning(
+                f'CUDA Graph optimization not supported on {self.device.type} device. '
+                f'Skipping graph capture.')
+            return
+
         config: Config = self.config
         hf_config: Any = config.hf_config
         max_block_size: int = min(self.config.max_num_seqs, 512)
         max_num_blocks: int = ((config.max_model_len + self.block_size - 1) //
                                self.block_size)
 
-        # Pre-allocate tensors for graphs
+        # Pre-allocate tensors for graphs on the correct device
         input_ids: torch.Tensor = torch.zeros(max_block_size,
-                                              dtype=torch.int64)
+                                              dtype=torch.int64,
+                                              device=self.device)
         positions: torch.Tensor = torch.zeros(max_block_size,
-                                              dtype=torch.int64)
+                                              dtype=torch.int64,
+                                              device=self.device)
         slot_mapping: torch.Tensor = torch.zeros(max_block_size,
-                                                 dtype=torch.int32)
+                                                 dtype=torch.int32,
+                                                 device=self.device)
         context_lens: torch.Tensor = torch.zeros(max_block_size,
-                                                 dtype=torch.int32)
+                                                 dtype=torch.int32,
+                                                 device=self.device)
         block_tables: torch.Tensor = torch.zeros(max_block_size,
                                                  max_num_blocks,
-                                                 dtype=torch.int32)
+                                                 dtype=torch.int32,
+                                                 device=self.device)
         outputs: torch.Tensor = torch.zeros(max_block_size,
-                                            hf_config.hidden_size)
+                                            hf_config.hidden_size,
+                                            device=self.device)
 
         # Batch sizes to capture graphs for
         self.graph_bs: List[int] = [1, 2, 4, 8] + list(
             range(16, max_block_size + 1, 16))
-        self.graphs: Dict[int, torch.cuda.CUDAGraph] = {}
-        self.graph_pool: Optional[torch.cuda.graph_pool_handle] = None
+        self.graphs: Dict[int, Any] = {}
+        self.graph_pool: Optional[Any] = None
 
         # Capture graphs in reverse order for efficiency
         for bs in reversed(self.graph_bs):
-            graph: torch.cuda.CUDAGraph = torch.cuda.CUDAGraph()
+            graph: Any = torch.cuda.CUDAGraph()
             set_context(False,
                         slot_mapping=slot_mapping[:bs],
                         context_lens=context_lens[:bs],
@@ -768,7 +832,7 @@ class ModelRunner:
                 self.graph_pool = graph.pool()
 
             self.graphs[bs] = graph
-            torch.cuda.synchronize()
+            synchronize(self.device)
             reset_context()
 
         # Store graph variables for use during inference
