@@ -105,8 +105,8 @@ class Qwen3Attention(nn.Module):
         k = k.view(-1, self.num_kv_heads, self.head_dim)
         v = v.view(-1, self.num_kv_heads, self.head_dim)
         if not self.qkv_bias:
-            q = self.q_norm(q)
-            k = self.k_norm(k)
+            q, _ = self.q_norm(q)
+            k, _ = self.k_norm(k)
         q, k = self.rotary_emb(positions, q, k)
         o = self.attn(q, k, v)
         output = self.o_proj(o.flatten(1, -1))
@@ -208,8 +208,8 @@ class Qwen3DecoderLayer(nn.Module):
         residual: Optional[torch.Tensor],
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         if residual is None:
-            hidden_states, residual = self.input_layernorm(
-                hidden_states), hidden_states
+            hidden_states, _ = self.input_layernorm(hidden_states)
+            residual = hidden_states
         else:
             hidden_states, residual = self.input_layernorm(
                 hidden_states, residual)
