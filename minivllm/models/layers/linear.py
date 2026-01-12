@@ -85,9 +85,6 @@ class LinearBase(nn.Module):
         self.tp_rank: int = get_tensor_parallel_rank()
         self.tp_size: int = get_tensor_parallel_world_size()
 
-        self.input_size: int = input_size
-        self.output_size: int = output_size
-
         self.weight: nn.Parameter = nn.Parameter(
             torch.empty(output_size, input_size))
         self.weight.weight_loader = self.weight_loader  # type: ignore
