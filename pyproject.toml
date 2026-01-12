@@ -3,7 +3,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mini-vllm"
+name = "minivllm"
 version = "0.1.0"
 authors = [{ name = "jianzhnie" }]
 license = "Apache-2.0"
