@@ -14,6 +14,7 @@ from minivllm import LLM, SamplingParams
 
 def main():
     model_name_or_path = os.path.expanduser('~/hfhub/models/Qwen/Qwen3-0.6B/')
+    print(model_name_or_path)
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
     llm = LLM(model_name_or_path, enforce_eager=True, tensor_parallel_size=1)
 
