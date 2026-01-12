@@ -1,5 +1,12 @@
 import os
 
+import torch
+
+try:
+    torch._dynamo.config.suppress_errors = True
+except Exception:
+    pass
+
 from transformers import AutoTokenizer
 
 from minivllm import LLM, SamplingParams
