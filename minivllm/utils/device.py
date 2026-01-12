@@ -1,3 +1,22 @@
+"""Device management utilities for multi-device support.
+
+This module provides utilities for managing PyTorch devices, supporting
+multiple hardware accelerators including CUDA, NPU, XPU, MPS, MLU, and MUSA.
+
+Key features:
+- Device detection and initialization
+- Memory management across device types
+- Distributed training support
+- Device graph optimization
+- Multi-device tensor parallelism
+
+Example:
+    >>> from minivllm.utils.device import get_current_device, get_device_count
+    >>> device = get_current_device()
+    >>> num_devices = get_device_count()
+    >>> print(f"Using device {device} ({num_devices} devices available)")
+"""
+
 import os
 from typing import Any, Dict, Optional, Tuple
 
@@ -12,13 +31,24 @@ from minivllm.utils.logger_utils import get_logger
 logger = get_logger(__name__)
 
 # Device type constants for easier reference and type checking
-DEVICE_TYPE_CUDA = 'cuda'
-DEVICE_TYPE_NPU = 'npu'
-DEVICE_TYPE_XPU = 'xpu'
-DEVICE_TYPE_MPS = 'mps'
-DEVICE_TYPE_MLU = 'mlu'
-DEVICE_TYPE_MUSA = 'musa'
-DEVICE_TYPE_CPU = 'cpu'
+DEVICE_TYPE_CUDA: str = 'cuda'
+DEVICE_TYPE_NPU: str = 'npu'
+DEVICE_TYPE_XPU: str = 'xpu'
+DEVICE_TYPE_MPS: str = 'mps'
+DEVICE_TYPE_MLU: str = 'mlu'
+DEVICE_TYPE_MUSA: str = 'musa'
+DEVICE_TYPE_CPU: str = 'cpu'
+
+# Tuple of all supported device types for convenience
+SUPPORTED_DEVICE_TYPES: Tuple[str, ...] = (
+    DEVICE_TYPE_CUDA,
+    DEVICE_TYPE_NPU,
+    DEVICE_TYPE_XPU,
+    DEVICE_TYPE_MPS,
+    DEVICE_TYPE_MLU,
+    DEVICE_TYPE_MUSA,
+    DEVICE_TYPE_CPU,
+)
 
 
 def get_visible_devices_keyword() -> str:

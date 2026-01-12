@@ -195,3 +195,20 @@ class Config:
                 f'max_num_batched_tokens ({self.max_num_batched_tokens}) '
                 f'must be >= max_model_len ({self.max_model_len}) '
                 f'to accommodate the full context length in a single batch.')
+
+    def __repr__(self) -> str:
+        """Return a detailed string representation of the configuration.
+
+        Returns:
+            A formatted string showing all configuration parameters.
+        """
+        config_items = []
+        for field_name in [
+                'model', 'max_num_batched_tokens', 'max_num_seqs',
+                'max_model_len', 'device_memory_utilization',
+                'tensor_parallel_size', 'enforce_eager', 'kvcache_block_size',
+                'num_kvcache_blocks', 'eos'
+        ]:
+            value = getattr(self, field_name, None)
+            config_items.append(f'{field_name}={value!r}')
+        return f'Config({", ".join(config_items)})'

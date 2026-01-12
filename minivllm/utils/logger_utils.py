@@ -3,12 +3,13 @@ import os
 import sys
 from logging import Formatter, LogRecord
 from pathlib import Path
-from typing import Optional, Union
+from typing import Dict, Optional, Union
 
 import torch.distributed as dist
 from colorama import Fore, Style
 
-logger_initialized: dict = {}
+# Track which loggers have already been initialized to avoid duplicate handlers
+logger_initialized: Dict[str, bool] = {}
 
 
 class ColorfulFormatter(Formatter):
@@ -33,6 +34,14 @@ class ColorfulFormatter(Formatter):
     }
 
     def format(self, record: LogRecord) -> str:
+        """Format a log record with color codes and rank information.
+
+        Args:
+            record: The log record to format.
+
+        Returns:
+            The formatted log message with color codes.
+        """
         # Add rank information to the record
         record.rank = self._get_rank()
         record.is_main = record.rank == 0
@@ -44,7 +53,14 @@ class ColorfulFormatter(Formatter):
         return self.COLORS.get(record.levelname, '') + log_message + Fore.RESET
 
     def _get_rank(self) -> int:
-        """Get the current process rank in a safe way."""
+        """Get the current process rank in a safe way.
+
+        Attempts to retrieve rank from distributed training environment,
+        falls back to environment variables, defaults to 0.
+
+        Returns:
+            int: The rank of the current process (0 for main process)
+        """
         try:
             if dist.is_available() and dist.is_initialized():
                 return dist.get_rank()
