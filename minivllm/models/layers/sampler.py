@@ -91,8 +91,7 @@ class Sampler(nn.Module):
         # Apply temperature scaling
         # Clamp to prevent divide-by-zero
         temperatures_clamped = temperatures.clamp_min(self.MIN_TEMPERATURE)
-        logits_scaled = logits.float().div_(
-            temperatures_clamped.unsqueeze(dim=1))
+        logits_scaled = logits.float() / temperatures_clamped.unsqueeze(dim=1)
 
         # Convert scaled logits to probabilities
         probs = torch.softmax(logits_scaled, dim=-1)
@@ -100,8 +99,8 @@ class Sampler(nn.Module):
         # Approximate Gumbel sampling using exponential noise
         # This is faster than true Gumbel: -log(-log(uniform))
         # but provides similar diversity characteristics
-        noise = torch.empty_like(probs).exponential_(1).clamp_min_(
+        noise = torch.empty_like(probs).exponential_(1).clamp_min(
             self.MIN_PROB)
-        sample_tokens = probs.div_(noise).argmax(dim=-1)
+        sample_tokens = (probs / noise).argmax(dim=-1)
 
         return sample_tokens

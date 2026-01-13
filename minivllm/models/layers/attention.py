@@ -133,7 +133,7 @@ def store_kvcache(
     v_cache: torch.Tensor,
     slot_mapping: torch.Tensor,
 ) -> None:
-    """Store key-value pairs to cache using Triton kernel.
+    """Store key-value pairs to cache using Triton kernel or PyTorch fallback.
 
     This function efficiently writes K/V tensors to their cache locations
     based on slot mapping, enabling fast KV-cache updates during inference.
@@ -155,9 +155,28 @@ def store_kvcache(
     assert k_cache.stride(1) == hidden_size and v_cache.stride(
         1) == hidden_size
     assert slot_mapping.numel() == batch_size
-    store_kvcache_kernel[(batch_size, )](key, key.stride(0), value,
-                                         value.stride(0), k_cache, v_cache,
-                                         slot_mapping, hidden_size)
+
+    if _TRITON_AVAILABLE:
+        # Use Triton kernel for optimal performance
+        store_kvcache_kernel[(batch_size, )](key, key.stride(0), value,
+                                             value.stride(0), k_cache, v_cache,
+                                             slot_mapping, hidden_size)
+    else:
+        # PyTorch fallback implementation
+        for i in range(batch_size):
+            slot = slot_mapping[i].item()
+            if slot != -1:
+                # Reshape key and value to flat tensors for indexing
+                key_flat = key[i].view(hidden_size)
+                value_flat = value[i].view(hidden_size)
+
+                # Calculate cache offsets
+                cache_start = slot * hidden_size
+                cache_end = cache_start + hidden_size
+
+                # Store to cache
+                k_cache.view(-1)[cache_start:cache_end] = key_flat
+                v_cache.view(-1)[cache_start:cache_end] = value_flat
 
 
 class Attention(nn.Module):
