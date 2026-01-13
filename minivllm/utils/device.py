@@ -605,3 +605,60 @@ def validate_device(device: torch.device) -> None:
             f'Device {device} is not available. '
             f'Please check that the device is properly installed and accessible.'
         )
+
+
+def get_npu_device_stats(device: torch.device) -> Dict[str, float]:
+    """Get detailed NPU device statistics.
+
+    Args:
+        device: NPU device to query.
+
+    Returns:
+        Dictionary containing NPU device statistics.
+    """
+    if device.type != 'npu':
+        return {}
+
+    try:
+        # Get device name and capabilities
+        device_name = torch.npu.get_device_name(device)
+        device_capability = torch.npu.get_device_capability(device)
+
+        # Get basic device properties
+        device_properties = torch.npu.get_device_properties(device)
+
+        # Get basic memory info
+        free_memory, total_memory = torch.npu.mem_get_info(device)
+
+        # Get detailed memory stats
+        memory_stats = torch.npu.memory_stats(device)
+
+        # Calculate utilization metrics
+        used_memory = total_memory - free_memory
+        memory_utilization = used_memory / total_memory if total_memory > 0 else 0
+
+        npu_device_stats = {
+            'device_name': device_name,
+            'device_capability': device_capability,
+            'device_properties': device_properties,
+            'total_memory_gb': total_memory / (1024**3),
+            'used_memory_gb': used_memory / (1024**3),
+            'free_memory_gb': free_memory / (1024**3),
+            'memory_utilization_percent': memory_utilization * 100,
+            'allocated_bytes': memory_stats.get('allocated_bytes.all.current',
+                                                0),
+            'reserved_bytes': memory_stats.get('reserved_bytes.all.current',
+                                               0),
+            'active_bytes': memory_stats.get('active_bytes.all.current', 0),
+            'inactive_bytes': memory_stats.get('inactive_bytes.all.current',
+                                               0),
+        }
+        logger.info(f'NPU Device Stats for {device}:')
+        for key, value in npu_device_stats.items():
+            logger.info(f'{key}: {value}')
+
+        return npu_device_stats
+
+    except Exception as e:
+        logger.warning(f'Failed to get NPU memory stats for {device}: {e}')
+        return {}
