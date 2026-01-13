@@ -494,8 +494,12 @@ class Attention(nn.Module):
         """
         if self.num_kv_heads != self.num_heads:
             repeat_factor = self.num_heads // self.num_kv_heads
-            k = k.repeat_interleave(repeat_factor, dim=2)
-            v = v.repeat_interleave(repeat_factor, dim=2)
+            # Dynamically determine the dimension to repeat based on tensor shape
+            # Rank 4: [batch, seqlen, num_kv_heads, head_dim] -> repeat at dim=2
+            # Rank 5: [1, batch, seqlen, num_kv_heads, head_dim] -> repeat at dim=3
+            head_dim = 3 if k.dim() == 5 else 2
+            k = k.repeat_interleave(repeat_factor, dim=head_dim)
+            v = v.repeat_interleave(repeat_factor, dim=head_dim)
         return k, v
 
     def _compute_attention_weights(
