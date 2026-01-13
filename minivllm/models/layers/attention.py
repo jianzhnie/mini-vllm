@@ -434,14 +434,12 @@ class Attention(nn.Module):
                         break
                     tokens_in_block = min(block_size, seqlen - token_idx)
                     if tokens_in_block > 0:
-                        cached_k[
-                            i, token_idx:token_idx +
-                            tokens_in_block] = self.k_cache[:tokens_in_block,
-                                                            block_id]
-                        cached_v[
-                            i, token_idx:token_idx +
-                            tokens_in_block] = self.v_cache[:tokens_in_block,
-                                                            block_id]
+                        cached_k[i, token_idx:token_idx +
+                                 tokens_in_block] = self.k_cache[
+                                     block_id, :tokens_in_block]
+                        cached_v[i, token_idx:token_idx +
+                                 tokens_in_block] = self.v_cache[
+                                     block_id, :tokens_in_block]
                     token_idx += tokens_in_block
                     if token_idx >= seqlen:
                         break
