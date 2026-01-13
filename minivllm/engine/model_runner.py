@@ -16,8 +16,8 @@ import torch.distributed as dist
 
 from minivllm.config import Config
 from minivllm.engine.sequence import Sequence
-from minivllm.models import create_model
 from minivllm.models.layers import Sampler
+from minivllm.models.qwen3 import Qwen3ForCausalLM
 from minivllm.utils.context import (Context, get_context, reset_context,
                                     set_context)
 from minivllm.utils.device import (empty_cache, get_current_device,
@@ -26,6 +26,7 @@ from minivllm.utils.device import (empty_cache, get_current_device,
                                    reset_peak_memory_stats, set_device,
                                    should_use_pin_memory, supports_cuda_graph,
                                    synchronize, validate_device)
+from minivllm.utils.loader import load_model
 from minivllm.utils.logger_utils import get_logger
 
 logger = get_logger(__name__)
@@ -107,8 +108,9 @@ class ModelRunner:
         # environments where model loading is skipped (tests, stubs).
 
         # Load model based on HuggingFace config
-        self.model = create_model(hf_config)
+        self.model = Qwen3ForCausalLM(hf_config)
         self.sampler = Sampler()
+        load_model(self.model, config.model)
 
         self.kv_cache: Optional[torch.Tensor] = None
         self.share_memory: Optional[SharedMemory] = None
