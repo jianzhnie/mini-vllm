@@ -16,6 +16,7 @@ import torch.distributed as dist
 
 from minivllm.config import Config
 from minivllm.engine.sequence import Sequence
+from minivllm.models import create_model
 from minivllm.models.layers import Sampler
 from minivllm.utils.context import (Context, get_context, reset_context,
                                     set_context)
@@ -104,8 +105,11 @@ class ModelRunner:
         # Optional attributes that may be set later when model/sampler
         # are available. Initialize to None to avoid AttributeError in
         # environments where model loading is skipped (tests, stubs).
-        self.model: Optional[Any] = None
-        self.sampler: Optional[Any] = None
+
+        # Load model based on HuggingFace config
+        self.model = create_model(hf_config)
+        self.sampler = Sampler()
+
         self.kv_cache: Optional[torch.Tensor] = None
         self.share_memory: Optional[SharedMemory] = None
         # Use Any type for graphs to support different device graph types
@@ -131,8 +135,7 @@ class ModelRunner:
             logger.info(
                 f'Rank {self.rank}: Initializing distributed backend {backend}'
             )
-            dist.init_process_group(backend,
-                                    'tcp://localhost:2333',
+            dist.init_process_group(backend=backend,
                                     world_size=self.world_size,
                                     rank=rank)
 
@@ -149,11 +152,6 @@ class ModelRunner:
             logger.debug(
                 'torch.set_default_device not available, using device context manager'
             )
-
-        # Load model based on HuggingFace config
-        from minivllm.models import create_model
-        self.model = create_model(hf_config)
-        self.sampler = Sampler()
 
         # Move model and sampler to device
         self.model = self.model.to(self.device)
@@ -411,10 +409,10 @@ class ModelRunner:
         max_model_len = self.config.max_model_len
         num_seqs = min(max_batched_tokens // max_model_len,
                        self.config.max_num_seqs)
-        seqs: List[Sequence] = [
+        sequences: List[Sequence] = [
             Sequence([0] * max_model_len) for _ in range(num_seqs)
         ]
-        self.run(seqs, True)
+        self.run(sequences, True)
         empty_cache()
 
     def allocate_kv_cache(self) -> None:
