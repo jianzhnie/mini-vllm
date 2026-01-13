@@ -241,8 +241,7 @@ class ModelRunner:
                         logger.debug(
                             f'Rank {self.rank}: Cleaning up {len(self.graphs)} device graphs'
                         )
-                        del self.graphs
-                        self.graphs = None
+                        self.graphs.clear()
 
                     if hasattr(self,
                                'graph_pool') and self.graph_pool is not None:
@@ -251,8 +250,7 @@ class ModelRunner:
 
                     if hasattr(self,
                                'graph_vars') and self.graph_vars is not None:
-                        del self.graph_vars
-                        self.graph_vars = None
+                        self.graph_vars.clear()
                 except Exception as e:
                     errors.append(
                         f'Failed to cleanup device graphs (rank {self.rank}): {e}'
@@ -346,6 +344,8 @@ class ModelRunner:
         assert self.world_size > 1 and self.rank > 0, (
             'read_share_memory can only be called from worker processes')
         self.event.wait()  # type: ignore[union-attr]
+        if self.share_memory is None or self.share_memory.buf is None:
+            raise RuntimeError('Shared memory not initialized')
         n: int = int.from_bytes(self.share_memory.buf[0:4], 'little')
         method_name, *args = pickle.loads(self.share_memory.buf[4:n + 4])
         self.event.clear()  # type: ignore[union-attr]
@@ -371,6 +371,8 @@ class ModelRunner:
             'write_share_memory can only be called from main process')
         data: bytes = pickle.dumps([method_name, *args])
         n: int = len(data)
+        if self.share_memory is None or self.share_memory.buf is None:
+            raise RuntimeError('Shared memory not initialized')
         self.share_memory.buf[0:4] = n.to_bytes(4, 'little')
         self.share_memory.buf[4:n + 4] = data
         for event in self.event:  # type: ignore[union-attr]
@@ -496,11 +498,12 @@ class ModelRunner:
 
         # Assign cache slices to model layers
         layer_id: int = 0
-        for module in self.model.modules():
-            if hasattr(module, 'k_cache') and hasattr(module, 'v_cache'):
-                module.k_cache = self.kv_cache[0, layer_id]
-                module.v_cache = self.kv_cache[1, layer_id]
-                layer_id += 1
+        if self.kv_cache is not None:
+            for module in self.model.modules():
+                if hasattr(module, 'k_cache') and hasattr(module, 'v_cache'):
+                    module.k_cache = self.kv_cache[0, layer_id]
+                    module.v_cache = self.kv_cache[1, layer_id]
+                    layer_id += 1
 
         if layer_id == 0:
             logger.warning(
@@ -560,7 +563,8 @@ class ModelRunner:
 
         for sequence in sequences:
             seqlen: int = len(sequence)
-            input_ids.extend(sequence[sequence.num_cached_tokens:])
+            # Sequence __getitem__ 只支持 int，不支持切片，这里直接用 token_ids
+            input_ids.extend(sequence.token_ids[sequence.num_cached_tokens:])
             positions.extend(list(range(sequence.num_cached_tokens, seqlen)))
             seqlen_q = seqlen - sequence.num_cached_tokens
             seqlen_k = seqlen
