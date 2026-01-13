@@ -45,8 +45,9 @@ def find_parameter(model: nn.Module, name: str) -> Optional[nn.Parameter]:
     if hasattr(model, 'get_parameter') and callable(model.get_parameter):
         try:
             return model.get_parameter(name)
-        except Exception as e:
-            logger.debug(f"get_parameter failed for '{name}': {e}")
+        except Exception:
+            logger.debug(f"get_parameter failed for '{name}'")
+            return None
 
     # Fallback to named_parameters
     return dict(model.named_parameters()).get(name)
@@ -59,18 +60,7 @@ def apply_weight_loader(
     shard_id: Any = None,
     is_packed: bool = False,
 ) -> bool:
-    """Apply weight loader to a parameter, handling both packed and direct loading.
-
-    Args:
-        param: The parameter to load weights into.
-        tensor: The tensor containing weight data.
-        weight_name: Name of the weight for logging.
-        shard_id: Shard ID for packed module loading (if applicable).
-        is_packed: Whether this is a packed module load.
-
-    Returns:
-        True if loading succeeded, False otherwise.
-    """
+    """Apply weight loader to a parameter, handling both packed and direct loading."""
     weight_loader = getattr(param, 'weight_loader',
                             get_default_weight_loader())
 
@@ -80,10 +70,10 @@ def apply_weight_loader(
         else:
             weight_loader(param, tensor)
 
-        log_msg = f"Loaded {'packed ' if is_packed else ''}weight '{weight_name}'"
-        if is_packed and shard_id is not None:
-            log_msg += f' (shard_id: {shard_id})'
-        logger.debug(log_msg)
+        log_details = f' (shard_id: {shard_id})' if is_packed and shard_id is not None else ''
+        logger.debug(
+            f"Loaded {'packed ' if is_packed else ''}weight '{weight_name}'{log_details}"
+        )
         return True
 
     except Exception as e:
@@ -98,26 +88,24 @@ def load_weight(
     packed_modules_mapping: PackedModulesMapping,
 ) -> bool:
     """Load a single weight, trying packed mapping first then direct loading."""
-    # Try packed modules mapping first
+    # Check for packed modules mapping
     for pattern, (replacement_prefix,
                   shard_id) in packed_modules_mapping.items():
-        if pattern not in weight_name:
-            continue
+        if pattern in weight_name:
+            param_name = weight_name.replace(pattern, replacement_prefix)
+            param = find_parameter(model, param_name)
 
-        param_name = weight_name.replace(pattern, replacement_prefix)
-        param = find_parameter(model, param_name)
+            if param is None:
+                logger.warning(
+                    f"Parameter '{param_name}' not found for packed weight '{weight_name}'"
+                )
+                return False
 
-        if param is None:
-            logger.warning(
-                f"Parameter '{param_name}' not found for packed weight '{weight_name}'"
-            )
-            return False
-
-        return apply_weight_loader(param,
-                                   tensor,
-                                   weight_name,
-                                   shard_id,
-                                   is_packed=True)
+            return apply_weight_loader(param,
+                                       tensor,
+                                       weight_name,
+                                       shard_id,
+                                       is_packed=True)
 
     # Direct loading
     param = find_parameter(model, weight_name)
@@ -129,19 +117,10 @@ def load_weight(
 
 
 def load_model(model: nn.Module, model_path: Union[str, Path]) -> None:
-    """Load model weights from safetensors files in the specified directory.
-
-    Args:
-        model: The PyTorch module to load weights into.
-        model_path: Directory path containing .safetensors files.
-
-    Raises:
-        FileNotFoundError: If the specified path doesn't exist.
-        ValueError: If path is not a directory or no safetensors files found.
-        RuntimeError: If weight loading fails for any safetensors file.
-    """
-    # Validate path
+    """Load model weights from safetensors files in the specified directory."""
     base_path = Path(model_path)
+
+    # Validate path
     if not base_path.exists():
         raise FileNotFoundError(
             f'Model weight directory not found: {base_path}')
@@ -149,7 +128,7 @@ def load_model(model: nn.Module, model_path: Union[str, Path]) -> None:
         raise ValueError(f'Path must be a directory: {base_path}')
 
     # Find safetensors files
-    safetensor_files = sorted(base_path.glob('*.safetensors'))
+    safetensor_files = list(base_path.glob('*.safetensors'))
     if not safetensor_files:
         raise ValueError(f'No .safetensors files found in {base_path}')
 
@@ -164,9 +143,7 @@ def load_model(model: nn.Module, model_path: Union[str, Path]) -> None:
         )
 
     # Load weights and track statistics
-    total_weights = 0
-    loaded_weights = 0
-    missing_params = 0
+    total_weights = loaded_weights = 0
 
     for file_path in safetensor_files:
         logger.info(f'Loading weights from "{file_path.name}"')
@@ -180,8 +157,6 @@ def load_model(model: nn.Module, model_path: Union[str, Path]) -> None:
                     if load_weight(model, weight_name, tensor,
                                    packed_modules_mapping):
                         loaded_weights += 1
-                    else:
-                        missing_params += 1
 
         except Exception as exc:
             logger.exception(f'Failed to load weights from "{file_path}"')
@@ -190,6 +165,8 @@ def load_model(model: nn.Module, model_path: Union[str, Path]) -> None:
 
     # Log summary
     success_rate = loaded_weights / max(total_weights, 1)
+    missing_params = total_weights - loaded_weights
+
     if missing_params > 0:
         logger.warning(
             f'Weight loading completed with {missing_params} missing parameter(s) out of {total_weights} total weights'
