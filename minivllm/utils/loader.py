@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import inspect
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Optional, Tuple, Union
 
 import torch
 from safetensors import safe_open
@@ -30,6 +30,9 @@ from minivllm.utils.logger_utils import get_logger
 
 # Configure module logger
 logger = get_logger(__name__)
+
+# Type alias for packed modules mapping
+PackedModulesMapping = dict[str, Tuple[str, Any]]
 
 
 def default_weight_loader(
@@ -128,37 +131,37 @@ def _call_weight_loader(
         shard_id: Optional shard identifier for packed/sharded modules.
                   Only used if weight_loader accepts 3 arguments.
 
+    Raises:
+        TypeError: If weight_loader cannot be called with either 2 or 3 arguments.
+
     Note:
-        Tries the 3-argument form first when shard_id is provided, then falls back
-        to 2-argument form. Handles TypeError gracefully by attempting both forms
-        to ensure compatibility with various weight loader implementations.
+        Attempts 3-argument form first when shard_id is provided, then falls back
+        to 2-argument form. Handles TypeError gracefully by trying alternative
+        signatures to ensure compatibility with various weight loader implementations.
     """
+    # Try to determine the correct signature
     try:
-        # Prefer the 3-arg call when shard_id is provided
-        if shard_id is not None:
-            sig = inspect.signature(weight_loader)
-            # Check if weight_loader accepts at least 3 parameters
-            if len(sig.parameters) >= 3:
+        sig = inspect.signature(weight_loader)
+        num_params = len(sig.parameters)
+        accepts_three_args = num_params >= 3
+    except (ValueError, TypeError):
+        # If signature inspection fails, attempt both forms
+        accepts_three_args = None
+
+    # Attempt to call with appropriate argument count
+    if accepts_three_args is None or accepts_three_args:
+        try:
+            if shard_id is not None:
                 weight_loader(param, tensor, shard_id)
                 return
-
-        # Fallback to 2-arg call
-        weight_loader(param, tensor)
-
-    except TypeError as e:
-        # If signature inspection was wrong, attempt direct calls as fallback
-        logger.debug(
-            'Initial weight_loader call failed (%s), trying alternative signatures',
-            e)
-        try:
-            # Try 3-arg call
-            weight_loader(param, tensor, shard_id)  # type: ignore[arg-type]
         except TypeError:
-            # Fall back to 2-arg call
-            weight_loader(param, tensor)
+            pass
+
+    # Fall back to 2-argument call
+    weight_loader(param, tensor)
 
 
-def load_model(model: nn.Module, path: str | Path) -> None:
+def load_model(model: nn.Module, path: Union[str, Path]) -> None:
     """Load model weights from safetensors files in the specified directory.
 
     This function loads weights from all .safetensors files in the given directory,
@@ -219,7 +222,7 @@ def load_model(model: nn.Module, path: str | Path) -> None:
     )
 
     # Get packed modules mapping from model if available
-    packed_modules_mapping: Dict[str, tuple[str, Any]] = (getattr(
+    packed_modules_mapping: PackedModulesMapping = (getattr(
         model, 'packed_modules_mapping', None) or {})
     if packed_modules_mapping:
         logger.info(
@@ -263,9 +266,8 @@ def load_model(model: nn.Module, path: str | Path) -> None:
 
         except Exception as exc:
             logger.exception(
-                'Failed to load weights from "%s": %s',
+                'Failed to load weights from "%s"',
                 file_path,
-                exc,
             )
             raise RuntimeError(
                 f'Failed to load weights from "{file_path}": {exc}') from exc
@@ -279,9 +281,13 @@ def _load_with_packed_mapping(
     model: nn.Module,
     weight_name: str,
     tensor: torch.Tensor,
-    packed_modules_mapping: Dict[str, tuple[str, Any]],
+    packed_modules_mapping: PackedModulesMapping,
 ) -> bool:
     """Attempt to load weight using packed modules mapping patterns.
+
+    Checks if the weight name matches any pattern in the packed modules mapping,
+    and if so, applies the corresponding parameter name transformation and loads
+    the weight using the appropriate loader.
 
     Args:
         model: The PyTorch module containing parameters.
@@ -292,12 +298,12 @@ def _load_with_packed_mapping(
     Returns:
         True if a pattern matched and weight was loaded, False otherwise.
     """
-    for pattern, mapping in packed_modules_mapping.items():
+    for pattern, (replacement_prefix,
+                  shard_id) in packed_modules_mapping.items():
         if pattern not in weight_name:
             continue
 
-        # Pattern matched; extract mapping and resolve parameter
-        replacement_prefix, shard_id = mapping
+        # Pattern matched; transform weight name to parameter name
         param_name = weight_name.replace(pattern, replacement_prefix)
         param = _find_parameter(model, param_name)
 
@@ -310,22 +316,14 @@ def _load_with_packed_mapping(
             )
             return True  # Skip this weight but mark as processed
 
-        # Load weight using appropriate loader
-        weight_loader = getattr(param, 'weight_loader', None)
-        if weight_loader is None:
-            logger.debug(
-                "Loading packed parameter '%s' (shard_id: %s) with default loader",
-                param_name,
-                shard_id,
-            )
-            default_weight_loader(param, tensor)
-        else:
-            logger.debug(
-                "Loading packed parameter '%s' (shard_id: %s) with custom loader",
-                param_name,
-                shard_id,
-            )
-            _call_weight_loader(weight_loader, param, tensor, shard_id)
+        # Load weight using appropriate loader (custom or default)
+        weight_loader = getattr(param, 'weight_loader', default_weight_loader)
+        logger.debug(
+            "Loading packed parameter '%s' (shard_id: %s)",
+            param_name,
+            shard_id,
+        )
+        _call_weight_loader(weight_loader, param, tensor, shard_id)
 
         return True
 
@@ -338,6 +336,9 @@ def _load_weight_direct(
     tensor: torch.Tensor,
 ) -> bool:
     """Load weight directly by matching parameter name.
+
+    This function attempts to load a weight without any packed module mapping,
+    using direct parameter name matching instead.
 
     Args:
         model: The PyTorch module containing parameters.
@@ -355,16 +356,12 @@ def _load_weight_direct(
         )
         return False
 
-    # Get weight loader (default to default_weight_loader)
+    # Get weight loader with fallback to default
     weight_loader = getattr(param, 'weight_loader', default_weight_loader)
-    loader_type = ('custom weight_loader'
-                   if hasattr(param, 'weight_loader') else 'default loader')
     logger.debug(
-        "Loading weight '%s' with %s",
+        "Loading weight '%s'",
         weight_name,
-        loader_type,
     )
-
     _call_weight_loader(weight_loader, param, tensor)
     return True
 
@@ -376,6 +373,9 @@ def _log_loading_summary(
     num_files: int,
 ) -> None:
     """Log a summary of the weight loading operation.
+
+    Provides comprehensive statistics about the loading process, including
+    warnings for missing parameters.
 
     Args:
         total_weights: Total number of weights attempted to load.
@@ -389,9 +389,11 @@ def _log_loading_summary(
             missing_params,
             total_weights,
         )
+    else:
+        logger.info('All weights loaded successfully')
 
     logger.info(
-        'Successfully loaded %d/%d weights from %d file(s)',
+        'Loaded %d/%d weights from %d file(s)',
         loaded_weights,
         total_weights,
         num_files,
