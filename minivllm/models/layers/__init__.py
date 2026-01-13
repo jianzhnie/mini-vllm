@@ -11,7 +11,6 @@ The module is organized into several categories:
 4. **Normalization**: RMSNorm and other normalization techniques
 5. **Linear Layers**: Various tensor-parallel linear transformations
 6. **Rotary Embeddings**: Positional encoding using rotary embeddings
-7. **Sampling**: Token sampling utilities for generation
 
 All components are optimized for tensor-parallel inference and support
 both prefill and decode phases of language model execution.
@@ -25,7 +24,6 @@ from .linear import (ColumnParallelLinear, LinearBase,
                      MergedColumnParallelLinear, QKVParallelLinear,
                      ReplicatedLinear, RowParallelLinear, divide)
 from .rotary_embedding import RotaryEmbedding, apply_rotary_emb, get_rope
-from .sampler import Sampler
 
 __all__ = [
     # Activation functions
@@ -55,7 +53,4 @@ __all__ = [
     'RotaryEmbedding',
     'apply_rotary_emb',
     'get_rope',
-
-    # Sampling
-    'Sampler',
 ]

@@ -16,8 +16,8 @@ import torch.distributed as dist
 
 from minivllm.config import Config
 from minivllm.engine.sequence import Sequence
-from minivllm.models.layers import Sampler
 from minivllm.models.qwen3 import Qwen3ForCausalLM
+from minivllm.models.sampler import Sampler
 from minivllm.utils.context import (Context, get_context, reset_context,
                                     set_context)
 from minivllm.utils.device import (empty_cache, get_current_device,
@@ -841,10 +841,8 @@ class ModelRunner:
         logits: torch.Tensor = self.run_model(input_ids, positions, is_prefill)
 
         # Sample tokens (rank 0 only)
-        token_ids: Optional[List[int]] = (
-            self.sampler(logits,
-                         temperatures).tolist()  # type: ignore[attr-defined]
-            if self.rank == 0 else None)
+        token_ids: Optional[List[int]] = (self.sampler(
+            logits, temperatures).tolist() if self.rank == 0 else None)
 
         # Clean up context
         reset_context()
