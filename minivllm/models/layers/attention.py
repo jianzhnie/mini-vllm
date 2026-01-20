@@ -37,6 +37,7 @@ Dependencies:
     - torch: Always required
 """
 
+import math
 from typing import Any, Tuple
 
 import torch
@@ -71,9 +72,9 @@ except ImportError:
     if is_torch_npu_available():
         try:
             from transformers.integrations.npu_flash_attention import \
-                npu_flash_attn_varlen_func as flash_attn_varlen_func
+                npu_flash_attn_func as flash_attn_varlen_func
             from transformers.integrations.npu_flash_attention import \
-                npu_flash_attn_with_kvcache as flash_attn_with_kvcache
+                npu_flash_attn_varlen_func as flash_attn_varlen_func
             _FLASH_ATTN_AVAILABLE = True
             logger.info('Using NPU Flash Attention')
         except ImportError:
@@ -230,7 +231,7 @@ class Attention(nn.Module):
         super().__init__()
         self.num_heads: int = num_heads
         self.head_dim: int = head_dim
-        self.scale: float = float(scale)
+        self.scale: float = float(scale) or 1.0 / math.sqrt(head_dim)
         self.num_kv_heads: int = num_kv_heads
 
         # KV cache tensors are set later by the ModelRunner
@@ -385,9 +386,8 @@ class Attention(nn.Module):
                 outputs.append(out_seq)
 
             # Concatenate outputs from all sequences
-            attn_out = torch.cat(outputs,
-                                 dim=0)  # [total_tokens, num_heads, head_dim]
-
+            # [total_tokens, num_heads, head_dim]
+            attn_out = torch.cat(outputs, dim=0)
         else:
             # For decode, use cached k/v for efficient single-token generation
             if not self._cache_initialized:
@@ -453,12 +453,13 @@ class Attention(nn.Module):
             # Compute attention for single query token per sequence
             # q: [batch, num_heads, head_dim]
             # cached_k: [batch, seqlen, num_heads, head_dim]
-            q_expanded = q.unsqueeze(2)  # [batch, num_heads, 1, head_dim]
+            # q_expanded: [batch, num_heads, 1, head_dim]
+            q_expanded = q.unsqueeze(2)
+            # [batch, num_heads, 1, head_dim] @ [batch, num_heads, head_dim, seqlen]
+            # -> [batch, num_heads, 1, seqlen]
             attn_weights = torch.matmul(
-                q_expanded,  # [batch, num_heads, 1, head_dim]
-                cached_k.transpose(1, 2).transpose(
-                    -2, -1)  # [batch, num_heads, head_dim, seqlen]
-            ) * self.scale  # [batch, num_heads, 1, seqlen]
+                q_expanded,
+                cached_k.transpose(1, 2).transpose(-2, -1)) * self.scale
 
             # Create attention mask based on actual sequence lengths
             seqlen_mask = self._create_seqlen_mask(max_seqlen, batch_size,
@@ -468,11 +469,10 @@ class Attention(nn.Module):
 
             # Softmax and weighted sum
             attn_probs = torch.softmax(attn_weights, dim=-1)
-            attn_out = torch.matmul(
-                attn_probs,  # [batch, num_heads, 1, seqlen]
-                cached_v.transpose(1,
-                                   2)  # [batch, num_heads, seqlen, head_dim]
-            ).squeeze(2)  # [batch, num_heads, head_dim]
+            # [batch, num_heads, 1, seqlen] @ [batch, num_heads, seqlen, head_dim]
+            # -> [batch, num_heads, 1, head_dim]
+            attn_out = torch.matmul(attn_probs,
+                                    cached_v.transpose(1, 2)).squeeze(2)
 
         return attn_out
 
@@ -500,6 +500,19 @@ class Attention(nn.Module):
             v = v.repeat_interleave(repeat_factor, dim=head_dim)
         return k, v
 
+    def split_head(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Split the input tensor into multiple attention heads.
+
+        Args:
+            x (torch.Tensor): Input tensor of shape (batch_size, seq_len, hidden_size).
+
+        Returns:
+            torch.Tensor: Tensor of shape (batch_size, num_heads, seq_len, head_dim).
+        """
+        batch_size, seq_len, num_heads, head_dim = x.size()
+        return x.view(batch_size, seq_len, num_heads, head_dim).transpose(1, 2)
+
     def _compute_attention_weights(
         self,
         q: torch.Tensor,
@@ -519,12 +532,11 @@ class Attention(nn.Module):
             Output tensor of shape [seqlen_q, num_heads, head_dim]
         """
         # Compute attention: [1, num_heads, seqlen_q, seqlen_k]
-        attn_weights = torch.matmul(
-            q.transpose(1, 2),  # [1, num_heads, seqlen_q, head_dim]
-            k.transpose(1, 2).transpose(
-                -2, -1)  # [1, num_heads, head_dim, seqlen_k]
-        ) * self.scale  # [1, num_heads, seqlen_q, seqlen_k]
-
+        # [1, num_heads, seqlen_q, head_dim] @ [1, num_heads, seqlen_k, head_dim]
+        # -> [1, num_heads, seqlen_q, seqlen_k]
+        attn_weights = torch.matmul(q.transpose(1, 2),
+                                    k.transpose(1, 2).transpose(
+                                        -2, -1)) * self.scale
         # Apply causal mask (lower triangular)
         seqlen_q = q.size(1)
         seqlen_k = k.size(1)
@@ -539,11 +551,9 @@ class Attention(nn.Module):
 
         # Softmax and weighted sum
         attn_probs = torch.softmax(attn_weights, dim=-1)
-        out_seq = torch.matmul(
-            attn_probs,  # [1, num_heads, seqlen_q, seqlen_k]
-            v.transpose(1, 2)  # [1, num_heads, seqlen_k, head_dim]
-        )  # [1, num_heads, seqlen_q, head_dim]
-
+        # [1, num_heads, seqlen_q, seqlen_k] @ [1, num_heads, seqlen_k, head_dim]
+        # -> [1, num_heads, seqlen_q, head_dim]
+        out_seq = torch.matmul(attn_probs, v.transpose(1, 2))
         # Reshape back to original format
         out_seq = out_seq.squeeze(0).transpose(
             0, 1)  # [seqlen_q, num_heads, head_dim]
@@ -571,6 +581,6 @@ class Attention(nn.Module):
                                    dtype=torch.long).expand(
                                        batch_size, max_seqlen)
         seqlen_mask = seqlen_mask >= context_lens.unsqueeze(1)
-        seqlen_mask = seqlen_mask.unsqueeze(1).unsqueeze(
-            2)  # [batch, 1, 1, seqlen]
+        seqlen_mask = seqlen_mask.unsqueeze(1).unsqueeze(2)
+        # [batch, 1, 1, seqlen]
         return seqlen_mask
