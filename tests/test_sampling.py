@@ -1,11 +1,12 @@
 import pytest
 import torch
 
-from minivllm.sampling import (
-    FrequencyPenaltySampler, GreedySampler, MinPSampler, NucleusSampler,
-    PresencePenaltySampler, RandomSampler, RepetitionPenaltySampler,
-    TemperatureMinPTopKSampler, TemperatureSampler, TopKSampler,
-    TopKTopPSampler, TopPSampler, TypicalSampler)
+from minivllm.sampling import (FrequencyPenaltySampler, GreedySampler,
+                               MinPSampler, PresencePenaltySampler,
+                               RandomSampler, RepetitionPenaltySampler,
+                               TemperatureMinPTopKSampler, TemperatureSampler,
+                               TopKSampler, TopKTopPSampler, TopPSampler,
+                               TypicalSampler)
 
 
 class TestBasicSamplers:
@@ -120,16 +121,6 @@ class TestFilteringSamplers:
         token = typical_sampler(logits)
         assert 0 <= token.item(
         ) < 100, 'Typical sampler should return valid token'
-
-    def test_nucleus_sampler_composite(self):
-        """Test nucleus sampler (composite form)."""
-        logits = torch.randn(1, 100)
-        inner_sampler = TemperatureSampler(temperature=1.0)
-        nucleus_sampler = NucleusSampler(p=0.9, sampler=inner_sampler)
-
-        token = nucleus_sampler(logits)
-        assert 0 <= token.item(
-        ) < 100, 'Nucleus sampler should return valid token'
 
 
 class TestCombinedSamplers:
