@@ -37,8 +37,6 @@ from minivllm.sampling.base import Sampler
 from minivllm.sampling.combined import (ExhaustiveTopKSampler,
                                         TemperatureMinPTopKSampler,
                                         TopKTopPSampler)
-from minivllm.sampling.generation import generate as generate
-from minivllm.sampling.generation2 import generate as generate_simple
 from minivllm.sampling.greedy import GreedySampler
 from minivllm.sampling.min_p import MinPSampler
 from minivllm.sampling.nucleus import NucleusSampler
@@ -46,8 +44,6 @@ from minivllm.sampling.random import RandomSampler
 from minivllm.sampling.temperature import TemperatureSampler
 from minivllm.sampling.top_k import TopKSampler
 from minivllm.sampling.top_p import TopPSampler
-from minivllm.sampling.top_p_top_k import TopKTopPFilter
-from minivllm.sampling.top_p_top_k import generate as generate_with_filter
 from minivllm.sampling.typical import TypicalSampler
 from minivllm.sampling.warpers import (FrequencyPenaltySampler,
                                        PresencePenaltySampler,
@@ -76,9 +72,4 @@ __all__ = [
     'FrequencyPenaltySampler',
     'PresencePenaltySampler',
     'TopTokenRestrictionSampler',
-    # Utilities
-    'TopKTopPFilter',
-    'generate',
-    'generate_simple',
-    'generate_with_filter',
 ]

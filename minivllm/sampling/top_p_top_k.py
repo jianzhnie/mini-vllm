@@ -1,11 +1,13 @@
-from typing import Optional, Tensor
+from typing import Tensor
 
 import torch
 import torch.nn.functional as F
-from transformers import PreTrainedModel, PreTrainedTokenizer
+from torch.distributions import Categorical
+
+from minivllm.sampling.base import Sampler
 
 
-class TopKTopPFilter:
+class TopKTopPSampler(Sampler):
     """
     Filter a distribution of logits using top-k and/or nucleus (top-p) filtering
 
@@ -66,59 +68,5 @@ class TopKTopPFilter:
             indices_to_remove = sorted_indices[sorted_indices_to_remove]
             logits[indices_to_remove] = self.filter_value
 
-        return logits
-
-
-def generate(
-    model: PreTrainedModel,
-    tokenizer: PreTrainedTokenizer,
-    prompt: str,
-    max_new_tokens: int = 50,
-    temperature: float = 1.0,
-    top_k: int = 50,
-    top_p: float = 0.95,
-    eos_token_id: Optional[int] = None,
-    device: Optional[str] = None,
-) -> str:
-    """
-    Generate text using a Hugging Face model with custom sampling.
-
-    Args:
-        model: Loaded transformers model.
-        tokenizer: Corresponding tokenizer.
-        prompt: Initial input text.
-        max_new_tokens: Maximum number of tokens to generate.
-        temperature: Controls sampling diversity, higher values are more random.
-        top_k: Top-k sampling limit.
-        top_p: Top-p (nucleus) sampling limit.
-        eos_token_id: End-of-sequence token ID, generation stops if encountered.
-        device: Device to use (e.g., 'cuda' or 'cpu'). Automatically detected if None.
-
-    Returns:
-        Generated text string.
-    """
-    device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
-    model.to(device)
-    model.eval()
-
-    input_ids = tokenizer.encode(prompt, return_tensors='pt').to(device)
-    generated = input_ids.clone()
-
-    # Create filter instance
-    sample_filter = TopKTopPFilter(top_k=top_k, top_p=top_p)
-
-    for _ in range(max_new_tokens):
-        with torch.no_grad():
-            outputs = model(input_ids=generated)
-            next_token_logits = outputs.logits[0, -1, :] / temperature
-
-            filtered_logits = sample_filter(next_token_logits)
-            probs = F.softmax(filtered_logits, dim=-1)
-
-            next_token = torch.multinomial(probs, num_samples=1)
-            generated = torch.cat((generated, next_token.unsqueeze(0)), dim=1)
-
-            if eos_token_id is not None and next_token.item() == eos_token_id:
-                break
-
-    return tokenizer.decode(generated[0], skip_special_tokens=True)
+        dist = Categorical(logits=logits)
+        return dist.sample()
