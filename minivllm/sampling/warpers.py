@@ -16,9 +16,10 @@ Common warping strategies include:
 - Presence penalty: discourages any tokens that have appeared before
 """
 
-from typing import Optional, Tensor
+from typing import Optional
 
 import torch
+from torch import Tensor
 from torch.distributions import Categorical
 
 from minivllm.sampling.base import Sampler
@@ -58,15 +59,24 @@ class RepetitionPenaltySampler(Sampler):
         if prev_tokens is not None and self.penalty != 1.0:
             logits = logits.clone()
 
-            # Penalize previously generated tokens
-            # For positive logits, divide by penalty (reduce probability)
-            # For negative logits, multiply by penalty (reduce probability)
-            for prev_token in prev_tokens.unique():
-                if 0 <= prev_token < logits.size(-1):
-                    if logits[..., prev_token] > 0:
-                        logits[..., prev_token] /= self.penalty
-                    else:
-                        logits[..., prev_token] *= self.penalty
+            # Vectorized implementation for repetition penalty
+            # Create a mask for previously generated tokens
+            unique_tokens = prev_tokens.unique()
+            if unique_tokens.numel() > 0:
+                # Create a mask tensor
+                mask = torch.zeros(logits.shape[-1],
+                                   dtype=torch.bool,
+                                   device=logits.device)
+                valid_tokens = unique_tokens[
+                    (unique_tokens >= 0) & (unique_tokens < logits.shape[-1])]
+                if valid_tokens.numel() > 0:
+                    mask[valid_tokens] = True
+                    # Apply penalty: divide positive logits, multiply negative logits
+                    penalty_mask = mask.expand_as(logits)
+                    logits[penalty_mask] = torch.where(
+                        logits[penalty_mask] > 0,
+                        logits[penalty_mask] / self.penalty,
+                        logits[penalty_mask] * self.penalty)
 
         # Sample using the provided sampler or default random sampling
         if self.sampler is not None:
@@ -107,13 +117,24 @@ class FrequencyPenaltySampler(Sampler):
         if sequence is not None and self.alpha > 0 and sequence.numel() > 0:
             logits = logits.clone()
 
-            # Count occurrences of each token in the sequence
+            # Vectorized implementation for frequency penalty
             unique_tokens, counts = torch.unique(sequence, return_counts=True)
+            if unique_tokens.numel() > 0:
+                # Filter valid tokens
+                valid_mask = (unique_tokens >= 0) & (unique_tokens <
+                                                     logits.size(-1))
+                valid_tokens = unique_tokens[valid_mask]
+                valid_counts = counts[valid_mask]
 
-            # Apply penalty proportional to frequency
-            for token, count in zip(unique_tokens, counts):
-                if 0 <= token < logits.size(-1):
-                    logits[..., token] -= self.alpha * float(count)
+                if valid_tokens.numel() > 0:
+                    # Create penalty tensor
+                    penalties = torch.zeros(logits.shape[-1],
+                                            dtype=logits.dtype,
+                                            device=logits.device)
+                    penalties[valid_tokens] = valid_counts.float() * self.alpha
+
+                    # Apply penalty
+                    logits -= penalties.expand_as(logits)
 
         # Sample using the provided sampler or default random sampling
         if self.sampler is not None:
@@ -157,13 +178,21 @@ class PresencePenaltySampler(Sampler):
         if sequence is not None and self.penalty > 0 and sequence.numel() > 0:
             logits = logits.clone()
 
-            # Get unique tokens that have appeared
+            # Vectorized implementation for presence penalty
             unique_tokens = torch.unique(sequence)
+            if unique_tokens.numel() > 0:
+                # Filter valid tokens
+                valid_tokens = unique_tokens[(unique_tokens >= 0) &
+                                             (unique_tokens < logits.size(-1))]
+                if valid_tokens.numel() > 0:
+                    # Create penalty mask
+                    penalty_mask = torch.zeros(logits.shape[-1],
+                                               dtype=torch.bool,
+                                               device=logits.device)
+                    penalty_mask[valid_tokens] = True
 
-            # Apply penalty to all previously seen tokens
-            for token in unique_tokens:
-                if 0 <= token < logits.size(-1):
-                    logits[..., token] -= self.penalty
+                    # Apply penalty
+                    logits[penalty_mask.expand_as(logits)] -= self.penalty
 
         # Sample using the provided sampler or default random sampling
         if self.sampler is not None:
@@ -215,9 +244,10 @@ class TopTokenRestrictionSampler(Sampler):
 
             # Safety check: if all tokens are filtered, restore the original
             if torch.all(torch.isinf(logits)):
-                logits = torch.tensor(logits,
-                                      dtype=logits.dtype,
-                                      device=logits.device)
+                # Create a copy of the original logits
+                original_logits = torch.empty_like(logits)
+                original_logits.copy_(logits)
+                logits = original_logits
 
         # Sample using the provided sampler or default random sampling
         if self.sampler is not None:

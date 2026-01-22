@@ -18,10 +18,8 @@ Unlike the composite NucleusSampler that requires another sampler, this implemen
 includes the complete sampling logic.
 """
 
-from typing import Tensor
-
 import torch
-from torch import nn
+from torch import Tensor
 from torch.distributions import Categorical
 
 from minivllm.sampling.base import Sampler
@@ -47,7 +45,6 @@ class TopPSampler(Sampler):
 
         self.p = p
         self.temperature = temperature
-        self.softmax = nn.Softmax(dim=-1)
 
     def __call__(self, logits: Tensor) -> Tensor:
         """
@@ -60,7 +57,7 @@ class TopPSampler(Sampler):
         scaled_logits = logits / self.temperature
 
         # Get probabilities
-        probs = self.softmax(scaled_logits)
+        probs = torch.softmax(scaled_logits, dim=-1)
 
         # Sort probabilities in descending order
         sorted_probs, sorted_indices = torch.sort(probs,
@@ -79,15 +76,12 @@ class TopPSampler(Sampler):
         ],
                                  dim=-1)
 
-        # Sort the logits in the same order as probabilities
-        sorted_logits = torch.gather(logits, -1, sorted_indices)
-
         # Create filtered logits with -inf for tokens outside nucleus
-        filtered_sorted_logits = sorted_logits.clone()
-        filtered_sorted_logits[~nucleus_mask] = float('-inf')
+        filtered_logits = scaled_logits.gather(-1, sorted_indices)
+        filtered_logits[~nucleus_mask] = float('-inf')
 
         # Sample from the filtered distribution
-        dist = Categorical(logits=filtered_sorted_logits)
+        dist = Categorical(logits=filtered_logits)
         sampled_sorted_indices = dist.sample()
 
         # Get the actual token indices (unsort)

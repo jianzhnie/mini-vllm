@@ -16,8 +16,7 @@ $T = 1$ is normal random sampling.
 
 """
 
-from typing import Tensor
-
+from torch import Tensor
 from torch.distributions import Categorical
 
 from minivllm.sampling.base import Sampler
@@ -32,6 +31,9 @@ class TemperatureSampler(Sampler):
         """
         :param temperature: is the temperature to sample with
         """
+        if temperature <= 0:
+            raise ValueError(
+                f'temperature must be positive, got {temperature}')
         self.temperature = temperature
 
     def __call__(self, logits: Tensor) -> Tensor:

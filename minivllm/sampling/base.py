@@ -16,7 +16,9 @@ summary: >
 
 """
 
-from typing import Protocol, Tensor
+from typing import Protocol
+
+from torch import Tensor
 
 
 class Sampler(Protocol):

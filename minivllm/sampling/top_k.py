@@ -12,9 +12,8 @@ sample from them.
 
 """
 
-from typing import Tensor
-
 import torch
+from torch import Tensor
 
 from minivllm.sampling.base import Sampler
 
@@ -32,6 +31,8 @@ class TopKSampler(Sampler):
         `sampler` can be any sampler that takes a logits tensor as input and returns a token tensor;
          e.g. [`TemperatureSampler'](temperature.html).
         """
+        if k <= 0:
+            raise ValueError(f'k must be positive, got {k}')
         self.k = k
         self.sampler = sampler
 
@@ -42,10 +43,13 @@ class TopKSampler(Sampler):
         :param logits: are the logits of the distribution of shape `[..., n_tokens]`
         :return: sampled token indices of shape `[...]`
         """
+        # Clamp k to vocabulary size
+        k = min(self.k, logits.size(-1))
+
         # New logits filled with $-\infty$; i.e. zero probability
         zeros = logits.new_ones(logits.shape) * float('-inf')
         # Pick the largest $k$ logits and their indices
-        values, indices = torch.topk(logits, self.k, dim=-1)
+        values, indices = torch.topk(logits, k, dim=-1)
         # Set the values of the top-k selected indices to actual logits.
         # Logits of other tokens remain $-\infty$
         zeros.scatter_(-1, indices, values)

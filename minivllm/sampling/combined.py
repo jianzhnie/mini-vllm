@@ -13,10 +13,8 @@ Combined samplers offer more fine-grained control over token selection and can p
 higher quality outputs by leveraging the strengths of multiple sampling methods.
 """
 
-from typing import Tensor
-
 import torch
-from torch import nn
+from torch import Tensor, nn
 from torch.distributions import Categorical
 
 from minivllm.sampling.base import Sampler
@@ -52,7 +50,6 @@ class TopKTopPSampler(Sampler):
         self.k = k
         self.p = p
         self.temperature = temperature
-        self.softmax = nn.Softmax(dim=-1)
 
     def __call__(self, logits: Tensor) -> Tensor:
         """
@@ -78,7 +75,7 @@ class TopKTopPSampler(Sampler):
         filtered_logits.scatter_(-1, top_k_indices, top_k_values)
 
         # Step 2: Apply top-p filtering on the top-k tokens
-        probs = self.softmax(filtered_logits)
+        probs = torch.softmax(filtered_logits, dim=-1)
 
         # Sort probabilities of non-filtered tokens
         sorted_probs, sorted_indices = torch.sort(probs,
@@ -168,7 +165,7 @@ class TemperatureMinPTopKSampler(Sampler):
 
         # Step 2: Apply min-p filtering if enabled
         if self.min_p > 0:
-            probs = self.softmax(filtered_logits)
+            probs = torch.softmax(filtered_logits, dim=-1)
 
             # Find the maximum probability
             max_probs = torch.max(probs, dim=-1, keepdim=True).values

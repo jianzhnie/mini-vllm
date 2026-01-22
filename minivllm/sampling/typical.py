@@ -17,10 +17,8 @@ given the context, resulting in more natural text generation.
 Reference: "Typical Decoding for Natural Language Generation"
 """
 
-from typing import Tensor
-
 import torch
-from torch import nn
+from torch import Tensor, nn
 
 from minivllm.sampling.base import Sampler
 

@@ -16,10 +16,8 @@ more consistent results across different prompt lengths and contexts.
 Reference: https://github.com/oobabooga/text-generation-webui/pull/5841
 """
 
-from typing import Tensor
-
 import torch
-from torch import nn
+from torch import Tensor, nn
 
 from minivllm.sampling.base import Sampler
 

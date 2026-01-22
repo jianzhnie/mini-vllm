@@ -12,8 +12,7 @@ This is equivalent to temperature sampling with temperature = 1.0.
 
 """
 
-from typing import Tensor
-
+from torch import Tensor
 from torch.distributions import Categorical
 
 from minivllm.sampling.base import Sampler

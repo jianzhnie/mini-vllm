@@ -1,7 +1,6 @@
-from typing import Tensor
-
 import torch
 import torch.nn.functional as F
+from torch import Tensor
 from torch.distributions import Categorical
 
 from minivllm.sampling.base import Sampler

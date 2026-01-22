@@ -11,7 +11,7 @@ Here we sample the most likely token from the distribution of logits.
 
 """
 
-from typing import Tensor
+from torch import Tensor
 
 from minivllm.sampling.base import Sampler
 

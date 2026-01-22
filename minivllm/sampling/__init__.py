@@ -39,7 +39,6 @@ from minivllm.sampling.combined import (ExhaustiveTopKSampler,
                                         TopKTopPSampler)
 from minivllm.sampling.greedy import GreedySampler
 from minivllm.sampling.min_p import MinPSampler
-from minivllm.sampling.nucleus import NucleusSampler
 from minivllm.sampling.random import RandomSampler
 from minivllm.sampling.temperature import TemperatureSampler
 from minivllm.sampling.top_k import TopKSampler
@@ -60,7 +59,6 @@ __all__ = [
     # Nucleus & Filtering Samplers
     'TopKSampler',
     'TopPSampler',
-    'NucleusSampler',
     'MinPSampler',
     'TypicalSampler',
     # Combined Samplers
