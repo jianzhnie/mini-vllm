@@ -1,23 +1,22 @@
 #!/usr/bin/env python3
+"""
+Test script to demonstrate the improved loader functionality.
+
+This script tests various scenarios including:
+- Basic weight loading
+- Packed module handling
+- Error handling and validation
+- Custom weight loaders
+"""
 import logging
-import sys
 import tempfile
 from pathlib import Path
 
-# Import the improved loader
+import torch
+import torch.nn as nn
+from safetensors.torch import save_file
+
 from minivllm.utils.loader import get_default_weight_loader, load_model
-
-# Add the parent directory to Python path for imports
-sys.path.insert(0, str(Path(__file__).parent))
-
-try:
-    import torch
-    import torch.nn as nn
-    from safetensors.torch import save_file
-except ImportError as e:
-    print(f'Import error: {e}')
-    print('Please install required packages: torch, safetensors')
-    sys.exit(1)
 
 # Configure logging to see the improvements
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
