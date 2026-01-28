@@ -1,18 +1,11 @@
 #!/usr/bin/env python3
-"""
-Test script to demonstrate the improved loader functionality.
-
-This script tests various scenarios including:
-- Basic weight loading
-- Packed module handling
-- Error handling and validation
-- Custom weight loaders
-"""
-
 import logging
 import sys
 import tempfile
 from pathlib import Path
+
+# Import the improved loader
+from minivllm.utils.loader import get_default_weight_loader, load_model
 
 # Add the parent directory to Python path for imports
 sys.path.insert(0, str(Path(__file__).parent))
@@ -28,14 +21,6 @@ except ImportError as e:
 
 # Configure logging to see the improvements
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-
-# Import the improved loader
-try:
-    from minivllm.utils.loader import default_weight_loader, load_model
-except ImportError as e:
-    print(f'Failed to import loader: {e}')
-    print('Make sure the loader module is in the correct path')
-    sys.exit(1)
 
 
 class TestModel(nn.Module):
@@ -181,6 +166,8 @@ def test_shape_validation() -> None:
     print('Testing Shape Validation')
     print('=' * 60)
 
+    default_weight_loader = get_default_weight_loader()
+
     param = nn.Parameter(torch.randn(5, 3))
     correct_tensor = torch.randn(5, 3)
     wrong_tensor = torch.randn(4, 2)
@@ -200,28 +187,8 @@ def test_shape_validation() -> None:
         print(f'✓ Correctly caught shape mismatch: {e}')
 
 
-def main() -> None:
-    """Run all tests."""
-    print('Starting Loader Improvements Test Suite')
-    print('=' * 60)
-
+if __name__ == '__main__':
     test_basic_loading()
     test_error_handling()
     test_custom_weight_loader()
     test_shape_validation()
-
-    print('\n' + '=' * 60)
-    print('All tests completed!')
-    print('=' * 60)
-
-    print('\nKey improvements demonstrated:')
-    print('1. ✓ Comprehensive error handling and validation')
-    print('2. ✓ Detailed logging and progress tracking')
-    print('3. ✓ Support for packed modules and custom weight loaders')
-    print('4. ✓ Shape validation and type checking')
-    print('5. ✓ Clear documentation and examples')
-    print('6. ✓ Robust parameter lookup with fallback mechanisms')
-
-
-if __name__ == '__main__':
-    main()
