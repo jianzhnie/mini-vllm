@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+          cache: "pip"
+      - name: Install linting dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 isort yapf mypy types-PyYAML types-tqdm
+          # Install minimal deps for mypy to work reasonably well (or ignore missing imports)
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Run isort check
+        run: isort . --check --diff
+      - name: Run yapf check
+        run: yapf -r . --diff
+      - name: Run flake8
+        run: flake8 .
+      - name: Run mypy
+        run: |
+          # Install the package in editable mode to help mypy find imports
+          pip install -e . --no-deps
+          mypy minivllm
+
+  test:
+    needs: lint
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11"]
+      fail-fast: false
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Install PyTorch CPU version for faster CI
+          pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+          # Install other dependencies manually to avoid flash-attn build failure
+          pip install transformers triton xxhash packaging
+          # Install test dependencies
+          pip install pytest pytest-cov
+          # Install the package itself in editable mode without dependencies (to skip flash-attn)
+          pip install -e . --no-deps
+
+      - name: Run tests
+        run: |
+          python tests/run_tests.py --coverage
