@@ -298,9 +298,7 @@ class Attention(nn.Module):
                 )
             else:
                 # Decode phase: generate single token using cached K/V
-                if flash_attn_with_kvcache is None:
-                    attn_out = self._fallback_attention(q, k, v, context)
-                else:
+                if flash_attn_with_kvcache is not None:
                     attn_out = flash_attn_with_kvcache(
                         q.unsqueeze(1),
                         k_cache,
@@ -310,6 +308,23 @@ class Attention(nn.Module):
                         softmax_scale=self.scale,
                         causal=True,
                     )
+                elif is_torch_npu_available():
+                    import torch_npu
+
+                    # NPU incremental FlashAttention
+                    attn_out = torch_npu.npu_incre_flash_attention(
+                        q.view(q.shape[0], 1, -1),
+                        k_cache,
+                        v_cache,
+                        num_heads=self.num_heads,
+                        input_layout='BSH',
+                        scale_value=self.scale,
+                        actual_seq_lengths=context.context_lens,
+                        block_table=context.block_tables,
+                    )
+                    attn_out = attn_out.view(q.shape)
+                else:
+                    attn_out = self._fallback_attention(q, k, v, context)
         else:
             # Fallback to standard attention when FlashAttention is not available
             # This is less efficient but ensures compatibility
