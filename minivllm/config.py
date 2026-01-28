@@ -6,12 +6,9 @@ parameters for initializing and running the LLM engine.
 
 import os
 from dataclasses import dataclass
-from typing import ClassVar, Literal, Optional
+from typing import ClassVar, Optional
 
 from transformers import AutoConfig, PretrainedConfig
-
-# Type aliases for better readability
-TensorParallelSize = Literal[1, 2, 3, 4, 5, 6, 7, 8]
 
 
 @dataclass
