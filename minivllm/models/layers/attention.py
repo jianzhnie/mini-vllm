@@ -72,8 +72,6 @@ except ImportError:
     if is_torch_npu_available():
         try:
             from transformers.integrations.npu_flash_attention import \
-                npu_flash_attn_func as flash_attn_varlen_func
-            from transformers.integrations.npu_flash_attention import \
                 npu_flash_attn_varlen_func as flash_attn_varlen_func
             _FLASH_ATTN_AVAILABLE = True
             logger.info('Using NPU Flash Attention')
@@ -301,19 +299,17 @@ class Attention(nn.Module):
             else:
                 # Decode phase: generate single token using cached K/V
                 if flash_attn_with_kvcache is None:
-                    raise RuntimeError(
-                        'flash_attn_with_kvcache is not available. '
-                        'This may happen if FlashAttention is not properly installed.'
+                    attn_out = self._fallback_attention(q, k, v, context)
+                else:
+                    attn_out = flash_attn_with_kvcache(
+                        q.unsqueeze(1),
+                        k_cache,
+                        v_cache,
+                        cache_seqlens=context.context_lens,
+                        block_table=context.block_tables,
+                        softmax_scale=self.scale,
+                        causal=True,
                     )
-                attn_out = flash_attn_with_kvcache(
-                    q.unsqueeze(1),
-                    k_cache,
-                    v_cache,
-                    cache_seqlens=context.context_lens,
-                    block_table=context.block_tables,
-                    softmax_scale=self.scale,
-                    causal=True,
-                )
         else:
             # Fallback to standard attention when FlashAttention is not available
             # This is less efficient but ensures compatibility
