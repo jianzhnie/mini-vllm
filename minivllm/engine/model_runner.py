@@ -97,6 +97,13 @@ class ModelRunner:
         """
         self.config: Config = config
         hf_config: Any = config.hf_config
+        # Normalize torch_dtype to a torch.dtype
+        try:
+            if isinstance(hf_config.torch_dtype, str):
+                dtype_opt = getattr(torch, hf_config.torch_dtype, None)
+                hf_config.torch_dtype = dtype_opt or torch.bfloat16
+        except Exception:
+            hf_config.torch_dtype = torch.bfloat16
         self.block_size: int = config.kvcache_block_size
         self.enforce_eager: bool = config.enforce_eager
         self.world_size: int = config.tensor_parallel_size
