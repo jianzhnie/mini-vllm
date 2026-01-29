@@ -2,7 +2,7 @@
 
 ## 概述
 
-NPU Flash Attention 是华为昇腾 NPU 提供的高性能注意力计算接口，通过硬件级优化大幅提升 Transformer 模型的训练和推理性能。本文档系统性地介绍各版本API的核心差异、关键特性和最佳实践。
+NPU Flash Attention 是华为昇腾 (Ascend) NPU 提供的高性能注意力计算算子库，旨在加速 Transformer 模型中的自注意力（Self-Attention）计算。它基于 FlashAttention 算法思想，利用 NPU 的矩阵运算单元（Cube Unit）和向量运算单元（Vector Unit）进行深度优化，显著减少了显存访问开销并提升了计算吞吐量。
 
 ### 核心优势
 - **高性能**: 相比标准注意力实现，性能提升2-4倍
@@ -20,6 +20,18 @@ NPU Flash Attention 是华为昇腾 NPU 提供的高性能注意力计算接口�
 - `torch_npu.npu_prompt_flash_attention`: 全量Flash Attention，适用于prefill阶段
 - `torch_npu.npu_fused_infer_attention_score`: 融合推理注意力，统一接口
 - `torch_npu.npu_advance_step_flashattn`: vLLM专用的step flash attention
+
+
+### 环境依赖与版本要求
+
+为了使用 NPU Flash Attention，需要满足以下环境要求：
+
+*   **硬件平台**: Ascend 910B (推荐) 或其他支持的 Ascend AI 处理器。
+*   **操作系统**: Linux (如 Ubuntu 20.04/22.04, EulerOS 等)。
+*   **CANN 版本**: 建议使用 CANN 8.0.RC1 及以上版本 (具体视 PyTorch 版本而定)。
+*   **PyTorch 版本**: 建议使用 `torch_npu` 2.1.0 及以上版本。
+*   **Python 版本**: 3.8, 3.9, 3.10 等。
+
 
 ### 版本演进对比
 
@@ -70,13 +82,23 @@ torch_npu.npu_fusion_attention(
 )
 ```
 
-### 稀疏模式详解
-- `0`: defaultMask（默认全量／带宽／上下三角等由 pre_tockens/next_tockens 控制）
-- `1`: allMask（全量 Mask）
-- `2/3`: leftUpCausal/rightDownCausal（上下三角压缩）
-- `4`: band（带宽）
-- `5/6`: prefix（非压缩/压缩）
-- `7/8`: varlen 外切场景（基于 3/2）
+**核心参数**:
+*   `query`, `key`, `value` (Tensor): 输入张量，支持 fp16/bf16。
+*   `head_num` (int): Query 的头数。
+*   `input_layout` (str): 输入数据排布格式。
+    *   `"BSH"`: (Batch, Seq, Hidden)
+    *   `"SBH"`: (Seq, Batch, Hidden)
+    *   `"BNSD"`: (Batch, NumHeads, Seq, HeadDim)
+    *   `"BSND"`: (Batch, Seq, NumHeads, HeadDim)
+    *   `"TND"`: (TotalTokens, NumHeads, HeadDim)，**用于 Varlen 场景**。
+*   `scale` (float): 缩放因子，通常为 `1 / sqrt(head_dim)`。
+*   `actual_seq_qlen` / `actual_seq_kvlen` (List[int] / Tensor): **Varlen 场景必选**。表示每个序列的实际长度（非累积和，需注意与 CUDA FlashAttn 的 `cu_seqlens` 区别，部分版本可能接受累积和或长度列表，建议查阅具体版本文档，通常为长度列表）。
+*   `sparse_mode` (int): 稀疏/掩码模式。
+    *   `0`: DefaultMask (根据 atten_mask 判断)
+    *   `1`: AllOne (全 1，不进行 Mask)
+    *   `2`: LeftUpCausal (左上角对齐的因果掩码，推荐用于 GPT 类模型)
+    *   `3`: RightDownCausal (右下角对齐的因果掩码)
+
 
 ### 使用示例
 
