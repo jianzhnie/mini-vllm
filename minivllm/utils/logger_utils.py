@@ -1,3 +1,34 @@
+"""Logging utilities for distributed training and debugging.
+
+This module provides enhanced logging functionality with color coding,
+rank information display, and distributed training support.
+
+Key features:
+- Color-coded log messages based on severity level
+- Automatic rank information display for distributed setups
+- Configurable log levels and output formats
+- Integration with both single-process and distributed environments
+- Prevention of duplicate log handler initialization
+
+Components:
+- ColorfulFormatter: Adds ANSI color codes and rank info to log messages
+- get_logger(): Factory function for properly configured loggers
+- setup_logging(): Global logging configuration setup
+
+Example usage:
+    >>> from minivllm.utils.logger_utils import get_logger, setup_logging
+    >>>
+    >>> # Setup global logging configuration
+    >>> setup_logging(level=logging.INFO)
+    >>>
+    >>> # Get a logger for your module
+    >>> logger = get_logger(__name__)
+    >>> logger.info("This message will be color-coded with rank info")
+
+The logger automatically displays format like:
+[Rank 0] - module_name - LEVEL: message
+"""
+
 import logging
 import os
 import sys
