@@ -301,78 +301,22 @@ class Attention(nn.Module):
                     )
                 elif _NPU_FLASH_ATTN_AVAILABLE and npu_fusion_attention is not None:
                     # Native NPU fusion attention
-                    # Convert cumulative lengths to actual lengths for NPU
-                    seqlens_q = ((context.cum_seqlens_q[1:] -
-                                  context.cum_seqlens_q[:-1]).cpu().tolist())
-                    seqlens_k = ((context.cum_seqlens_k[1:] -
-                                  context.cum_seqlens_k[:-1]).cpu().tolist())
+                    # Convert cumulative lengths to actual lengths (cumulative sum list) for NPU
+                    # Note: context.cum_seqlens_q is [0, s1, s1+s2, ...], we need [s1, s1+s2, ...]
+                    seqlens_q = context.cum_seqlens_q[1:].cpu().tolist()
+                    seqlens_k = context.cum_seqlens_k[1:].cpu().tolist()
 
-                    # Prepare tensors for NPU fusion attention
-                    # Convert from [total_tokens, num_heads, head_dim] to [batch, seq_len, num_heads, head_dim]
-                    batch_size = len(seqlens_q)
-                    max_seq_len = max(seqlens_q)
-
-                    q_reshaped = torch.zeros(batch_size,
-                                             max_seq_len,
-                                             self.num_heads,
-                                             self.head_dim,
-                                             device=q.device,
-                                             dtype=q.dtype)
-                    k_reshaped = torch.zeros(batch_size,
-                                             max_seq_len,
-                                             self.num_kv_heads,
-                                             self.head_dim,
-                                             device=k.device,
-                                             dtype=k.dtype)
-                    v_reshaped = torch.zeros(batch_size,
-                                             max_seq_len,
-                                             self.num_kv_heads,
-                                             self.head_dim,
-                                             device=v.device,
-                                             dtype=v.dtype)
-
-                    # Fill reshaped tensors with actual data
-                    q_offset, k_offset, v_offset = 0, 0, 0
-                    for i in range(batch_size):
-                        seq_len_q = seqlens_q[i]
-                        seq_len_k = seqlens_k[i]
-
-                        if seq_len_q > 0:
-                            q_reshaped[i, :seq_len_q] = q[q_offset:q_offset +
-                                                          seq_len_q]
-                            q_offset += seq_len_q
-
-                        if seq_len_k > 0:
-                            k_reshaped[i, :seq_len_k] = k[k_offset:k_offset +
-                                                          seq_len_k]
-                            v_reshaped[i, :seq_len_k] = v[v_offset:v_offset +
-                                                          seq_len_k]
-                            k_offset += seq_len_k
-                            v_offset += seq_len_k
-
-                    attn_out_reshaped, _, _, _, _, _, _ = npu_fusion_attention(
-                        q_reshaped,
-                        k_reshaped,
-                        v_reshaped,
+                    attn_out = torch_npu.npu_fusion_attention(
+                        q,
+                        k,
+                        v,
                         self.num_heads,
-                        input_layout='BSNH',
+                        input_layout='TND',
                         actual_seq_qlen=seqlens_q,
                         actual_seq_kvlen=seqlens_k,
                         scale=self.scale,
                         sparse_mode=2,  # Causal
-                    )
-
-                    # Reshape back to original format [total_tokens, num_heads, head_dim]
-                    attn_out = []
-                    for i in range(batch_size):
-                        seq_len = seqlens_q[i]
-                        if seq_len > 0:
-                            attn_out.append(attn_out_reshaped[i, :seq_len])
-
-                    if attn_out:
-                        attn_out = torch.cat(attn_out, dim=0)
-                    else:
-                        attn_out = torch.zeros_like(q)
+                    )[0]
                 else:
                     attn_out = self._fallback_attention(q, k, v, context)
             else:
