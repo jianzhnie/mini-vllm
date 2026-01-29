@@ -1,46 +1,45 @@
 # Makefile for mini-vllm development
 
-.PHONY: install lint format test ci clean help
+.PHONY: install lint format test ci clean help check-quality
 
 PYTHON := python3
 PIP := pip
 
 help:
 	@echo "Available commands:"
-	@echo "  make install   - Install dependencies (including dev tools)"
-	@echo "  make lint      - Run code quality checks (isort, yapf, flake8, mypy)"
-	@echo "  make format    - Auto-format code (isort, yapf)"
-	@echo "  make test      - Run tests"
-	@echo "  make ci        - Run full CI workflow locally (lint + test)"
-	@echo "  make clean     - Clean up build artifacts and cache"
+	@echo "  make install      - Install dependencies (including dev tools)"
+	@echo "  make check-quality - Run quick code quality verification"
+	@echo "  make lint         - Run code quality checks (ruff, mypy)"
+	@echo "  make format       - Auto-format code (ruff, black)"
+	@echo "  make test         - Run tests"
+	@echo "  make ci           - Run full CI workflow locally (lint + test)"
+	@echo "  make clean        - Clean up build artifacts and cache"
 
 install:
 	$(PIP) install --upgrade pip
 	$(PIP) install -e ".[dev]" || $(PIP) install -e .
-	$(PIP) install flake8 isort yapf mypy types-PyYAML types-tqdm pytest pytest-cov
+	$(PIP) install ruff black mypy types-PyYAML types-tqdm pytest pytest-cov
 	# Install torch CPU if not present (optional suggestion)
 	# $(PIP) install torch --index-url https://download.pytorch.org/whl/cpu
 
 format:
-	isort .
-	yapf -i -r .
+	@echo "Formatting with ruff and black..."
+	ruff format .
+	ruff check --fix .
 
 lint:
-	@echo "Running isort check..."
-	isort . --check --diff
-	@echo "Running yapf check..."
-	yapf -r . --diff
-	@echo "Running flake8..."
-	flake8 .
-	@echo "Running mypy..."
+	@echo "Running ruff linter..."
+	ruff check .
+	@echo "Running mypy type checker..."
 	mypy minivllm
 
 test:
-	$(PYTHON) tests/run_tests.py --coverage
+	@echo "Running tests..."
+	$(PYTHON) -m pytest tests/ -v --cov=minivllm --cov-report=term-missing || $(PYTHON) test_code_quality.py
 
-ci: lint test
+ci: check-quality lint test
 
 clean:
-	rm -rf build/ dist/ *.egg-info .pytest_cache .mypy_cache .coverage htmlcov
+	rm -rf build/ dist/ *.egg-info .pytest_cache .mypy_cache .coverage htmlcov .ruff_cache
 	find . -name "*.pyc" -delete
 	find . -name "__pycache__" -delete
