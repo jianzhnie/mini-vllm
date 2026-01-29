@@ -91,7 +91,7 @@ def npu_flash_attn_varlen_func(
     max_seqlen_k=None,  # defined for aligning params order with corresponding function in `flash-attn`
     dropout_p=0.0,
     softmax_scale=None,
-    causal=False,
+    causal=True,  # 默认启用因果掩码
     **kwargs,
 ):
     keep_prob = 1.0 - dropout_p
