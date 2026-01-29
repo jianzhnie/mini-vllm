@@ -45,13 +45,13 @@ torch_npu.npu_fusion_attention(
 ```
 
 ### 主要参数说明
-- **query, key, value**: 输入张量，支持 float16、float32、bfloat16
+- **query, key, value**: 输入张量，支持 float16、bfloat16
   - 支持布局：BSNH、SBHN、BSND、BNSD，以及 TND（varlen 场景）
   - Q·Kᵀ 中 Q 的最后一维与 K 的最后一维一致，V 的最后一维可小于等于 K
 - **head_num**: 注意力头数
 - **input_layout**: 输入数据排布，支持以下格式：
-  - `"BSH"`: Batch, Sequence, Hidden
-  - `"SBH"`: Sequence, Batch, Hidden
+  - `"BSH"`: Batch, Sequence, Hidden_Size
+  - `"SBH"`: Sequence, Batch, Hidden_Size
   - `"BSND"`: Batch, Sequence, NumHeads, HeadDim
   - `"BNSD"`: Batch, NumHeads, Sequence, HeadDim
   - `"TND"`: TotalTokens, NumHeads, HeadDim (变长序列场景)
@@ -59,13 +59,14 @@ torch_npu.npu_fusion_attention(
 - **atten_mask**: 掩码输入，1 表示遮蔽该位置，0 表示参与计算；支持 BNSS、B1SS、11SS、SS（varlen）格式
 - **scale**: 缩放系数，默认 1.0, 通常设置为 1/sqrt(head_dim)
 - **keep_prob**: Dropout 保留率 (0,1]，默认 1.0（不做 Dropout）
-- **sparse_mode**: 稀疏模式选择，稀疏模式，用于控制注意力掩码：
+- **actual_seq_qlen**：Host侧（CPU端）的整型数组。在变长序列（varlen）场景下（即一个Batch中包含不同长度的句子），该参数必选。它描述了每个 Query 序列的结束位置（即长度的累加和），用于在打包的数据中区分不同的句子。例如：如果有两个长度分别为 4 和 6 的句子，该参数应为 `[4, 10]`。
+- **actual_seq_kvlen**：Host侧（CPU端）的整型数组。在变长序列（varlen）场景下必选。与 `actual_seq_qlen` 类似，它描述了每个 Key/Value 序列的结束位置（即长度的累加和）。
+
+- **sparse_mode**: 稀疏模式选择，稀疏模式，用于控制注意力掩码，当整网的atten_mask都相同且shape小于2048*2048时，建议使用defaultMask模式，来减少内存使用量
   - `0`: 默认掩码
   - `1`: Full mask
   - `2`: Top-left aligned causal mask (上三角掩码)
   - `3`: Down-right aligned causal mask (下三角掩码，用于因果掩码)
-- **actual_seq_qlen**, **actual_seq_kvlen**: 在变长序列场景下指定实际序列长度
-
 
 ### 返回值
 7 个输出，依次为：
