@@ -68,21 +68,23 @@ try:
     from flash_attn import flash_attn_varlen_func, flash_attn_with_kvcache
     _FLASH_ATTN_AVAILABLE = True
 except ImportError:
-    # Try NPU Flash Attention if CUDA FlashAttention is not available
-    if is_torch_npu_available():
-        try:
-            from transformers.integrations.npu_flash_attention import \
-                npu_flash_attn_varlen_func as flash_attn_varlen_func
-            _FLASH_ATTN_AVAILABLE = True
-            logger.info('Using NPU Flash Attention')
-        except ImportError:
-            logger.warning(
-                'FlashAttention not available. Falling back to standard attention.'
-            )
-    else:
-        logger.warning(
-            'FlashAttention not available. Falling back to standard attention.'
-        )
+    logger.warning(
+        'GPU FlashAttention not available. Falling back to standard attention.'
+    )
+# Try to import native torch_npu functions
+_NPU_FLASH_ATTN_AVAILABLE = False
+npu_fusion_attention = None
+npu_incre_flash_attention = None
+
+if is_torch_npu_available():
+    try:
+        import torch_npu
+        npu_fusion_attention = torch_npu.npu_fusion_attention
+        npu_incre_flash_attention = torch_npu.npu_incre_flash_attention
+        _NPU_FLASH_ATTN_AVAILABLE = True
+        logger.info('NPU Flash Attention available')
+    except ImportError:
+        logger.warning('Native NPU functions not available')
 
 if _TRITON_AVAILABLE:
 
@@ -277,25 +279,102 @@ class Attention(nn.Module):
                 'KV cache has not been initialized. Ensure ModelRunner.allocate_kv_cache() '
                 'is called before inference.')
 
-        if _FLASH_ATTN_AVAILABLE and flash_attn_varlen_func is not None:
+        if _FLASH_ATTN_AVAILABLE:
             if context.is_prefill:
                 # Prefill phase: process entire prompt sequence
                 # In prefill, if a prefix cache exists we use cached KV tensors
                 if context.block_tables is not None:  # prefix cache
                     k, v = k_cache, v_cache
 
-                attn_out: torch.Tensor = flash_attn_varlen_func(
-                    q,
-                    k,
-                    v,
-                    max_seqlen_q=context.max_seqlen_q,
-                    cu_seqlens_q=context.cum_seqlens_q,
-                    max_seqlen_k=context.max_seqlen_k,
-                    cu_seqlens_k=context.cum_seqlens_k,
-                    softmax_scale=self.scale,
-                    causal=True,
-                    block_table=context.block_tables,
-                )
+                if flash_attn_varlen_func is not None:
+                    attn_out: torch.Tensor = flash_attn_varlen_func(
+                        q,
+                        k,
+                        v,
+                        max_seqlen_q=context.max_seqlen_q,
+                        cu_seqlens_q=context.cum_seqlens_q,
+                        max_seqlen_k=context.max_seqlen_k,
+                        cu_seqlens_k=context.cum_seqlens_k,
+                        softmax_scale=self.scale,
+                        causal=True,
+                        block_table=context.block_tables,
+                    )
+                elif _NPU_FLASH_ATTN_AVAILABLE and npu_fusion_attention is not None:
+                    # Native NPU fusion attention
+                    # Convert cumulative lengths to actual lengths for NPU
+                    seqlens_q = ((context.cum_seqlens_q[1:] -
+                                  context.cum_seqlens_q[:-1]).cpu().tolist())
+                    seqlens_k = ((context.cum_seqlens_k[1:] -
+                                  context.cum_seqlens_k[:-1]).cpu().tolist())
+
+                    # Prepare tensors for NPU fusion attention
+                    # Convert from [total_tokens, num_heads, head_dim] to [batch, seq_len, num_heads, head_dim]
+                    batch_size = len(seqlens_q)
+                    max_seq_len = max(seqlens_q)
+
+                    q_reshaped = torch.zeros(batch_size,
+                                             max_seq_len,
+                                             self.num_heads,
+                                             self.head_dim,
+                                             device=q.device,
+                                             dtype=q.dtype)
+                    k_reshaped = torch.zeros(batch_size,
+                                             max_seq_len,
+                                             self.num_kv_heads,
+                                             self.head_dim,
+                                             device=k.device,
+                                             dtype=k.dtype)
+                    v_reshaped = torch.zeros(batch_size,
+                                             max_seq_len,
+                                             self.num_kv_heads,
+                                             self.head_dim,
+                                             device=v.device,
+                                             dtype=v.dtype)
+
+                    # Fill reshaped tensors with actual data
+                    q_offset, k_offset, v_offset = 0, 0, 0
+                    for i in range(batch_size):
+                        seq_len_q = seqlens_q[i]
+                        seq_len_k = seqlens_k[i]
+
+                        if seq_len_q > 0:
+                            q_reshaped[i, :seq_len_q] = q[q_offset:q_offset +
+                                                          seq_len_q]
+                            q_offset += seq_len_q
+
+                        if seq_len_k > 0:
+                            k_reshaped[i, :seq_len_k] = k[k_offset:k_offset +
+                                                          seq_len_k]
+                            v_reshaped[i, :seq_len_k] = v[v_offset:v_offset +
+                                                          seq_len_k]
+                            k_offset += seq_len_k
+                            v_offset += seq_len_k
+
+                    attn_out_reshaped, _, _, _, _, _, _ = npu_fusion_attention(
+                        q_reshaped,
+                        k_reshaped,
+                        v_reshaped,
+                        self.num_heads,
+                        input_layout='BSNH',
+                        actual_seq_qlen=seqlens_q,
+                        actual_seq_kvlen=seqlens_k,
+                        scale=self.scale,
+                        sparse_mode=2,  # Causal
+                    )
+
+                    # Reshape back to original format [total_tokens, num_heads, head_dim]
+                    attn_out = []
+                    for i in range(batch_size):
+                        seq_len = seqlens_q[i]
+                        if seq_len > 0:
+                            attn_out.append(attn_out_reshaped[i, :seq_len])
+
+                    if attn_out:
+                        attn_out = torch.cat(attn_out, dim=0)
+                    else:
+                        attn_out = torch.zeros_like(q)
+                else:
+                    attn_out = self._fallback_attention(q, k, v, context)
             else:
                 # Decode phase: generate single token using cached K/V
                 if flash_attn_with_kvcache is not None:
@@ -308,21 +387,32 @@ class Attention(nn.Module):
                         softmax_scale=self.scale,
                         causal=True,
                     )
-                elif is_torch_npu_available():
-                    import torch_npu
+                elif _NPU_FLASH_ATTN_AVAILABLE and npu_incre_flash_attention is not None:
+                    # Native NPU incremental FlashAttention
+                    # Reshape tensors for NPU format
+                    batch_size = q.size(0)
+                    q_npu = q.view(batch_size, self.num_heads,
+                                   self.head_dim)  # [B, H, D]
 
-                    # NPU incremental FlashAttention
-                    attn_out = torch_npu.npu_incre_flash_attention(
-                        q.view(q.shape[0], 1, -1),
-                        k_cache,
-                        v_cache,
+                    # Prepare KV cache in NPU format
+                    k_cache_npu = k_cache  # Should be in correct format already
+                    v_cache_npu = v_cache
+
+                    attn_out = npu_incre_flash_attention(
+                        q_npu,
+                        k_cache_npu,
+                        v_cache_npu,
                         num_heads=self.num_heads,
+                        num_key_value_heads=self.num_kv_heads,
                         input_layout='BSH',
                         scale_value=self.scale,
                         actual_seq_lengths=context.context_lens,
                         block_table=context.block_tables,
                     )
-                    attn_out = attn_out.view(q.shape)
+
+                    # Reshape back to original format [batch, num_heads, head_dim]
+                    attn_out = attn_out.view(batch_size, self.num_heads,
+                                             self.head_dim)
                 else:
                     attn_out = self._fallback_attention(q, k, v, context)
         else:
