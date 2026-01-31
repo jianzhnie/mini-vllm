@@ -43,6 +43,8 @@ Performance Tips:
 
 from minivllm.engine.llm_engine import LLMEngine
 
+__all__ = ['LLM']
+
 
 class LLM(LLMEngine):
     """Main interface for the mini-vLLM language model engine.
