@@ -1,30 +1,35 @@
 """Token sampling utilities for text generation.
 
 This module provides the Sampler class for selecting tokens from model logits
-using temperature-based sampling. The implementation uses an efficient
-approximation of Gumbel sampling for diversity.
+using various sampling strategies including temperature, top-k, top-p (nucleus),
+and min-p sampling.
 
 Typical usage:
     >>> sampler = Sampler()
     >>> logits = torch.randn(4, 50000)  # (batch_size, vocab_size)
     >>> temperatures = torch.tensor([0.7, 0.8, 0.9, 1.0])
-    >>> tokens = sampler(logits, temperatures)
-    >>> print(tokens.shape)  # torch.Size([4])
+    >>> top_ps = torch.tensor([0.9, 0.95, 1.0, 1.0])
+    >>> top_ks = torch.tensor([50, 100, -1, -1])
+    >>> min_ps = torch.tensor([0.01, 0.0, 0.0, 0.0])
+    >>> tokens = sampler(logits, temperatures, top_ps, top_ks, min_ps)
 """
 
-from typing import Final
+from typing import Final, Optional
 
 import torch
 from torch import nn
 
+__all__ = ['Sampler']
+
 
 class Sampler(nn.Module):
-    """Token sampler that selects tokens using temperature-scaled sampling.
+    """Token sampler that selects tokens using combined sampling strategies.
 
-    This module performs temperature scaling on logits followed by an
-    efficient approximation of Gumbel sampling using exponential division
-    and argmax. The approach provides good diversity while being faster
-    than true Gumbel sampling.
+    This module supports:
+    1. Temperature scaling
+    2. Top-K filtering
+    3. Top-P (Nucleus) filtering
+    4. Min-P filtering
 
     Attributes:
         MIN_TEMPERATURE: Minimum temperature value to prevent numerical issues.
@@ -32,10 +37,9 @@ class Sampler(nn.Module):
 
     Example:
         >>> sampler = Sampler()
-        >>> logits = torch.randn(2, 1000)  # batch=2, vocab=1000
+        >>> logits = torch.randn(2, 1000)
         >>> temperatures = torch.tensor([0.7, 0.9])
         >>> tokens = sampler(logits, temperatures)
-        >>> print(tokens)  # tensor([42, 156])
     """
 
     # Class constants for numerical stability
@@ -49,30 +53,21 @@ class Sampler(nn.Module):
         self,
         logits: torch.Tensor,
         temperatures: torch.Tensor,
+        top_ps: Optional[torch.Tensor] = None,
+        top_ks: Optional[torch.Tensor] = None,
+        min_ps: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """Sample tokens from logits with per-sample temperature scaling.
-
-        This method applies temperature scaling to logits and uses an
-        approximation of Gumbel sampling to select diverse tokens.
+        """Sample tokens from logits with per-sample sampling parameters.
 
         Args:
-            logits: Float tensor of shape (batch_size, vocab_size) containing
-                unnormalized log probabilities for each token.
-            temperatures: Float tensor of shape (batch_size,) with positive
-                temperature values. Lower values (e.g., 0.1) produce more
-                focused/deterministic sampling, while higher values (e.g., 1.5)
-                produce more diverse/random sampling.
+            logits: Float tensor of shape (batch_size, vocab_size).
+            temperatures: Float tensor of shape (batch_size,).
+            top_ps: Optional float tensor of shape (batch_size,).
+            top_ks: Optional long tensor of shape (batch_size,).
+            min_ps: Optional float tensor of shape (batch_size,).
 
         Returns:
             Long tensor of shape (batch_size,) containing sampled token IDs.
-
-        Raises:
-            ValueError: If input dimensions are incorrect or batch sizes don't match.
-
-        Note:
-            - Temperature of 1.0 corresponds to sampling from the raw distribution
-            - Temperature < 1.0 makes high-probability tokens more likely
-            - Temperature > 1.0 flattens the distribution for more diversity
         """
         # Validate input dimensions
         if logits.dim() != 2:
@@ -88,19 +83,105 @@ class Sampler(nn.Module):
                 f'Batch size mismatch: logits has {logits.size(0)} samples '
                 f'but temperatures has {temperatures.size(0)} samples')
 
+        # Keep original logits for recovery if all tokens are filtered
+        original_logits = logits.clone()
+
         # Apply temperature scaling
-        # Clamp to prevent divide-by-zero
         temperatures_clamped = temperatures.clamp_min(self.MIN_TEMPERATURE)
-        logits_scaled = logits.float() / temperatures_clamped.unsqueeze(dim=1)
+        logits = logits.float() / temperatures_clamped.unsqueeze(dim=1)
 
-        # Convert scaled logits to probabilities
-        probs = torch.softmax(logits_scaled, dim=-1)
+        # Apply Top-K filtering
+        if top_ks is not None:
+            # Check if any k is active (> 0 and < vocab_size)
+            # Vectorized implementation for better performance
+            active_mask = (top_ks > 0) & (top_ks < logits.size(-1))
+            if active_mask.any():
+                max_k = top_ks[active_mask].max().item()
+                # Get top-k indices for all sequences
+                # Note: We use the max_k across the batch to vectorize
+                _, top_k_indices = torch.topk(logits, max_k, dim=-1)
 
-        # Approximate Gumbel sampling using exponential noise
-        # This is faster than true Gumbel: -log(-log(uniform))
-        # but provides similar diversity characteristics
-        noise = torch.empty_like(probs).exponential_(1).clamp_min(
-            self.MIN_PROB)
-        sample_tokens = (probs / noise).argmax(dim=-1)
+                # Create a mask for valid k positions [batch, max_k]
+                # range: [0, 1, ..., max_k-1]
+                # top_ks: [k1, k2, ...]
+                # mask: [[T, T, F], [T, T, T], ...]
+                k_range = torch.arange(max_k,
+                                       device=logits.device).unsqueeze(0)
+                keep_top_k_mask = k_range < top_ks.unsqueeze(1)
+
+                # Create the final mask for logits [batch, vocab]
+                # Initialize with False (filter everything by default for active rows)
+                # For inactive rows (top_k <= 0), we will set to True later
+                mask = torch.zeros_like(logits, dtype=torch.bool)
+
+                # Scatter the keep mask to the original positions
+                # This sets True for the top-k tokens of each sequence
+                mask.scatter_(1, top_k_indices, keep_top_k_mask)
+
+                # For sequences where top-k is disabled (active_mask is False),
+                # we should keep all tokens (set mask to True)
+                mask[~active_mask] = True
+
+                # Apply filter
+                logits.masked_fill_(~mask, -float('inf'))
+
+        # Apply Top-P filtering
+        if top_ps is not None:
+            # Only apply if any p < 1.0
+            if (top_ps < 1.0).any():
+                # Sort probabilities (descending)
+                probs = torch.softmax(logits, dim=-1)
+                sorted_probs, sorted_indices = torch.sort(probs,
+                                                          descending=True,
+                                                          dim=-1)
+                cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+
+                # Remove tokens with cumulative probability above the threshold (nucleus)
+                sorted_indices_to_remove = cumulative_probs > top_ps.unsqueeze(
+                    1)
+
+                # Shift the indices to the right to keep also the first token above the threshold
+                sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[
+                    ..., :-1].clone()
+                sorted_indices_to_remove[..., 0] = 0
+
+                # Scatter sorted tensor to original indexing
+                indices_to_remove = sorted_indices_to_remove.scatter(
+                    1, sorted_indices, sorted_indices_to_remove)
+                logits = logits.masked_fill(indices_to_remove, -float('inf'))
+
+        # Apply Min-P filtering
+        if min_ps is not None:
+            # Only apply if any min_p > 0.0
+            if (min_ps > 0.0).any():
+                probs = torch.softmax(logits, dim=-1)
+                top_prob, _ = torch.max(probs, dim=-1, keepdim=True)
+                scaled_min_p = min_ps.unsqueeze(1) * top_prob
+                tokens_to_remove = probs < scaled_min_p
+                logits = logits.masked_fill(tokens_to_remove, -float('inf'))
+
+        # Safety check: if all tokens are filtered out (all -inf), restore original logits
+        # This can happen if p is too small or k is too small combined with other filters
+        all_filtered = torch.all(torch.isinf(logits), dim=-1)
+        if all_filtered.any():
+            # Restore original logits for affected sequences (scaled by temperature)
+            logits[all_filtered] = original_logits[
+                all_filtered] / temperatures_clamped[all_filtered].unsqueeze(
+                    dim=1)
+
+        # Convert to probabilities
+        probs = torch.softmax(logits, dim=-1)
+
+        # Handle NaNs (rare but possible with extreme logits)
+        if torch.isnan(probs).any():
+            probs = torch.nan_to_num(probs, nan=0.0)
+            # Renormalize
+            sum_probs = probs.sum(dim=-1, keepdim=True)
+            probs = probs / sum_probs.clamp_min(self.MIN_PROB)
+
+        # Sample
+        num_samples = 1
+        sample_tokens = torch.multinomial(probs, num_samples,
+                                          replacement=True).squeeze(1)
 
         return sample_tokens
