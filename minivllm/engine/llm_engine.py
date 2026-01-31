@@ -7,7 +7,7 @@ pipeline including model loading, scheduling, and token generation.
 import atexit
 from dataclasses import fields
 from time import perf_counter
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import torch.multiprocessing as mp
 from tqdm.auto import tqdm
@@ -18,6 +18,11 @@ from minivllm.engine.model_runner import ModelRunner
 from minivllm.engine.scheduler import Scheduler
 from minivllm.engine.sequence import Sequence
 from minivllm.sampling_params import SamplingParams
+from minivllm.utils.logger_utils import get_logger
+
+logger = get_logger(__name__)
+
+__all__ = ['LLMEngine']
 
 
 class LLMEngine:
@@ -65,8 +70,8 @@ class LLMEngine:
             RuntimeError: If distributed initialization fails.
         """
         # Filter kwargs to only include valid Config parameters
-        config_fields: set = {field.name for field in fields(Config)}
-        config_kwargs: Dict = {
+        config_fields: Set[str] = {field.name for field in fields(Config)}
+        config_kwargs: Dict[str, Any] = {
             k: v
             for k, v in kwargs.items() if k in config_fields
         }
@@ -88,6 +93,7 @@ class LLMEngine:
 
         # Initialize main model runner on rank 0
         self.model_runner: ModelRunner = ModelRunner(config, 0, self.events)
+        logger.info(f'Initialized LLM Engine with model: {config.model}')
 
         # Load tokenizer and set EOS token
         self.tokenizer: PreTrainedTokenizer = AutoTokenizer.from_pretrained(
@@ -329,11 +335,12 @@ class LLMEngine:
         ]
 
         # Decode token IDs to text
+        texts = self.tokenizer.batch_decode(sorted_outputs)
         result_dicts: List[Dict[str, Union[str, List[int]]]] = [{
             'text':
-            self.tokenizer.decode(token_ids),
+            text,
             'token_ids':
             token_ids
-        } for token_ids in sorted_outputs]
+        } for text, token_ids in zip(texts, sorted_outputs)]
 
         return result_dicts
