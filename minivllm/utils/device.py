@@ -21,10 +21,14 @@ import os
 from typing import Any, Dict, Optional, Tuple
 
 import torch
-from transformers.utils import (is_torch_cuda_available,
-                                is_torch_mlu_available, is_torch_mps_available,
-                                is_torch_musa_available,
-                                is_torch_npu_available, is_torch_xpu_available)
+from transformers.utils import (
+    is_torch_cuda_available,
+    is_torch_mlu_available,
+    is_torch_mps_available,
+    is_torch_musa_available,
+    is_torch_npu_available,
+    is_torch_xpu_available,
+)
 
 from minivllm.utils.logger_utils import get_logger
 
