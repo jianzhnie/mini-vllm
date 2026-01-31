@@ -10,8 +10,7 @@ between sequences with common token prefixes, reducing total memory usage.
 
 from __future__ import annotations
 
-from collections import deque
-from typing import Deque, Dict, List, Set
+from typing import Dict, List, Set
 
 import numpy as np
 import xxhash
@@ -110,7 +109,8 @@ class BlockManager:
         self.block_size: int = block_size
         self.blocks: List[Block] = [Block(i) for i in range(num_blocks)]
         self.hash_to_block_id: Dict[int, int] = {}
-        self.free_block_ids: Deque[int] = deque(range(num_blocks))
+        # Use a set for free_block_ids to allow O(1) removal
+        self.free_block_ids: Set[int] = set(range(num_blocks))
         self.used_block_ids: Set[int] = set()
 
     @classmethod
@@ -169,7 +169,13 @@ class BlockManager:
                 f'ref_count={block.ref_count}. Cannot allocate.')
 
         block.reset()
-        self.free_block_ids.remove(block_id)
+        # Optimization: if allocating the first free block, use popleft for O(1)
+        if self.free_block_ids and self.free_block_ids[0] == block_id:
+            self.free_block_ids.popleft()
+        else:
+            # O(N) removal for specific block
+            self.free_block_ids.remove(block_id)
+
         self.used_block_ids.add(block_id)
         return block
 
@@ -190,6 +196,11 @@ class BlockManager:
         if block.ref_count != 0:
             raise RuntimeError(f'Cannot deallocate block {block_id} with '
                                f'ref_count={block.ref_count} (must be 0)')
+
+        # Clean up hash mapping to prevent memory leak and stale entries
+        if block.hash != -1:
+            if self.hash_to_block_id.get(block.hash) == block_id:
+                del self.hash_to_block_id[block.hash]
 
         self.used_block_ids.remove(block_id)
         self.free_block_ids.append(block_id)
@@ -379,8 +390,9 @@ class BlockManager:
                 raise ValueError('No free blocks available for allocation. '
                                  'This may trigger sequence preemption.')
 
-            block_id: int = self.free_block_ids[0]
-            self._allocate_block(block_id)
+            # Pick any free block
+            block_id: int = next(iter(self.free_block_ids))
+            self._allocate_block(block_id, reset=True)
             block_table.append(block_id)
 
         elif len(sequence) % self.block_size == 0:
