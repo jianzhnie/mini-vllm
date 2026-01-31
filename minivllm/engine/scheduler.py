@@ -46,6 +46,11 @@ from typing import Deque, List, Tuple
 from minivllm.config import Config
 from minivllm.engine.block_manager import BlockManager
 from minivllm.engine.sequence import Sequence, SequenceStatus
+from minivllm.utils.logger_utils import get_logger
+
+logger = get_logger(__name__)
+
+__all__ = ['Scheduler']
 
 
 class Scheduler:
@@ -141,6 +146,11 @@ class Scheduler:
             if (num_batched_tokens + len(sequence) >
                     self.max_num_batched_tokens
                     or not self.block_manager.can_allocate(sequence)):
+                logger.debug(
+                    f'Cannot schedule sequence {sequence.seq_id} (prefill): '
+                    f'len={len(sequence)}, '
+                    f'tokens={num_batched_tokens + len(sequence)}/{self.max_num_batched_tokens}, '
+                    f'free_blocks={self.block_manager.get_num_free_blocks()}')
                 break
 
             num_seqs += 1
@@ -214,11 +224,16 @@ class Scheduler:
         """Preempt a sequence due to cache memory constraints.
 
         Preempted sequences are returned to the waiting queue and will
-        be re-executed from the cached point when cache space is available.
+        be re-executed from scratch (recomputation) when cache space is available.
+        Any previously cached blocks for this sequence are released, but may be
+        recovered via prefix caching if they haven't been overwritten.
 
         Args:
             sequence: Sequence to preempt.
         """
+        logger.info(
+            f'Preempting sequence {sequence.seq_id} due to memory constraints.'
+        )
         sequence.status = SequenceStatus.WAITING
         self.block_manager.deallocate(sequence)
         self.waiting.appendleft(sequence)
