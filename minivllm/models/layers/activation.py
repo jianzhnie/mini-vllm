@@ -10,6 +10,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+__all__ = ['SiluAndMul']
+
 
 class SiluAndMul(nn.Module):
     """Gated SiLU-style activation (SwiGLU variant).
@@ -44,6 +46,9 @@ class SiluAndMul(nn.Module):
 
     def __init__(self) -> None:
         super().__init__()
+
+    def extra_repr(self) -> str:
+        return ''
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Apply gated SiLU activation.
