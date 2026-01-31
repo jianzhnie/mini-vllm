@@ -11,6 +11,16 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from torch import nn
 
+__all__ = [
+    'LinearBase',
+    'ReplicatedLinear',
+    'ColumnParallelLinear',
+    'MergedColumnParallelLinear',
+    'QKVParallelLinear',
+    'RowParallelLinear',
+    'divide',
+]
+
 
 def divide(numerator: int, denominator: int) -> int:
     """Divide two integers with divisibility check.
@@ -80,6 +90,8 @@ class LinearBase(nn.Module):
         tp_dim: Optional[int] = None,
     ) -> None:
         super().__init__()
+        self.input_size = input_size
+        self.output_size = output_size
         self.tp_dim: Optional[int] = tp_dim
         # Use common helper functions for TP rank/size
         self.tp_rank: int = get_tensor_parallel_rank()
@@ -96,12 +108,15 @@ class LinearBase(nn.Module):
         else:
             self.register_parameter('bias', None)
 
+    def extra_repr(self) -> str:
+        return f'input_size={self.input_size}, output_size={self.output_size}, bias={self.bias is not None}, tp_dim={self.tp_dim}, tp_size={self.tp_size}'
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass - to be implemented by subclasses."""
         raise NotImplementedError('Subclasses must implement forward method')
 
-    def weight_loader(self, param: nn.Parameter,
-                      loaded_weight: torch.Tensor) -> None:
+    def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor,
+                      *args, **kwargs) -> None:
         """Load weights - to be implemented by subclasses."""
         raise NotImplementedError(
             'Subclasses must implement weight_loader method')
@@ -118,8 +133,8 @@ class ReplicatedLinear(LinearBase):
     ) -> None:
         super().__init__(input_size, output_size, bias)
 
-    def weight_loader(self, param: nn.Parameter,
-                      loaded_weight: torch.Tensor) -> None:
+    def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor,
+                      *args, **kwargs) -> None:
         """Load replicated weights (same across all ranks)."""
         param.data.copy_(loaded_weight)
 
@@ -144,8 +159,8 @@ class ColumnParallelLinear(LinearBase):
         tp_size = get_tensor_parallel_world_size()
         super().__init__(input_size, divide(output_size, tp_size), bias, 0)
 
-    def weight_loader(self, param: nn.Parameter,
-                      loaded_weight: torch.Tensor) -> None:
+    def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor,
+                      *args, **kwargs) -> None:
         """Load column-sharded weights."""
         param_data = param.data
         assert self.tp_dim is not None, 'tp_dim must be set for column-parallel layers'
@@ -174,9 +189,21 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
         self.output_sizes: List[int] = output_sizes
         super().__init__(input_size, sum(output_sizes), bias)
 
-    def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor,
-                      loaded_shard_id: int) -> None:
-        """Load weights for merged column-parallel layers."""
+    def weight_loader(
+        self,
+        param: nn.Parameter,
+        loaded_weight: torch.Tensor,
+        loaded_shard_id: int = 0,
+        *args,
+        **kwargs,
+    ) -> None:
+        """Load weights for merged column-parallel layers.
+
+        Args:
+            param: The parameter to load into.
+            loaded_weight: The weight tensor to load from.
+            loaded_shard_id: The index of the shard to load (default: 0).
+        """
         param_data = param.data
         assert self.tp_dim is not None, 'tp_dim must be set for column-parallel layers'
         shard_offset = sum(self.output_sizes[:loaded_shard_id]) // self.tp_size
@@ -212,9 +239,25 @@ class QKVParallelLinear(ColumnParallelLinear):
                        2 * total_num_kv_heads) * self.head_size
         super().__init__(hidden_size, output_size, bias)
 
-    def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor,
-                      loaded_shard_id: str) -> None:
-        """Load QKV weights with proper sharding."""
+    def weight_loader(
+        self,
+        param: nn.Parameter,
+        loaded_weight: torch.Tensor,
+        loaded_shard_id: Optional[str] = None,
+        *args,
+        **kwargs,
+    ) -> None:
+        """Load QKV weights with proper sharding.
+
+        Args:
+            param: The parameter to load into.
+            loaded_weight: The weight tensor to load from.
+            loaded_shard_id: One of 'q', 'k', 'v' to specify which projection to load.
+        """
+        if loaded_shard_id is None:
+            raise ValueError(
+                'loaded_shard_id must be provided for QKVParallelLinear')
+
         param_data = param.data
         assert loaded_shard_id in ['q', 'k',
                                    'v'], f'Invalid shard_id: {loaded_shard_id}'
@@ -235,6 +278,12 @@ class QKVParallelLinear(ColumnParallelLinear):
                                             self.tp_dim)[self.tp_rank]
         param_data.copy_(loaded_weight)
 
+    def extra_repr(self) -> str:
+        return (
+            f'hidden_size={self.input_size}, head_size={self.head_size}, '
+            f'num_heads={self.num_heads}, num_kv_heads={self.num_kv_heads}, '
+            f'bias={self.bias is not None}, tp_size={self.tp_size}')
+
 
 class RowParallelLinear(LinearBase):
     """Row-parallel linear layer that shards input features across ranks.
@@ -252,8 +301,8 @@ class RowParallelLinear(LinearBase):
         tp_size = get_tensor_parallel_world_size()
         super().__init__(divide(input_size, tp_size), output_size, bias, 1)
 
-    def weight_loader(self, param: nn.Parameter,
-                      loaded_weight: torch.Tensor) -> None:
+    def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor,
+                      *args, **kwargs) -> None:
         """Load row-sharded weights."""
         param_data = param.data
         assert self.tp_dim is not None, 'tp_dim must be set for row-parallel layers'
