@@ -12,6 +12,22 @@ from torch import Tensor
 MIN_TEMPERATURE = 1e-8
 MIN_PROB = 1e-10
 
+# Attempt to use torch.compile for kernel fusion on supported devices
+try:
+    import torch._dynamo
+
+    # Use 'reduce-overhead' or 'max-autotune' if stable, but 'default' is safer for now
+    # We only compile if not on MPS (which has issues with compile sometimes) or if explicitly desired
+    compile_ops = True
+except ImportError:
+    compile_ops = False
+
+
+def compiled(fn):
+    if compile_ops:
+        return torch.compile(fn)
+    return fn
+
 
 def apply_temperature(logits: Tensor, temperature: Tensor) -> Tensor:
     """
@@ -97,6 +113,7 @@ def apply_top_k(logits: Tensor,
     return logits
 
 
+@compiled
 def apply_top_p(logits: Tensor,
                 top_p: Tensor,
                 filter_value: float = -float('inf')) -> Tensor:
@@ -303,6 +320,7 @@ def apply_frequency_penalty(logits: Tensor, sequence: Tensor,
     return logits
 
 
+@compiled
 def apply_presence_penalty(logits: Tensor, sequence: Tensor,
                            penalty: float) -> Tensor:
     """Apply presence penalty."""
