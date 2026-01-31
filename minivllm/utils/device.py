@@ -446,15 +446,9 @@ def memory_stats(device: Optional[torch.device] = None) -> Dict[str, Any]:
 def supports_device_graph() -> bool:
     """Check if the current device supports device graph optimization.
 
-    Currently, only CUDA devices support graph optimization. Other devices
-    may support similar optimizations in the future.
-
-    Returns:
-        True if device graph is supported, False otherwise.
+    Currently, CUDA and NPU devices support graph optimization.
     """
-    # Only CUDA devices support graph optimization currently
-    # Note: Other devices may have similar graph optimizations in the future
-    return is_torch_cuda_available()
+    return is_torch_cuda_available() or is_torch_npu_available()
 
 
 def supports_cuda_graph() -> bool:
@@ -518,9 +512,9 @@ def should_use_pin_memory(device: Optional[torch.device] = None) -> bool:
         device = get_current_device()
 
     device_type = device.type
-    # pin_memory is primarily useful for CUDA devices
+    # pin_memory is primarily useful for CUDA and NPU devices
     # Other devices may not support it or may not benefit from it
-    return device_type == 'cuda'
+    return device_type in ('cuda', 'npu')
 
 
 def move_tensor_to_device(tensor: torch.Tensor,
