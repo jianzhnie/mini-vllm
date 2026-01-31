@@ -6,7 +6,7 @@ cos/sin values for positions and applies them to query/key tensors.
 """
 
 from functools import lru_cache
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import torch
 from torch import nn
@@ -79,6 +79,7 @@ class RotaryEmbedding(nn.Module):
         rotary_dim: int,
         max_position_embeddings: int,
         base: float,
+        rope_scaling: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Initialize rotary embedding with precomputed cos/sin values.
 
@@ -87,6 +88,8 @@ class RotaryEmbedding(nn.Module):
             rotary_dim: Rotary embedding dimension (must equal head_size).
             max_position_embeddings: Maximum sequence length to support.
             base: Base frequency for the rotary embedding calculation.
+            rope_scaling: Dictionary containing scaling configuration.
+                Supported types: 'linear', 'dynamic'.
 
         Raises:
             ValueError: If rotary_dim != head_size.
@@ -100,6 +103,24 @@ class RotaryEmbedding(nn.Module):
         inv_freq = 1.0 / (base**(
             torch.arange(0, rotary_dim, 2, dtype=torch.float) / rotary_dim))
 
+        # Handle RoPE scaling
+        if rope_scaling:
+            scaling_type = rope_scaling.get('type')
+            factor = rope_scaling.get('factor', 1.0)
+
+            if scaling_type == 'linear':
+                # Linear scaling: divide position indices by factor
+                # We can achieve this by dividing inv_freq by factor?
+                # No, cos(pos/factor * freq) = cos(pos * freq/factor).
+                inv_freq /= factor
+            elif scaling_type == 'dynamic':
+                # NTK-Aware scaling
+                # Scale base by factor^(dim / (dim-2))
+                # This is a simplified approximation
+                base = base * (factor**(rotary_dim / (rotary_dim - 2)))
+                inv_freq = 1.0 / (base**(torch.arange(
+                    0, rotary_dim, 2, dtype=torch.float) / rotary_dim))
+
         # Create position indices
         t = torch.arange(max_position_embeddings, dtype=torch.float)
 
@@ -111,7 +132,8 @@ class RotaryEmbedding(nn.Module):
         sin = freqs.sin()
 
         # Store concatenated cos/sin values for efficient lookup
-        cache = torch.cat((cos, sin), dim=-1).unsqueeze_(1)
+        # Shape: (max_pos, 2*dim)
+        cache = torch.cat((cos, sin), dim=-1)
         self.register_buffer('cos_sin_cache', cache, persistent=False)
 
     def forward(self, positions: torch.Tensor, query: torch.Tensor,
@@ -126,20 +148,43 @@ class RotaryEmbedding(nn.Module):
         Returns:
             Tuple of (query_with_rope, key_with_rope) with rotary embeddings applied.
         """
+        # Get cos/sin for positions
+        # self.cos_sin_cache: (max_pos, 2*dim)
+        # positions: (batch, seq_len)
+        # cos_sin: (batch, seq_len, 2*dim)
         cos_sin = self.cos_sin_cache[positions]
+
+        # Split into cos and sin
+        # cos, sin: (batch, seq_len, dim)
         cos, sin = cos_sin.chunk(2, dim=-1)
+
+        # Unsqueeze dim 1 for broadcasting across heads
+        # cos, sin: (batch, 1, seq_len, dim)
+        cos = cos.unsqueeze(1)
+        sin = sin.unsqueeze(1)
+
         query = apply_rotary_emb(query, cos, sin)
         key = apply_rotary_emb(key, cos, sin)
         return query, key
 
 
-@lru_cache(1)
+@lru_cache(4)
+def _get_rope_cached(
+    head_size: int,
+    rotary_dim: int,
+    max_position: int,
+    base: float,
+) -> RotaryEmbedding:
+    """Internal cached helper."""
+    return RotaryEmbedding(head_size, rotary_dim, max_position, base)
+
+
 def get_rope(
     head_size: int,
     rotary_dim: int,
     max_position: int,
     base: float,
-    rope_scaling: Optional[dict] = None,
+    rope_scaling: Optional[Dict[str, Any]] = None,
 ) -> RotaryEmbedding:
     """Get a cached RotaryEmbedding instance with the specified parameters.
 
@@ -152,15 +197,33 @@ def get_rope(
         rotary_dim: Rotary embedding dimension (must equal head_size).
         max_position: Maximum sequence length to support.
         base: Base frequency for the rotary embedding calculation.
-        rope_scaling: Optional rope scaling parameters (not supported in this helper).
+        rope_scaling: Optional rope scaling parameters.
 
     Returns:
         RotaryEmbedding instance configured with the specified parameters.
-
-    Raises:
-        ValueError: If rope_scaling is provided (not supported).
     """
+    # Note: dict is not hashable, so we can't directly pass it to lru_cache wrapped function
+    # if we want to use it as a key. However, for this helper, we assume the dict content
+    # determines uniqueness.
+    # To make it hashable for lru_cache, we'd need to convert it to a tuple of items.
+    # For now, we'll instantiate it directly if scaling is present, bypassing cache for simplicity
+    # or rely on the user to pass hashable args if we were strict.
+    # Given the simplicity, we'll just create the instance.
+
+    # Check if we need to bypass cache due to unhashable dict
     if rope_scaling is not None:
-        raise ValueError('rope_scaling not supported in this helper')
-    rotary_emb = RotaryEmbedding(head_size, rotary_dim, max_position, base)
-    return rotary_emb
+        return RotaryEmbedding(head_size, rotary_dim, max_position, base,
+                               rope_scaling)
+
+    return _get_rope_cached(head_size, rotary_dim, max_position, base)
+
+
+@lru_cache(4)
+def _get_rope_cached(
+    head_size: int,
+    rotary_dim: int,
+    max_position: int,
+    base: float,
+) -> RotaryEmbedding:
+    """Internal cached helper."""
+    return RotaryEmbedding(head_size, rotary_dim, max_position, base)
