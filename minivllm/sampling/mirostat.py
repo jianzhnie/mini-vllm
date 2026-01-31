@@ -19,13 +19,11 @@ The algorithm works by:
 from typing import Optional
 
 import torch
-from torch import Tensor
+from torch import Tensor, nn
 from torch.distributions import Categorical
 
-from minivllm.sampling.base import Sampler
 
-
-class MirostatSampler(Sampler):
+class MirostatSampler(nn.Module):
     """
     ## Mirostat Sampler
 
@@ -41,6 +39,7 @@ class MirostatSampler(Sampler):
         :param learning_rate: learning rate for temperature adjustment
         :param max_temperature: maximum allowed temperature
         """
+        super().__init__()
         self.target_perplexity = target_perplexity
         self.target_surprise = torch.log(torch.tensor(target_perplexity))
         self.learning_rate = learning_rate
@@ -116,7 +115,7 @@ class MirostatSampler(Sampler):
         self.previous_surprise = None
 
 
-class MirostatV2Sampler(Sampler):
+class MirostatV2Sampler(nn.Module):
     """
     ## Mirostat v2 Sampler
 
@@ -132,6 +131,7 @@ class MirostatV2Sampler(Sampler):
         :param learning_rate: learning rate for temperature adjustment
         :param tau: smoothing parameter for temperature updates
         """
+        super().__init__()
         self.target_perplexity = target_perplexity
         self.target_surprise = torch.log(torch.tensor(target_perplexity))
         self.learning_rate = learning_rate
