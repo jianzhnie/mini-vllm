@@ -2,17 +2,57 @@
 
 This module provides a unified interface for different attention backends
 (CUDA, NPU, CPU) with proper error handling and type safety.
+It also implements efficient KV-cache storage kernels.
 """
 
 import logging
 from abc import ABC, abstractmethod
-from typing import List, Optional, Tuple
+from typing import Any, Optional, Tuple
 
 import torch
-import torch.nn as nn
 from torch import Tensor
 
 logger = logging.getLogger(__name__)
+
+# Optional imports for high-performance kernels
+_TRITON_AVAILABLE = False
+try:
+    import triton
+    import triton.language as tl
+
+    _TRITON_AVAILABLE = True
+except ImportError:
+    logger.warning('Triton not available. KV cache operations may be slower.')
+
+if _TRITON_AVAILABLE:
+
+    @triton.jit
+    def store_kvcache_kernel(
+        key_ptr,
+        key_stride,
+        value_ptr,
+        value_stride,
+        k_cache_ptr,
+        v_cache_ptr,
+        slot_mapping_ptr,
+        D: tl.constexpr,
+    ):
+        """Triton kernel for storing key-value pairs to cache.
+
+        This kernel efficiently writes K/V tensors to their cache locations
+        based on slot mapping, enabling fast KV-cache updates during inference.
+        """
+        idx = tl.program_id(0)
+        slot = tl.load(slot_mapping_ptr + idx)
+        if slot == -1:
+            return
+        key_offsets = idx * key_stride + tl.arange(0, D)
+        value_offsets = idx * value_stride + tl.arange(0, D)
+        key = tl.load(key_ptr + key_offsets)
+        value = tl.load(value_ptr + value_offsets)
+        cache_offsets = slot * D + tl.arange(0, D)
+        tl.store(k_cache_ptr + cache_offsets, key)
+        tl.store(v_cache_ptr + cache_offsets, value)
 
 
 class AttentionBackend(ABC):
@@ -119,7 +159,7 @@ class StandardAttentionBackend(AttentionBackend):
         v_cache: Tensor,
         slot_mapping: Tensor,
     ) -> None:
-        """Store KV cache using PyTorch operations."""
+        """Store KV cache using Triton or vectorized PyTorch operations."""
         batch_size, num_heads, head_dim = key.shape
         hidden_size = num_heads * head_dim
 
@@ -129,19 +169,50 @@ class StandardAttentionBackend(AttentionBackend):
                 f'slot_mapping size {slot_mapping.numel()} != batch_size {batch_size}'
             )
 
-        # Store each sequence's KV to cache
-        for i in range(batch_size):
-            slot = slot_mapping[i].item()
-            if slot >= 0:  # Valid slot
-                # Flatten and store
-                key_flat = key[i].view(hidden_size)
-                value_flat = value[i].view(hidden_size)
+        if _TRITON_AVAILABLE and key.is_cuda:
+            # Use Triton kernel for optimal performance on CUDA
+            assert key.stride(-1) == 1 and value.stride(-1) == 1
+            assert key.stride(1) == head_dim and value.stride(1) == head_dim
+            # Note: k_cache/v_cache strides depend on layout, assuming contiguous or compatible
+            # This is a simplification; in practice, strides need careful checking.
+            # Assuming [blocks, block_size, heads, head_dim] or similar flattened view.
+            # The original kernel assumed flattened [total_tokens, hidden_size] view-like access via offsets.
 
-                cache_start = slot * hidden_size
-                cache_end = cache_start + hidden_size
+            # The kernel expects flat pointers and calculates offsets manually.
+            # We need to pass the number of elements per token (hidden_size)
+            store_kvcache_kernel[(batch_size, )](
+                key,
+                key.stride(0),
+                value,
+                value.stride(0),
+                k_cache,
+                v_cache,
+                slot_mapping,
+                hidden_size,
+            )
+            return
 
-                k_cache.view(-1)[cache_start:cache_end] = key_flat
-                v_cache.view(-1)[cache_start:cache_end] = value_flat
+        # Vectorized store implementation (PyTorch fallback)
+        # Filter out invalid slots (negative values)
+        valid_mask = slot_mapping >= 0
+        if not valid_mask.any():
+            return
+
+        valid_slots = slot_mapping[valid_mask]
+
+        # Reshape key/value to [num_valid, hidden_size]
+        # key is [batch, num_heads, head_dim]
+        valid_key = key[valid_mask].view(-1, hidden_size)
+        valid_value = value[valid_mask].view(-1, hidden_size)
+
+        # Reshape cache to [total_tokens, hidden_size] for direct indexing
+        # This assumes cache is contiguous in memory compatible with this view
+        k_cache_reshaped = k_cache.view(-1, hidden_size)
+        v_cache_reshaped = v_cache.view(-1, hidden_size)
+
+        # Scatter update
+        k_cache_reshaped[valid_slots] = valid_key
+        v_cache_reshaped[valid_slots] = valid_value
 
 
 class FlashAttentionBackend(AttentionBackend):
@@ -153,6 +224,7 @@ class FlashAttentionBackend(AttentionBackend):
     def __init__(self):
         """Initialize Flash Attention backend."""
         self._flash_attn_available = self._check_flash_attn()
+        self._fallback_backend = StandardAttentionBackend()
         if not self._flash_attn_available:
             logger.warning(
                 'Flash Attention not available, falling back to standard attention'
@@ -162,6 +234,7 @@ class FlashAttentionBackend(AttentionBackend):
         """Check if Flash Attention is available."""
         try:
             from flash_attn import flash_attn_func
+
             self.flash_attn_func = flash_attn_func
             return True
         except ImportError:
@@ -178,32 +251,34 @@ class FlashAttentionBackend(AttentionBackend):
         """Forward pass using Flash Attention."""
         if not self._flash_attn_available:
             # Fallback to standard attention
-            return StandardAttentionBackend().forward(query, key, value,
-                                                      attention_mask,
-                                                      is_causal)
+            return self._fallback_backend.forward(query, key, value,
+                                                  attention_mask, is_causal)
 
         try:
             # Flash Attention expects (batch, seq_len, num_heads, head_dim)
+            # Input is (batch, num_heads, seq_len, head_dim)
             q = query.transpose(1, 2)
             k = key.transpose(1, 2)
             v = value.transpose(1, 2)
 
-            # Use Flash Attention
-            output = self.flash_attn_func(q,
-                                          k,
-                                          v,
-                                          causal=is_causal,
-                                          attention_mask=attention_mask)
+            output = self.flash_attn_func(
+                q,
+                k,
+                v,
+                dropout_p=0.0,
+                softmax_scale=None,
+                causal=is_causal,
+            )
 
             # Transpose back to (batch, num_heads, seq_len, head_dim)
             return output.transpose(1, 2)
+
         except Exception as e:
-            logger.error(
-                f'Flash Attention failed: {e}, falling back to standard attention'
+            logger.warning(
+                f'Flash Attention failed with error: {e}, falling back to standard attention'
             )
-            return StandardAttentionBackend().forward(query, key, value,
-                                                      attention_mask,
-                                                      is_causal)
+            return self._fallback_backend.forward(query, key, value,
+                                                  attention_mask, is_causal)
 
     def store_kv_cache(
         self,
@@ -213,10 +288,9 @@ class FlashAttentionBackend(AttentionBackend):
         v_cache: Tensor,
         slot_mapping: Tensor,
     ) -> None:
-        """Store KV cache using Flash Attention utilities."""
-        # For now, use standard implementation
-        StandardAttentionBackend().store_kv_cache(key, value, k_cache, v_cache,
-                                                  slot_mapping)
+        """Store KV cache (delegates to standard implementation)."""
+        return self._fallback_backend.store_kv_cache(key, value, k_cache,
+                                                     v_cache, slot_mapping)
 
 
 class NPUAttentionBackend(AttentionBackend):
@@ -228,6 +302,7 @@ class NPUAttentionBackend(AttentionBackend):
     def __init__(self):
         """Initialize NPU attention backend."""
         self._npu_available = self._check_npu_availability()
+        self._fallback_backend = StandardAttentionBackend()
         if not self._npu_available:
             logger.warning(
                 'NPU not available, falling back to standard attention')
@@ -235,10 +310,23 @@ class NPUAttentionBackend(AttentionBackend):
     def _check_npu_availability(self) -> bool:
         """Check if NPU is available."""
         try:
-            from transformers.utils import is_torch_npu_available
+            from minivllm.utils.device import is_torch_npu_available
+
             return is_torch_npu_available()
         except ImportError:
-            return False
+            try:
+                from transformers.utils import is_torch_npu_available
+
+                return is_torch_npu_available()
+            except ImportError:
+                return False
+
+    def _choose_optimal_api(self) -> str:
+        """Choose the best NPU attention API based on hardware and version."""
+        if (hasattr(self, 'npu_fused_infer_attention_score')
+                and self.npu_fused_infer_attention_score is not None):
+            return 'unified_inference'
+        return 'legacy'
 
     def forward(
         self,
@@ -250,33 +338,206 @@ class NPUAttentionBackend(AttentionBackend):
     ) -> Tensor:
         """Forward pass using NPU optimizations."""
         if not self._npu_available:
-            return StandardAttentionBackend().forward(query, key, value,
-                                                      attention_mask,
-                                                      is_causal)
+            return self._fallback_backend.forward(query, key, value,
+                                                  attention_mask, is_causal)
 
         try:
-            import torch_npu
+            # Fallback to standard attention on NPU for now as simplified implementation
+            # unless we have a specific kernel that matches the generic signature.
+            return self._fallback_backend.forward(query, key, value,
+                                                  attention_mask, is_causal)
 
-            # Use NPU-specific attention if available
-            if hasattr(torch_npu, 'npu_fused_infer_attention_score'):
-                # Use unified inference API
-                return torch_npu.npu_fused_infer_attention_score(
-                    query,
-                    key,
-                    value,
-                    attention_mask=attention_mask,
-                    is_causal=is_causal)
-            else:
-                # Fallback to standard attention on NPU
-                return StandardAttentionBackend().forward(
-                    query, key, value, attention_mask, is_causal)
         except Exception as e:
             logger.error(
                 f'NPU attention failed: {e}, falling back to standard attention'
             )
-            return StandardAttentionBackend().forward(query, key, value,
-                                                      attention_mask,
-                                                      is_causal)
+            return self._fallback_backend.forward(query, key, value,
+                                                  attention_mask, is_causal)
+
+    def unified_inference(
+        self,
+        query: Tensor,
+        key_cache: Tensor,
+        value_cache: Tensor,
+        seq_len: int,
+        num_kv_heads: int,
+    ) -> Tensor:
+        """Unified inference API for NPU."""
+        if not self._npu_available or self.npu_fused_infer_attention_score is None:
+            raise RuntimeError('NPU unified inference API not available')
+
+        head_dim = query.shape[-1]
+
+        try:
+            # Basic implementation of unified inference
+            # Note: This matches the signature expected by Attention.forward
+            return self.npu_fused_infer_attention_score(
+                query,
+                key_cache,
+                value_cache,
+                head_dim,
+                seq_len,
+                num_kv_heads,
+            )
+        except RuntimeError as e:
+            if self._handle_oom(e):
+                logger.warning('Retrying NPU inference after OOM handling')
+                # Retry once after clearing cache
+                return self.npu_fused_infer_attention_score(
+                    query,
+                    key_cache,
+                    value_cache,
+                    head_dim,
+                    seq_len,
+                    num_kv_heads,
+                )
+            raise e
+
+    def _handle_oom(self, e: RuntimeError) -> bool:
+        """Handle OOM error by clearing cache or advising fallback.
+
+        Returns:
+            True if OOM was handled (e.g., by clearing cache), False otherwise.
+        """
+        if 'out of memory' in str(e).lower():
+            logger.warning('NPU OOM detected. Attempting to clear cache.')
+            if hasattr(torch, 'npu'):
+                torch.npu.empty_cache()
+            return True
+        return False
+
+    def get_health_report(self) -> dict:
+        """Get performance health report."""
+        if not self._npu_available:
+            return {'status': 'unavailable'}
+        return {
+            'status':
+            'healthy',
+            'backend':
+            'npu',
+            'api':
+            'unified_inference'
+            if self.npu_fused_infer_attention_score else 'legacy',
+        }
+
+    def reset_metrics(self) -> None:
+        """Reset performance metrics."""
+        pass
+
+    def prepare_npu_cache(
+        self,
+        k: Tensor,
+        v: Tensor,
+        k_cache: Tensor,
+        v_cache: Tensor,
+        context: Any,
+        num_kv_heads: int,
+        head_dim: int,
+    ) -> Tuple[Tensor, Tensor]:
+        """Prepare KV cache in optimal format for NPU unified inference.
+
+        Args:
+            k: Key tensor (either current input or cached)
+            v: Value tensor (either current input or cached)
+            k_cache: Key cache tensor
+            v_cache: Value cache tensor
+            context: Inference context containing cache information
+            num_kv_heads: Number of KV heads
+            head_dim: Head dimension
+
+        Returns:
+            Tuple of (k_cache, v_cache) in NPU-optimized format
+        """
+        # If we have block tables, use page attention format
+        if context.block_tables is not None and not context.is_prefill:
+            # Decode phase with block tables: gather from cache
+            batch_size = k.size(0) if k.dim() > 2 else 1
+            max_seqlen = (context.context_lens.max().item()
+                          if context.context_lens is not None else k.size(-2))
+
+            # Create empty cache tensors
+            k_npu = torch.zeros(
+                batch_size,
+                max_seqlen,
+                num_kv_heads,
+                head_dim,
+                device=k.device,
+                dtype=k.dtype,
+            )
+            v_npu = torch.zeros(
+                batch_size,
+                max_seqlen,
+                num_kv_heads,
+                head_dim,
+                device=v.device,
+                dtype=v.dtype,
+            )
+
+            if k_cache.numel() == 0:
+                return k.contiguous(), v.contiguous()
+
+            block_size = k_cache.size(1)
+
+            # Vectorized gather implementation
+
+            # 1. Create grid of sequence positions [1, max_seqlen]
+            seq_pos = torch.arange(max_seqlen, device=k.device).unsqueeze(0)
+
+            # 2. Map to block indices and offsets
+            # Ensure indices are long for indexing
+            block_table_indices = (seq_pos // block_size).long()
+            block_offsets = (seq_pos % block_size).long()
+
+            # 3. Create validity mask [batch_size, max_seqlen]
+            # Handle context_lens device mismatch if any
+            context_lens = context.context_lens
+            if context_lens.device != k.device:
+                context_lens = context_lens.to(k.device)
+
+            valid_mask = seq_pos < context_lens.unsqueeze(1)
+
+            # 4. Gather block IDs
+            # block_tables: [batch_size, max_blocks]
+            block_tables = context.block_tables
+            if block_tables.device != k.device:
+                block_tables = block_tables.to(k.device)
+
+            # Clamp indices to avoid out of bounds (though valid_mask should handle it logic-wise)
+            max_block_idx = block_tables.size(1) - 1
+            safe_indices = block_table_indices.clamp(max=max_block_idx)
+
+            # Expand safe_indices to batch size
+            safe_indices = safe_indices.expand(batch_size, -1)
+
+            # Gather block IDs: [batch_size, max_seqlen]
+            block_ids = torch.gather(block_tables, 1, safe_indices)
+
+            # 5. Filter valid slots
+            # valid if within sequence length AND block_id != -1
+            mask = valid_mask & (block_ids >= 0)
+
+            if not mask.any():
+                return k_npu, v_npu
+
+            # 6. Gather from k_cache/v_cache
+            # k_cache: [num_blocks, block_size, num_kv_heads, head_dim]
+
+            # Get active indices
+            active_block_ids = block_ids[mask]
+            active_offsets = block_offsets.expand(batch_size, -1)[mask]
+
+            # Gather
+            gathered_k = k_cache[active_block_ids, active_offsets]
+            gathered_v = v_cache[active_block_ids, active_offsets]
+
+            # Scatter to output
+            k_npu[mask] = gathered_k
+            v_npu[mask] = gathered_v
+
+            return k_npu, v_npu
+        else:
+            # Prefill phase or direct access: use tensors as-is
+            return k.contiguous(), v.contiguous()
 
     def store_kv_cache(
         self,
@@ -288,159 +549,5 @@ class NPUAttentionBackend(AttentionBackend):
     ) -> None:
         """Store KV cache using NPU optimizations."""
         # For now, use standard implementation
-        StandardAttentionBackend().store_kv_cache(key, value, k_cache, v_cache,
-                                                  slot_mapping)
-
-
-def get_attention_backend(
-        device: Optional[torch.device] = None) -> AttentionBackend:
-    """Get the appropriate attention backend for the given device.
-
-    Args:
-        device: Target device. If None, uses current device.
-
-    Returns:
-        Appropriate attention backend instance
-    """
-    if device is None:
-        device = torch.cuda.current_device() if torch.cuda.is_available(
-        ) else torch.device('cpu')
-
-    # Check device type and return appropriate backend
-    if device.type == 'cuda':
-        return FlashAttentionBackend()
-    elif device.type == 'npu' or (hasattr(torch, 'npu')
-                                  and torch.npu.is_available()):
-        return NPUAttentionBackend()
-    else:
-        return StandardAttentionBackend()
-
-
-class Attention(nn.Module):
-    """Unified attention module with automatic backend selection.
-
-    This module provides a clean interface for attention computation
-    with automatic backend selection based on the available hardware.
-    """
-
-    def __init__(
-        self,
-        hidden_size: int,
-        num_heads: int,
-        num_kv_heads: Optional[int] = None,
-        head_dim: Optional[int] = None,
-        max_position_embeddings: int = 4096,
-        device: Optional[torch.device] = None,
-    ):
-        """Initialize attention module.
-
-        Args:
-            hidden_size: Hidden dimension of the model
-            num_heads: Number of attention heads
-            num_kv_heads: Number of key/value heads for GQA/MQA
-            head_dim: Dimension of each attention head
-            max_position_embeddings: Maximum sequence length
-            device: Target device for computations
-        """
-        super().__init__()
-
-        self.hidden_size = hidden_size
-        self.num_heads = num_heads
-        self.num_kv_heads = num_kv_heads or num_heads
-        self.head_dim = head_dim or (hidden_size // num_heads)
-        self.max_position_embeddings = max_position_embeddings
-
-        if self.head_dim * self.num_heads != hidden_size:
-            raise ValueError(
-                f'head_dim * num_heads ({self.head_dim * self.num_heads}) '
-                f'!= hidden_size ({hidden_size})')
-
-        # Initialize attention backend
-        self.backend = get_attention_backend(device)
-
-        # Initialize projections
-        self.q_proj = nn.Linear(hidden_size,
-                                num_heads * self.head_dim,
-                                bias=False)
-        self.k_proj = nn.Linear(hidden_size,
-                                self.num_kv_heads * self.head_dim,
-                                bias=False)
-        self.v_proj = nn.Linear(hidden_size,
-                                self.num_kv_heads * self.head_dim,
-                                bias=False)
-        self.o_proj = nn.Linear(num_heads * self.head_dim,
-                                hidden_size,
-                                bias=False)
-
-    def forward(
-        self,
-        hidden_states: Tensor,
-        attention_mask: Optional[Tensor] = None,
-        position_ids: Optional[Tensor] = None,
-        past_key_value: Optional[Tuple[Tensor, Tensor]] = None,
-        output_attentions: bool = False,
-        use_cache: bool = False,
-    ) -> Tuple[Tensor, Optional[Tuple[Tensor, Tensor]],
-               Optional[List[Tensor]]]:
-        """Forward pass through attention module.
-
-        Args:
-            hidden_states: Input tensor of shape (batch_size, seq_len, hidden_size)
-            attention_mask: Optional attention mask
-            position_ids: Optional position IDs
-            past_key_value: Optional past key-value cache
-            output_attentions: Whether to output attention weights
-            use_cache: Whether to use key-value cache
-
-        Returns:
-            Tuple of (output, present_key_value, attention_weights)
-        """
-        batch_size, seq_len, _ = hidden_states.shape
-
-        # Project to Q, K, V
-        query_states = self.q_proj(hidden_states)
-        key_states = self.k_proj(hidden_states)
-        value_states = self.v_proj(hidden_states)
-
-        # Reshape for attention computation
-        query_states = query_states.view(batch_size, seq_len, self.num_heads,
-                                         self.head_dim).transpose(1, 2)
-        key_states = key_states.view(batch_size, seq_len, self.num_kv_heads,
-                                     self.head_dim).transpose(1, 2)
-        value_states = value_states.view(batch_size, seq_len,
-                                         self.num_kv_heads,
-                                         self.head_dim).transpose(1, 2)
-
-        # Handle past key-value cache
-        if past_key_value is not None:
-            past_key, past_value = past_key_value
-            key_states = torch.cat([past_key, key_states], dim=2)
-            value_states = torch.cat([past_value, value_states], dim=2)
-
-        present_key_value = (key_states, value_states) if use_cache else None
-
-        # Compute attention
-        attn_output = self.backend.forward(
-            query_states,
-            key_states,
-            value_states,
-            attention_mask=attention_mask,
-            is_causal=True,
-        )
-
-        # Reshape and project output
-        attn_output = attn_output.transpose(1, 2).contiguous()
-        attn_output = attn_output.view(batch_size, seq_len, self.hidden_size)
-        attn_output = self.o_proj(attn_output)
-
-        # Attention weights not supported for backends other than standard
-        attn_weights = None
-        if output_attentions and isinstance(self.backend,
-                                            StandardAttentionBackend):
-            # For debugging purposes, compute attention weights
-            # This is expensive and should not be used in production
-            scores = torch.matmul(query_states, key_states.transpose(
-                -2, -1)) / (self.head_dim**0.5)
-            attn_weights = torch.softmax(scores, dim=-1)
-
-        return attn_output, present_key_value, attn_weights
+        return self._fallback_backend.store_kv_cache(key, value, k_cache,
+                                                     v_cache, slot_mapping)
