@@ -30,6 +30,13 @@ from torch import nn
 
 from minivllm.utils.context import get_context
 
+__all__ = [
+    'get_tensor_parallel_rank',
+    'get_tensor_parallel_world_size',
+    'VocabParallelEmbedding',
+    'ParallelLMHead',
+]
+
 
 def get_tensor_parallel_rank() -> int:
     """Get current tensor-parallel rank (0 if not distributed)."""
@@ -106,8 +113,8 @@ class VocabParallelEmbedding(nn.Module):
             torch.empty(self.num_embeddings_per_partition, embedding_dim))
         self.weight.weight_loader = self.weight_loader
 
-    def weight_loader(self, param: nn.Parameter,
-                      loaded_weight: torch.Tensor) -> None:
+    def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor,
+                      *args, **kwargs) -> None:
         """Load weights for the vocabulary partition.
 
         Args:
@@ -119,6 +126,11 @@ class VocabParallelEmbedding(nn.Module):
         start_idx = self.tp_rank * shard_size
         loaded_weight = loaded_weight.narrow(0, start_idx, shard_size)
         param_data.copy_(loaded_weight)
+
+    def extra_repr(self) -> str:
+        return (f'num_embeddings={self.num_embeddings}, '
+                f'embedding_dim={self.weight.shape[1]}, '
+                f'tp_size={self.tp_size}, tp_rank={self.tp_rank}')
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Look up embeddings with optional tensor-parallel aggregation.
