@@ -1,15 +1,23 @@
 import pytest
 import torch
-from transformers.utils import (is_torch_cuda_available,
-                                is_torch_mlu_available, is_torch_mps_available,
-                                is_torch_musa_available,
-                                is_torch_npu_available, is_torch_xpu_available)
+from transformers.utils import (
+    is_torch_cuda_available,
+    is_torch_mlu_available,
+    is_torch_mps_available,
+    is_torch_musa_available,
+    is_torch_npu_available,
+    is_torch_xpu_available,
+)
 
-from minivllm.utils.device import (get_current_device, get_default_device_name,
-                                   get_device_capabilities, get_device_count,
-                                   get_distributed_backend,
-                                   move_tensor_to_device,
-                                   supports_device_graph)
+from minivllm.utils.device import (
+    get_current_device,
+    get_default_device_name,
+    get_device_capabilities,
+    get_device_count,
+    get_distributed_backend,
+    move_tensor_to_device,
+    supports_device_graph,
+)
 
 
 def test_device_detection():
