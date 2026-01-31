@@ -17,7 +17,7 @@ import torch.distributed as dist
 from minivllm.config import Config
 from minivllm.engine.sequence import Sequence
 from minivllm.models.qwen3 import Qwen3ForCausalLM
-from minivllm.sampling.batch_sampler import BatchSampler
+from minivllm.sampling.sampler import Sampler
 from minivllm.utils.context import Context, get_context, reset_context, set_context
 from minivllm.utils.device import (
     empty_cache,
@@ -125,7 +125,7 @@ class ModelRunner:
 
         # Load model based on HuggingFace config
         self.model = Qwen3ForCausalLM(hf_config)
-        self.sampler = BatchSampler()
+        self.sampler = Sampler()
         load_model(self.model, config.model)
 
         self.kv_cache: Optional[torch.Tensor] = None
