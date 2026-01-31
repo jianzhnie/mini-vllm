@@ -12,6 +12,12 @@ from typing import Any, Optional, Tuple
 import torch
 from torch import Tensor
 
+# Optional imports for NPU Flash Attention
+try:
+    from minivllm.models.layers.npu_flash_attention import npu_flash_attn_func
+except ImportError:
+    pass
+
 logger = logging.getLogger(__name__)
 
 # Optional imports for high-performance kernels
@@ -71,8 +77,11 @@ class AttentionBackend(ABC):
 
         Args:
             query: Query tensor of shape (batch_size, num_heads, seq_len, head_dim)
+                   or (num_tokens, num_heads, head_dim) for flattened inputs.
             key: Key tensor of shape (batch_size, num_kv_heads, seq_len, head_dim)
+                 or (num_tokens, num_kv_heads, head_dim) for flattened inputs.
             value: Value tensor of shape (batch_size, num_kv_heads, seq_len, head_dim)
+                   or (num_tokens, num_kv_heads, head_dim) for flattened inputs.
             attention_mask: Optional attention mask
             is_causal: Whether to apply causal masking
 
@@ -117,8 +126,24 @@ class StandardAttentionBackend(AttentionBackend):
         attention_mask: Optional[Tensor] = None,
         is_causal: bool = True,
     ) -> Tensor:
-        """Standard attention computation using PyTorch operations."""
-        batch_size, num_heads, seq_len, head_dim = query.shape
+        """Standard attention computation using PyTorch operations.
+
+        Handles both 4D (batch, heads, seq, dim) and 3D (tokens, heads, dim) inputs.
+        For 3D inputs, assumes flattened batch (effectively batch_size=1).
+        """
+        # Handle 3D inputs (num_tokens, num_heads, head_dim) from flattened batches
+        is_3d = query.dim() == 3
+        if is_3d:
+            num_tokens, num_heads, head_dim = query.shape
+            batch_size = 1
+            seq_len = num_tokens
+            # Reshape to (batch, num_heads, seq_len, head_dim)
+            query = query.view(batch_size, num_heads, seq_len, head_dim)
+            key = key.view(batch_size, key.shape[1], seq_len, head_dim)
+            value = value.view(batch_size, value.shape[1], seq_len, head_dim)
+        else:
+            batch_size, num_heads, seq_len, head_dim = query.shape
+
         _, num_kv_heads, kv_seq_len, _ = key.shape
 
         # Handle GQA/MQA by repeating key/value heads
@@ -148,6 +173,9 @@ class StandardAttentionBackend(AttentionBackend):
 
         # Apply attention to values
         output = torch.matmul(attention_weights, value)
+
+        if is_3d:
+            output = output.view(num_tokens, num_heads, head_dim)
 
         return output
 
@@ -296,7 +324,9 @@ class FlashAttentionBackend(AttentionBackend):
 class NPUAttentionBackend(AttentionBackend):
     """NPU-optimized attention backend.
 
-    This implementation uses NPU-specific optimizations for Ascend hardware.
+    This implementation uses NPU-specific optimizations for Ascend hardware,
+    specifically leveraging Flash Attention (npu_flash_attn_func) when available.
+    It handles necessary layout transformations (BNSD <-> BSND) transparently.
     """
 
     def __init__(self):
@@ -342,10 +372,24 @@ class NPUAttentionBackend(AttentionBackend):
                                                   attention_mask, is_causal)
 
         try:
-            # Fallback to standard attention on NPU for now as simplified implementation
-            # unless we have a specific kernel that matches the generic signature.
-            return self._fallback_backend.forward(query, key, value,
-                                                  attention_mask, is_causal)
+            # Transpose to BSND for NPU Flash Attention
+            # Input is BNSD: (batch, num_heads, seq_len, head_dim)
+            # Target is BSND: (batch, seq_len, num_heads, head_dim)
+            q = query.transpose(1, 2)
+            k = key.transpose(1, 2)
+            v = value.transpose(1, 2)
+
+            output = npu_flash_attn_func(
+                q,
+                k,
+                v,
+                dropout_p=0.0,
+                softmax_scale=None,
+                causal=is_causal,
+            )
+
+            # Transpose back to BNSD
+            return output.transpose(1, 2)
 
         except Exception as e:
             logger.error(
