@@ -12,6 +12,8 @@ from typing import Iterator, List, Optional, Tuple, Union
 
 from minivllm.sampling_params import SamplingParams
 
+__all__ = ['Sequence', 'SequenceStatus']
+
 
 class SequenceStatus(Enum):
     """Enumeration of possible sequence statuses.
@@ -83,6 +85,9 @@ class Sequence:
         self.num_cached_tokens: int = 0
         self.block_table: List[int] = []
         self.temperature: float = sampling_params.temperature
+        self.top_p: float = sampling_params.top_p
+        self.top_k: int = sampling_params.top_k
+        self.min_p: float = sampling_params.min_p
         self.max_tokens: int = sampling_params.max_tokens
         self.ignore_eos: bool = sampling_params.ignore_eos
 
@@ -288,10 +293,16 @@ class Sequence:
             # If has completions, only last token was serialized
             if isinstance(token_data, int):
                 # Reconstruct prompt tokens (zeros as placeholder) and last token
-                self.token_ids = [0] * self.num_prompt_tokens
+                # Note: This is an optimization for worker processes which primarily
+                # need the last token and KV cache. The full history is preserved
+                # on the scheduler/driver side.
+                self.token_ids = [0] * (self.num_tokens - 1) + [token_data]
                 self.last_token = token_data
             else:
                 # Unexpected: list provided but should be int for sequences with completions
                 # This might happen if serialization format changed - restore what we can
                 self.token_ids = token_data
                 self.last_token = self.token_ids[-1] if self.token_ids else 0
+
+        self.status = (SequenceStatus.RUNNING if num_completion_tokens > 0 else
+                       SequenceStatus.WAITING)
