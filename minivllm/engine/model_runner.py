@@ -17,19 +17,28 @@ import torch.distributed as dist
 from minivllm.config import Config
 from minivllm.engine.sequence import Sequence
 from minivllm.models.qwen3 import Qwen3ForCausalLM
-from minivllm.models.sampler import Sampler
-from minivllm.utils.context import (Context, get_context, reset_context,
-                                    set_context)
-from minivllm.utils.device import (empty_cache, get_current_device,
-                                   get_distributed_backend, mem_get_info,
-                                   memory_stats, move_tensor_to_device,
-                                   reset_peak_memory_stats, set_device,
-                                   should_use_pin_memory, supports_cuda_graph,
-                                   synchronize, validate_device)
+from minivllm.sampling.batch_sampler import BatchSampler
+from minivllm.utils.context import Context, get_context, reset_context, set_context
+from minivllm.utils.device import (
+    empty_cache,
+    get_current_device,
+    get_distributed_backend,
+    mem_get_info,
+    memory_stats,
+    move_tensor_to_device,
+    reset_peak_memory_stats,
+    set_device,
+    should_use_pin_memory,
+    supports_cuda_graph,
+    synchronize,
+    validate_device,
+)
 from minivllm.utils.loader import load_model
 from minivllm.utils.logger_utils import get_logger
 
 logger = get_logger(__name__)
+
+__all__ = ['ModelRunner']
 
 
 class ModelRunner:
@@ -116,7 +125,7 @@ class ModelRunner:
 
         # Load model based on HuggingFace config
         self.model = Qwen3ForCausalLM(hf_config)
-        self.sampler = Sampler()
+        self.sampler = BatchSampler()
         load_model(self.model, config.model)
 
         self.kv_cache: Optional[torch.Tensor] = None
@@ -494,14 +503,22 @@ class ModelRunner:
             f'device: {self.device.type}')
 
         # Allocate KV cache tensor
-        self.kv_cache = torch.empty(2,
-                                    hf_config.num_hidden_layers,
-                                    config.num_kvcache_blocks,
-                                    self.block_size,
-                                    num_kv_heads,
-                                    head_dim,
-                                    device=self.device,
-                                    dtype=hf_config.torch_dtype)
+        try:
+            self.kv_cache = torch.empty(
+                2,
+                hf_config.num_hidden_layers,
+                config.num_kvcache_blocks,
+                self.block_size,
+                num_kv_heads,
+                head_dim,
+                device=self.device,
+                dtype=hf_config.torch_dtype,
+            )
+        except torch.cuda.OutOfMemoryError as e:
+            raise RuntimeError(
+                f'OOM during KV cache allocation. '
+                f'Try reducing device_memory_utilization (current: {config.device_memory_utilization}) '
+                f'or max_num_seqs. Error: {e}') from e
 
         # Assign cache slices to model layers
         layer_id: int = 0
@@ -657,17 +674,13 @@ class ModelRunner:
             - input_ids: Tensor of last token IDs on GPU (shape: [num_seqs])
             - positions: Tensor of token positions on GPU (shape: [num_seqs])
         """
-        input_ids: List[int] = []
-        positions: List[int] = []
-        slot_mapping: List[int] = []
-        context_lens: List[int] = []
-
-        for seq in sequences:
-            input_ids.append(seq.last_token)
-            positions.append(len(seq) - 1)
-            context_lens.append(len(seq))
-            slot_mapping.append(seq.block_table[-1] * self.block_size +
-                                seq.last_block_num_tokens - 1)
+        input_ids = [seq.last_token for seq in sequences]
+        positions = [len(seq) - 1 for seq in sequences]
+        context_lens = [len(seq) for seq in sequences]
+        slot_mapping = [
+            seq.block_table[-1] * self.block_size + seq.last_block_num_tokens -
+            1 for seq in sequences
+        ]
 
         pin_mem = should_use_pin_memory(self.device)
         input_ids_tensor: torch.Tensor = torch.tensor(input_ids,
@@ -703,29 +716,61 @@ class ModelRunner:
 
         return input_ids_tensor, positions_tensor
 
-    def prepare_sample(self, sequences: List[Sequence]) -> torch.Tensor:
+    def prepare_sample(
+        self, sequences: List[Sequence]
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Prepare sampling parameters for sequences.
 
-        Extracts temperature values from each sequence for use in
-        token sampling.
+        Extracts temperature, top_p, top_k, and min_p values from each sequence
+        for use in token sampling.
 
         Args:
             sequences: List of sequences to sample from.
 
         Returns:
-            A 1D tensor of temperature values on GPU (shape: [num_seqs]).
+            A tuple containing tensors on GPU:
+            - temperatures (shape: [num_seqs])
+            - top_ps (shape: [num_seqs])
+            - top_ks (shape: [num_seqs])
+            - min_ps (shape: [num_seqs])
         """
-        temperatures: List[float] = []
-        for seq in sequences:
-            temperatures.append(seq.temperature)
+        temperatures = [seq.temperature for seq in sequences]
+        top_ps = [seq.top_p for seq in sequences]
+        top_ks = [seq.top_k for seq in sequences]
+        min_ps = [seq.min_p for seq in sequences]
 
-        temperatures_tensor: torch.Tensor = torch.tensor(
-            temperatures,
-            dtype=torch.float32,
-            pin_memory=should_use_pin_memory(self.device))
-        return move_tensor_to_device(temperatures_tensor,
-                                     self.device,
-                                     non_blocking=True)
+        pin_mem = should_use_pin_memory(self.device)
+
+        temperatures_tensor: torch.Tensor = torch.tensor(temperatures,
+                                                         dtype=torch.float32,
+                                                         pin_memory=pin_mem)
+
+        top_ps_tensor: torch.Tensor = torch.tensor(top_ps,
+                                                   dtype=torch.float32,
+                                                   pin_memory=pin_mem)
+
+        top_ks_tensor: torch.Tensor = torch.tensor(top_ks,
+                                                   dtype=torch.int32,
+                                                   pin_memory=pin_mem)
+
+        min_ps_tensor: torch.Tensor = torch.tensor(min_ps,
+                                                   dtype=torch.float32,
+                                                   pin_memory=pin_mem)
+
+        return (
+            move_tensor_to_device(temperatures_tensor,
+                                  self.device,
+                                  non_blocking=True),
+            move_tensor_to_device(top_ps_tensor,
+                                  self.device,
+                                  non_blocking=True),
+            move_tensor_to_device(top_ks_tensor,
+                                  self.device,
+                                  non_blocking=True),
+            move_tensor_to_device(min_ps_tensor,
+                                  self.device,
+                                  non_blocking=True),
+        )
 
     @torch.inference_mode()
     def run_model(self, input_ids: torch.Tensor, positions: torch.Tensor,
@@ -841,15 +886,21 @@ class ModelRunner:
                                 else self.prepare_decode(sequences))
 
         # Prepare sampling parameters (rank 0 only)
-        temperatures: Optional[torch.Tensor] = (self.prepare_sample(sequences)
-                                                if self.rank == 0 else None)
+        sampling_params_tensors: Optional[Tuple[torch.Tensor, torch.Tensor,
+                                                torch.Tensor,
+                                                torch.Tensor]] = None
+        if self.rank == 0:
+            sampling_params_tensors = self.prepare_sample(sequences)
 
         # Run model inference
         logits: torch.Tensor = self.run_model(input_ids, positions, is_prefill)
 
         # Sample tokens (rank 0 only)
-        token_ids: Optional[List[int]] = (self.sampler(
-            logits, temperatures).tolist() if self.rank == 0 else None)
+        token_ids: Optional[List[int]] = None
+        if self.rank == 0 and sampling_params_tensors is not None:
+            temperatures, top_ps, top_ks, min_ps = sampling_params_tensors
+            token_ids = self.sampler(logits, temperatures, top_ps, top_ks,
+                                     min_ps).tolist()
 
         # Clean up context
         reset_context()
