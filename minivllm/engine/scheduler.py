@@ -131,21 +131,55 @@ class Scheduler:
         Raises:
             AssertionError: If scheduling invariants are violated.
         """
+        # Phase 1: Prefill phase for waiting sequences
+        scheduled_sequences, is_prefill = self._schedule_prefill()
+        if scheduled_sequences:
+            return scheduled_sequences, True
+
+        # Phase 2: Decode phase for running sequences
+        scheduled_sequences, is_decode = self._schedule_decode()
+        if scheduled_sequences:
+            return scheduled_sequences, False
+
+        # Safety check: ensure we scheduled something
+        if not self.is_finished():
+            # This should never happen if is_finished() is checked properly
+            # Provide detailed debugging information
+            error_msg = (
+                'No sequences scheduled, but scheduler is not finished. '
+                f'State: waiting={len(self.waiting)}, running={len(self.running)}, '
+                f'max_num_seqs={self.max_num_seqs}, max_num_batched_tokens={self.max_num_batched_tokens}'
+            )
+            if self.waiting:
+                first_waiting = self.waiting[0]
+                error_msg += f', first_waiting_seq_len={len(first_waiting)}'
+            if self.running:
+                error_msg += (
+                    f', running_seq_lens={[len(s) for s in list(self.running)[:5]]}'
+                )
+            raise RuntimeError(error_msg)
+
+        return [], False
+
+    def _schedule_prefill(self) -> Tuple[List[Sequence], bool]:
+        """Schedule waiting sequences for prefill."""
+        # Phase 1: Prefill phase for waiting sequences
+        # Process new sequences with their full prompt to compute initial KV cache
+
         scheduled_sequences: List[Sequence] = []
         num_seqs: int = 0
         num_batched_tokens: int = 0
 
-        # Phase 1: Prefill phase for waiting sequences
-        # Process new sequences with their full prompt to compute initial KV cache
         while self.waiting and num_seqs < self.max_num_seqs:
             sequence: Sequence = self.waiting[0]
 
             # Check if sequence fits in current batch constraints
             # - Total token limit (including cached tokens)
             # - Available KV cache blocks
-            if (num_batched_tokens + len(sequence) >
-                    self.max_num_batched_tokens
-                    or not self.block_manager.can_allocate(sequence)):
+            if num_batched_tokens + len(
+                    sequence
+            ) > self.max_num_batched_tokens or not self.block_manager.can_allocate(
+                    sequence):
                 logger.debug(
                     f'Cannot schedule sequence {sequence.seq_id} (prefill): '
                     f'len={len(sequence)}, '
@@ -165,12 +199,15 @@ class Scheduler:
             self.running.append(sequence)
             scheduled_sequences.append(sequence)
 
-        # Return if prefill sequences were scheduled
-        if scheduled_sequences:
-            return scheduled_sequences, True
+        return scheduled_sequences, bool(scheduled_sequences)
 
+    def _schedule_decode(self) -> Tuple[List[Sequence], bool]:
+        """Schedule running sequences for decode."""
         # Phase 2: Decode phase for running sequences
         # Generate one token per sequence while managing cache constraints
+        scheduled_sequences: List[Sequence] = []
+        num_seqs: int = 0
+
         while self.running and num_seqs < self.max_num_seqs:
             sequence: Sequence = self.running.popleft()
 
@@ -199,26 +236,11 @@ class Scheduler:
                 self.block_manager.may_append(sequence)
                 scheduled_sequences.append(sequence)
 
-        # Safety check: ensure we scheduled something
-        if not scheduled_sequences:
-            # This should never happen if is_finished() is checked properly
-            # Provide detailed debugging information
-            error_msg = (
-                'No sequences scheduled, but scheduler is not finished. '
-                f'State: waiting={len(self.waiting)}, running={len(self.running)}, '
-                f'max_num_seqs={self.max_num_seqs}, max_num_batched_tokens={self.max_num_batched_tokens}'
-            )
-            if self.waiting:
-                first_waiting = self.waiting[0]
-                error_msg += f', first_waiting_seq_len={len(first_waiting)}'
-            if self.running:
-                error_msg += f', running_seq_lens={[len(s) for s in list(self.running)[:5]]}'
-            raise RuntimeError(error_msg)
-
         # Restore running sequences order (put back those not scheduled)
-        self.running.extendleft(reversed(scheduled_sequences))
+        if scheduled_sequences:
+            self.running.extendleft(reversed(scheduled_sequences))
 
-        return scheduled_sequences, False
+        return scheduled_sequences, bool(scheduled_sequences)
 
     def preempt(self, sequence: Sequence) -> None:
         """Preempt a sequence due to cache memory constraints.
