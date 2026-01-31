@@ -10,6 +10,8 @@ from typing import ClassVar, Optional
 
 from transformers import AutoConfig, PretrainedConfig
 
+__all__ = ['Config']
+
 
 @dataclass
 class Config:
@@ -41,6 +43,10 @@ class Config:
             Must be divisible by 256. Default: 256.
         num_kvcache_blocks: Number of KV cache blocks. -1 means auto.
             Default: -1.
+        trust_remote_code: Whether to trust remote code (for custom models).
+            Default: False.
+        dtype: Data type for model weights. Default: 'auto'.
+        seed: Random seed for reproducibility. Default: None.
     """
 
     # Configuration constraints
@@ -61,6 +67,9 @@ class Config:
     eos: int = -1
     kvcache_block_size: int = 256
     num_kvcache_blocks: int = -1
+    trust_remote_code: bool = False
+    dtype: str = 'auto'
+    seed: Optional[int] = None
 
     # Backward compatibility alias for gpu_memory_utilization
     @property
@@ -162,7 +171,8 @@ class Config:
     def _load_hf_config(self) -> None:
         """Load HuggingFace model configuration."""
         try:
-            self.hf_config = AutoConfig.from_pretrained(self.model)
+            self.hf_config = AutoConfig.from_pretrained(
+                self.model, trust_remote_code=self.trust_remote_code)
         except Exception as e:
             raise ValueError(
                 f'Failed to load HuggingFace model configuration from {self.model}: {e}. '
