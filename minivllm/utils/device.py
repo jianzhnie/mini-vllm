@@ -486,7 +486,8 @@ def get_device_capabilities(
     device_type = device.type
     capabilities = {
         'device_type': device_type,
-        'supports_graph': device_type == 'cuda',
+        'supports_graph':
+        device_type == 'cuda',  # Only CUDA supports CUDAGraph explicitly
         'supports_empty_cache': device_type in ('cuda', 'npu', 'xpu'),
         'supports_synchronize': device_type in ('cuda', 'npu', 'xpu'),
         'supports_memory_stats': device_type in ('cuda', 'npu', 'xpu'),
