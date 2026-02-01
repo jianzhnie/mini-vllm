@@ -293,6 +293,16 @@ class Attention(nn.Module):
                     k, v = k_cache, v_cache
 
                 if flash_attn_varlen_func is not None:
+                    # Flatten BNSD to (total_tokens, num_heads, head_dim) if needed
+                    if q.dim() == 4:
+                        q = q.transpose(1, 2).contiguous().view(
+                            -1, self.num_heads, self.head_dim)
+                        if k.dim() == 4:
+                            k = k.transpose(1, 2).contiguous().view(
+                                -1, self.num_kv_heads, self.head_dim)
+                            v = v.transpose(1, 2).contiguous().view(
+                                -1, self.num_kv_heads, self.head_dim)
+
                     attn_out: torch.Tensor = flash_attn_varlen_func(
                         q,
                         k,
