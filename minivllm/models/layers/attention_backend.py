@@ -18,6 +18,12 @@ try:
 except ImportError:
     pass
 
+# Optional imports for NPU unified inference
+try:
+    from torch_npu import npu_fused_infer_attention_score
+except ImportError:
+    npu_fused_infer_attention_score = None
+
 logger = logging.getLogger(__name__)
 
 # Optional imports for high-performance kernels
@@ -329,10 +335,12 @@ class NPUAttentionBackend(AttentionBackend):
     It handles necessary layout transformations (BNSD <-> BSND) transparently.
     """
 
-    def __init__(self):
+    def __init__(self, enable_monitoring: bool = False):
         """Initialize NPU attention backend."""
         self._npu_available = self._check_npu_availability()
         self._fallback_backend = StandardAttentionBackend()
+        self.npu_fused_infer_attention_score = npu_fused_infer_attention_score
+
         if not self._npu_available:
             logger.warning(
                 'NPU not available, falling back to standard attention')
@@ -375,9 +383,10 @@ class NPUAttentionBackend(AttentionBackend):
             # Transpose to BSND for NPU Flash Attention
             # Input is BNSD: (batch, num_heads, seq_len, head_dim)
             # Target is BSND: (batch, seq_len, num_heads, head_dim)
-            q = query.transpose(1, 2)
-            k = key.transpose(1, 2)
-            v = value.transpose(1, 2)
+            # NPU kernels typically require contiguous memory
+            q = query.transpose(1, 2).contiguous()
+            k = key.transpose(1, 2).contiguous()
+            v = value.transpose(1, 2).contiguous()
 
             output = npu_flash_attn_func(
                 q,
@@ -578,7 +587,9 @@ class NPUAttentionBackend(AttentionBackend):
             k_npu[mask] = gathered_k
             v_npu[mask] = gathered_v
 
-            return k_npu, v_npu
+            # Transpose to BNSD format as required by unified_inference
+            return k_npu.transpose(1, 2).contiguous(), v_npu.transpose(
+                1, 2).contiguous()
         else:
             # Prefill phase or direct access: use tensors as-is
             return k.contiguous(), v.contiguous()
@@ -591,7 +602,34 @@ class NPUAttentionBackend(AttentionBackend):
         v_cache: Tensor,
         slot_mapping: Tensor,
     ) -> None:
-        """Store KV cache using NPU optimizations."""
-        # For now, use standard implementation
-        return self._fallback_backend.store_kv_cache(key, value, k_cache,
-                                                     v_cache, slot_mapping)
+        """Store KV cache using NPU optimizations.
+
+        Uses vectorized operations optimized for NPU memory layout.
+        """
+        batch_size, num_heads, head_dim = key.shape
+        hidden_size = num_heads * head_dim
+
+        # Filter out invalid slots (negative values)
+        valid_mask = slot_mapping >= 0
+        if not valid_mask.any():
+            return
+
+        valid_slots = slot_mapping[valid_mask]
+
+        # Reshape key/value to [num_valid, hidden_size]
+        valid_key = key[valid_mask].view(-1, hidden_size)
+        valid_value = value[valid_mask].view(-1, hidden_size)
+
+        # Reshape cache to [total_tokens, hidden_size] for direct indexing
+        k_cache_reshaped = k_cache.view(-1, hidden_size)
+        v_cache_reshaped = v_cache.view(-1, hidden_size)
+
+        # NPU optimization: ensure contiguous memory for faster transfer
+        if not valid_key.is_contiguous():
+            valid_key = valid_key.contiguous()
+        if not valid_value.is_contiguous():
+            valid_value = valid_value.contiguous()
+
+        # Scatter update - NPU handles index_put_ efficiently
+        k_cache_reshaped.index_put_((valid_slots, ), valid_key)
+        v_cache_reshaped.index_put_((valid_slots, ), valid_value)
