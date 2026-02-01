@@ -11,6 +11,23 @@ from typing import Any, Dict, Optional, Tuple
 import torch
 from torch import nn
 
+from minivllm.utils.device import is_torch_npu_available
+from minivllm.utils.logger_utils import get_logger
+
+logger = get_logger(__name__)
+
+# Try to import NPU specific kernels
+_NPU_ROPE_AVAILABLE = False
+if is_torch_npu_available():
+    try:
+        import torch_npu
+
+        if hasattr(torch_npu, 'npu_rotary_mul'):
+            _NPU_ROPE_AVAILABLE = True
+            logger.info('NPU RoPE kernel available')
+    except ImportError:
+        pass
+
 
 def apply_rotary_emb(x: torch.Tensor, cos: torch.Tensor,
                      sin: torch.Tensor) -> torch.Tensor:
@@ -44,6 +61,12 @@ def apply_rotary_emb(x: torch.Tensor, cos: torch.Tensor,
         >>> rotated = apply_rotary_emb(x, cos, sin)
         >>> print(rotated.shape)  # torch.Size([2, 8, 64])
     """
+    # NPU optimization
+    if _NPU_ROPE_AVAILABLE and x.device.type == 'npu':
+        import torch_npu
+
+        return torch_npu.npu_rotary_mul(x, cos, sin)
+
     # Convert to float for stable mathematical operations
     # The rotation uses trigonometric functions that work best in float precision
     x1, x2 = torch.chunk(x.float(), 2, dim=-1)
@@ -131,10 +154,10 @@ class RotaryEmbedding(nn.Module):
         cos = freqs.cos()
         sin = freqs.sin()
 
-        # Store concatenated cos/sin values for efficient lookup
-        # Shape: (max_pos, 2*dim)
-        cache = torch.cat((cos, sin), dim=-1)
-        self.register_buffer('cos_sin_cache', cache, persistent=False)
+        # Store cos and sin values separately for efficient lookup
+        # Shape: (max_pos, dim)
+        self.register_buffer('cos_cache', cos, persistent=False)
+        self.register_buffer('sin_cache', sin, persistent=False)
 
     def forward(self, positions: torch.Tensor, query: torch.Tensor,
                 key: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -149,14 +172,11 @@ class RotaryEmbedding(nn.Module):
             Tuple of (query_with_rope, key_with_rope) with rotary embeddings applied.
         """
         # Get cos/sin for positions
-        # self.cos_sin_cache: (max_pos, 2*dim)
+        # self.cos_cache, self.sin_cache: (max_pos, dim)
         # positions: (batch, seq_len)
-        # cos_sin: (batch, seq_len, 2*dim)
-        cos_sin = self.cos_sin_cache[positions]
-
-        # Split into cos and sin
         # cos, sin: (batch, seq_len, dim)
-        cos, sin = cos_sin.chunk(2, dim=-1)
+        cos = self.cos_cache[positions]
+        sin = self.sin_cache[positions]
 
         # Unsqueeze dim 1 for broadcasting across heads
         # cos, sin: (batch, 1, seq_len, dim)
@@ -166,17 +186,6 @@ class RotaryEmbedding(nn.Module):
         query = apply_rotary_emb(query, cos, sin)
         key = apply_rotary_emb(key, cos, sin)
         return query, key
-
-
-@lru_cache(4)
-def _get_rope_cached(
-    head_size: int,
-    rotary_dim: int,
-    max_position: int,
-    base: float,
-) -> RotaryEmbedding:
-    """Internal cached helper."""
-    return RotaryEmbedding(head_size, rotary_dim, max_position, base)
 
 
 def get_rope(
