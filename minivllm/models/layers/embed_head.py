@@ -153,7 +153,7 @@ class VocabParallelEmbedding(nn.Module):
 
         if self.tp_size > 1:
             # Zero out embeddings for tokens not in this rank's vocabulary
-            y = mask.unsqueeze(1) * y
+            y = mask.unsqueeze(-1) * y
             # Aggregate embeddings from all ranks
             dist.all_reduce(y)
 
