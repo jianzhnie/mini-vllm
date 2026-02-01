@@ -138,9 +138,12 @@ class LLMEngine:
                         p.join(timeout=5)
                         if p.is_alive():
                             import warnings
+
                             warnings.warn(
                                 f'Worker process {i} did not terminate gracefully, '
-                                f'forcing termination', RuntimeWarning)
+                                f'forcing termination',
+                                RuntimeWarning,
+                            )
                             p.terminate()
                             p.join(timeout=2)
                             if p.is_alive():
@@ -154,13 +157,16 @@ class LLMEngine:
         finally:
             if errors:
                 import warnings
+
                 warnings.warn(
-                    f'Errors during engine cleanup: {"; ".join(errors)}',
+                    f"Errors during engine cleanup: {'; '.join(errors)}",
                     RuntimeWarning)
 
-    def add_request(self,
-                    prompt: Union[str, List[int]],
-                    sampling_params: Optional[SamplingParams] = None) -> None:
+    def add_request(
+        self,
+        prompt: Union[str, List[int]],
+        sampling_params: Optional[SamplingParams] = None,
+    ) -> None:
         """Add a new generation request to the engine.
 
         Args:
@@ -225,8 +231,8 @@ class LLMEngine:
         ]
 
         # Compute token count for throughput tracking
-        num_tokens: int = sum(
-            len(seq) for seq in sequences) if is_prefill else -len(sequences)
+        num_tokens: int = (sum(
+            len(seq) for seq in sequences) if is_prefill else -len(sequences))
         return outputs, num_tokens
 
     def is_finished(self) -> bool:
