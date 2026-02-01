@@ -10,6 +10,23 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from minivllm.utils.device import is_torch_npu_available
+from minivllm.utils.logger_utils import get_logger
+
+logger = get_logger(__name__)
+
+# Try to import NPU specific kernels
+_NPU_SWIGLU_AVAILABLE = False
+if is_torch_npu_available():
+    try:
+        import torch_npu
+
+        if hasattr(torch_npu, 'npu_swiglu'):
+            _NPU_SWIGLU_AVAILABLE = True
+            logger.info('NPU SwiGLU kernel available')
+    except ImportError:
+        pass
+
 __all__ = ['SiluAndMul']
 
 
@@ -63,6 +80,12 @@ class SiluAndMul(nn.Module):
         Raises:
             ValueError: If the last dimension of x is not even.
         """
+        # NPU optimization
+        if _NPU_SWIGLU_AVAILABLE and x.device.type == 'npu':
+            import torch_npu
+
+            return torch_npu.npu_swiglu(x, dim=-1)
+
         if x.size(-1) % 2 != 0:
             raise ValueError(
                 f'Input last dimension must be even for SiluAndMul, got {x.size(-1)}'
