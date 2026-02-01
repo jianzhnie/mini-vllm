@@ -128,11 +128,17 @@ class Qwen3Attention(nn.Module):
             Tensor of shape (batch_size, seq_len, hidden_size) containing attention output.
         """
         qkv = self.qkv_proj(hidden_states)
+        batch_size, seq_len, _ = hidden_states.shape
         q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
 
-        q = q.view(-1, self.num_heads, self.head_dim)
-        k = k.view(-1, self.num_kv_heads, self.head_dim)
-        v = v.view(-1, self.num_kv_heads, self.head_dim)
+        q = q.view(batch_size, seq_len, self.num_heads, self.head_dim)
+        k = k.view(batch_size, seq_len, self.num_kv_heads, self.head_dim)
+        v = v.view(batch_size, seq_len, self.num_kv_heads, self.head_dim)
+
+        # Transpose to BNSD layout (Batch, Num_heads, Seq_len, Dim)
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
 
         if self.q_norm is not None and self.k_norm is not None:
             q, _ = self.q_norm(q)
@@ -140,8 +146,11 @@ class Qwen3Attention(nn.Module):
 
         q, k = self.rotary_emb(positions, q, k)
         o = self.attn(q, k, v)
-        output = self.o_proj(o.flatten(1, -1))
-        return output
+
+        # Transpose back to BSND and flatten for output projection
+        o = o.transpose(1, 2).contiguous()
+        output = self.o_proj(o.view(batch_size * seq_len, -1))
+        return output.view(batch_size, seq_len, -1)
 
     def extra_repr(self) -> str:
         return (
