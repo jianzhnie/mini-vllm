@@ -16,6 +16,23 @@ from typing import Optional, Tuple
 import torch
 from torch import nn
 
+from minivllm.utils.device import is_torch_npu_available
+from minivllm.utils.logger_utils import get_logger
+
+logger = get_logger(__name__)
+
+# Try to import NPU specific kernels
+_NPU_RMS_NORM_AVAILABLE = False
+if is_torch_npu_available():
+    try:
+        import torch_npu
+
+        if hasattr(torch_npu, 'npu_rms_norm'):
+            _NPU_RMS_NORM_AVAILABLE = True
+            logger.info('NPU RMSNorm kernel available')
+    except ImportError:
+        pass
+
 __all__ = ['RMSNorm']
 
 
@@ -72,6 +89,12 @@ class RMSNorm(nn.Module):
         Returns:
             Normalized tensor with same shape as input
         """
+        # NPU optimization
+        if _NPU_RMS_NORM_AVAILABLE and x.device.type == 'npu':
+            import torch_npu
+
+            return torch_npu.npu_rms_norm(x, self.weight, epsilon=self.eps)[0]
+
         orig_dtype = x.dtype
         # Convert to float for stable computation
         x = x.float()
@@ -101,6 +124,15 @@ class RMSNorm(nn.Module):
         Returns:
             Tuple of (normalized tensor, updated residual)
         """
+        # NPU optimization
+        if _NPU_RMS_NORM_AVAILABLE and x.device.type == 'npu':
+            import torch_npu
+
+            x = x + residual
+            residual = x
+            return torch_npu.npu_rms_norm(x, self.weight,
+                                          epsilon=self.eps)[0], residual
+
         orig_dtype = x.dtype
 
         # Add residual to input and convert to float
