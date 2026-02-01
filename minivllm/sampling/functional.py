@@ -272,24 +272,44 @@ def apply_repetition_penalty(logits: Tensor, prev_tokens: Tensor,
     logits = logits.clone()
     batch_size, vocab_size = logits.shape
 
-    # Efficient per-batch penalty application
-    for i in range(batch_size):
-        if prev_tokens.dim() > 1:
-            tokens = prev_tokens[i]
-        else:
-            tokens = prev_tokens
+    # Ensure prev_tokens is on the same device
+    if prev_tokens.device != logits.device:
+        prev_tokens = prev_tokens.to(logits.device)
 
-        unique_tokens = torch.unique(tokens)
-        unique_tokens = unique_tokens[(unique_tokens >= 0)
-                                      & (unique_tokens < vocab_size)]
+    # Handle variable length sequences or single sequence
+    if prev_tokens.dim() == 1 and batch_size > 1:
+        prev_tokens = prev_tokens.unsqueeze(0).expand(batch_size, -1)
+    elif prev_tokens.dim() == 1:
+        prev_tokens = prev_tokens.unsqueeze(0)
 
-        if unique_tokens.numel() > 0:
-            selected_logits = logits[i, unique_tokens]
-            logits[i, unique_tokens] = torch.where(
-                selected_logits > 0,
-                selected_logits / penalty,
-                selected_logits * penalty,
-            )
+    # Ensure LongTensor for indexing
+    if prev_tokens.dtype != torch.long:
+        prev_tokens = prev_tokens.long()
+
+    # Create a mask of present tokens
+    presence_mask = torch.zeros((batch_size, vocab_size),
+                                dtype=torch.bool,
+                                device=logits.device)
+
+    valid_tokens_mask = (prev_tokens >= 0) & (prev_tokens < vocab_size)
+
+    if valid_tokens_mask.all():
+        presence_mask.scatter_(1, prev_tokens, True)
+    else:
+        batch_indices = (torch.arange(
+            batch_size,
+            device=logits.device).unsqueeze(1).expand_as(prev_tokens))
+        valid_batch = batch_indices[valid_tokens_mask]
+        valid_toks = prev_tokens[valid_tokens_mask]
+        presence_mask[valid_batch, valid_toks] = True
+
+    masked_logits = logits[presence_mask]
+    if masked_logits.numel() > 0:
+        logits[presence_mask] = torch.where(
+            masked_logits > 0,
+            masked_logits / penalty,
+            masked_logits * penalty,
+        )
 
     return logits
 
@@ -303,19 +323,38 @@ def apply_frequency_penalty(logits: Tensor, sequence: Tensor,
     logits = logits.clone()
     batch_size, vocab_size = logits.shape
 
-    for i in range(batch_size):
-        if sequence.dim() > 1:
-            seq = sequence[i]
-        else:
-            seq = sequence
+    if sequence.device != logits.device:
+        sequence = sequence.to(logits.device)
 
-        unique_tokens, counts = torch.unique(seq, return_counts=True)
-        valid_mask = (unique_tokens >= 0) & (unique_tokens < vocab_size)
-        valid_tokens = unique_tokens[valid_mask]
-        valid_counts = counts[valid_mask]
+    if sequence.dim() == 1 and batch_size > 1:
+        sequence = sequence.unsqueeze(0).expand(batch_size, -1)
+    elif sequence.dim() == 1:
+        sequence = sequence.unsqueeze(0)
 
-        if valid_tokens.numel() > 0:
-            logits[i, valid_tokens] -= valid_counts.float() * alpha
+    if sequence.dtype != torch.long:
+        sequence = sequence.long()
+
+    # Count frequencies
+    counts = torch.zeros((batch_size, vocab_size),
+                         dtype=logits.dtype,
+                         device=logits.device)
+
+    valid_mask = (sequence >= 0) & (sequence < vocab_size)
+
+    if valid_mask.all():
+        src = torch.ones_like(sequence, dtype=logits.dtype)
+        counts.scatter_add_(1, sequence, src)
+    else:
+        batch_indices = (torch.arange(
+            batch_size, device=logits.device).unsqueeze(1).expand_as(sequence))
+        valid_batch = batch_indices[valid_mask]
+        valid_toks = sequence[valid_mask]
+        values = torch.ones_like(valid_toks, dtype=logits.dtype)
+        counts.index_put_((valid_batch, valid_toks), values, accumulate=True)
+
+    mask = counts > 0
+    if mask.any():
+        logits[mask] -= counts[mask] * alpha
 
     return logits
 
@@ -330,18 +369,34 @@ def apply_presence_penalty(logits: Tensor, sequence: Tensor,
     logits = logits.clone()
     batch_size, vocab_size = logits.shape
 
-    for i in range(batch_size):
-        if sequence.dim() > 1:
-            seq = sequence[i]
-        else:
-            seq = sequence
+    if sequence.device != logits.device:
+        sequence = sequence.to(logits.device)
 
-        unique_tokens = torch.unique(seq)
-        valid_tokens = unique_tokens[(unique_tokens >= 0)
-                                     & (unique_tokens < vocab_size)]
+    if sequence.dim() == 1 and batch_size > 1:
+        sequence = sequence.unsqueeze(0).expand(batch_size, -1)
+    elif sequence.dim() == 1:
+        sequence = sequence.unsqueeze(0)
 
-        if valid_tokens.numel() > 0:
-            logits[i, valid_tokens] -= penalty
+    if sequence.dtype != torch.long:
+        sequence = sequence.long()
+
+    presence_mask = torch.zeros((batch_size, vocab_size),
+                                dtype=torch.bool,
+                                device=logits.device)
+
+    valid_mask = (sequence >= 0) & (sequence < vocab_size)
+
+    if valid_mask.all():
+        presence_mask.scatter_(1, sequence, True)
+    else:
+        batch_indices = (torch.arange(
+            batch_size, device=logits.device).unsqueeze(1).expand_as(sequence))
+        valid_batch = batch_indices[valid_mask]
+        valid_toks = sequence[valid_mask]
+        presence_mask[valid_batch, valid_toks] = True
+
+    if presence_mask.any():
+        logits[presence_mask] -= penalty
 
     return logits
 
