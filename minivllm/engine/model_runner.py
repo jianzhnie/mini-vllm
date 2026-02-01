@@ -519,6 +519,14 @@ class ModelRunner:
                 f'OOM during KV cache allocation. '
                 f'Try reducing device_memory_utilization (current: {config.device_memory_utilization}) '
                 f'or max_num_seqs. Error: {e}') from e
+        except RuntimeError as e:
+            # Catch NPU or other device OOMs that might not be torch.cuda.OutOfMemoryError
+            if 'out of memory' in str(e).lower():
+                raise RuntimeError(
+                    f'OOM during KV cache allocation on {self.device.type}. '
+                    f'Try reducing device_memory_utilization (current: {config.device_memory_utilization}) '
+                    f'or max_num_seqs. Error: {e}') from e
+            raise e
 
         # Assign cache slices to model layers
         layer_id: int = 0
