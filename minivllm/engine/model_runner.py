@@ -16,6 +16,8 @@ import torch.distributed as dist
 
 from minivllm.config import Config
 from minivllm.engine.sequence import Sequence
+from minivllm.models.opt import OPTForCausalLM
+from minivllm.models.qwen2 import Qwen2ForCausalLM
 from minivllm.models.qwen3 import Qwen3ForCausalLM
 from minivllm.sampling.sampler import Sampler
 from minivllm.utils.context import Context, get_context, reset_context, set_context
@@ -124,7 +126,32 @@ class ModelRunner:
         # environments where model loading is skipped (tests, stubs).
 
         # Load model based on HuggingFace config
-        self.model = Qwen3ForCausalLM(hf_config)
+        architectures = getattr(hf_config, 'architectures', [])
+        model_type = getattr(hf_config, 'model_type', '')
+
+        is_qwen2 = False
+        is_opt = False
+        if architectures:
+            if 'Qwen2ForCausalLM' in architectures:
+                is_qwen2 = True
+            elif 'OPTForCausalLM' in architectures:
+                is_opt = True
+
+        if not is_qwen2 and not is_opt:
+            if model_type == 'qwen2':
+                is_qwen2 = True
+            elif model_type == 'opt':
+                is_opt = True
+
+        if is_qwen2:
+            logger.info('Loading Qwen2 model architecture')
+            self.model = Qwen2ForCausalLM(hf_config)
+        elif is_opt:
+            logger.info('Loading OPT model architecture')
+            self.model = OPTForCausalLM(hf_config)
+        else:
+            logger.info('Loading Qwen3 model architecture (default)')
+            self.model = Qwen3ForCausalLM(hf_config)
         self.sampler = Sampler()
         load_model(self.model, config.model)
 
@@ -176,8 +203,8 @@ class ModelRunner:
         self.sampler = self.sampler.to(self.device)
 
         # Allocate KV cache and warmup
-        self.warmup_model()
         self.allocate_kv_cache()
+        self.warmup_model()
 
         # Capture device graphs for efficient decode (optional)
         # Only CUDA devices support graph optimization currently
@@ -468,7 +495,9 @@ class ModelRunner:
         current: int = stats.get('allocated_bytes.all.current', 0)
 
         # Calculate KV cache requirements
-        num_kv_heads: int = (hf_config.num_key_value_heads // self.world_size)
+        num_kv_heads_config = getattr(hf_config, 'num_key_value_heads',
+                                      hf_config.num_attention_heads)
+        num_kv_heads: int = (num_kv_heads_config // self.world_size)
         head_dim: int = getattr(
             hf_config, 'head_dim',
             hf_config.hidden_size // hf_config.num_attention_heads)
@@ -907,8 +936,11 @@ class ModelRunner:
         token_ids: Optional[List[int]] = None
         if self.rank == 0 and sampling_params_tensors is not None:
             temperatures, top_ps, top_ks, min_ps = sampling_params_tensors
-            token_ids = self.sampler(logits, temperatures, top_ps, top_ks,
-                                     min_ps).tolist()
+            token_ids = self.sampler(logits,
+                                     temperatures=temperatures,
+                                     top_ps=top_ps,
+                                     top_ks=top_ks,
+                                     min_ps=min_ps).tolist()
 
         # Clean up context
         reset_context()
