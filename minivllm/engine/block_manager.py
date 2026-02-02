@@ -388,7 +388,7 @@ class BlockManager:
 
             # Pick any free block
             block_id: int = next(iter(self.free_block_ids))
-            self._allocate_block(block_id, reset=True)
+            self._allocate_block(block_id)
             block_table.append(block_id)
 
         elif len(sequence) % self.block_size == 0:
