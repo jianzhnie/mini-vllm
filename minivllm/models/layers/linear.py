@@ -304,6 +304,12 @@ class RowParallelLinear(LinearBase):
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor,
                       *args, **kwargs) -> None:
         """Load row-sharded weights."""
+        # Handle bias (not sharded for RowParallelLinear)
+        if param.data.dim() == 1:
+            if self.tp_rank == 0:
+                param.data.copy_(loaded_weight)
+            return
+
         param_data = param.data
         assert self.tp_dim is not None, 'tp_dim must be set for row-parallel layers'
         shard_size = param_data.size(self.tp_dim)
