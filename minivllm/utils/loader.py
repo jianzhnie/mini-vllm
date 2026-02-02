@@ -129,11 +129,14 @@ def load_model(model: nn.Module, model_path: Union[str, Path]) -> None:
 
     # Find safetensors files
     safetensor_files = list(base_path.glob('*.safetensors'))
-    if not safetensor_files:
-        raise ValueError(f'No .safetensors files found in {base_path}')
+    bin_files = list(base_path.glob('*.bin'))
+
+    if not safetensor_files and not bin_files:
+        raise ValueError(f'No .safetensors or .bin files found in {base_path}')
 
     logger.info(
-        f'Found {len(safetensor_files)} safetensors file(s) in {base_path}')
+        f'Found {len(safetensor_files)} safetensors file(s) and {len(bin_files)} bin file(s) in {base_path}'
+    )
 
     # Get packed modules mapping
     packed_modules_mapping = getattr(model, 'packed_modules_mapping', {})
@@ -157,6 +160,26 @@ def load_model(model: nn.Module, model_path: Union[str, Path]) -> None:
                     if load_weight(model, weight_name, tensor,
                                    packed_modules_mapping):
                         loaded_weights += 1
+
+        except Exception as exc:
+            logger.exception(f'Failed to load weights from "{file_path}"')
+            raise RuntimeError(
+                f'Failed to load weights from "{file_path}": {exc}') from exc
+
+    for file_path in bin_files:
+        logger.info(f'Loading weights from "{file_path.name}"')
+
+        try:
+            state_dict = torch.load(str(file_path), map_location='cpu')
+            for weight_name, tensor in state_dict.items():
+                total_weights += 1
+
+                if load_weight(model, weight_name, tensor,
+                               packed_modules_mapping):
+                    loaded_weights += 1
+
+            # Clear state_dict to free memory
+            del state_dict
 
         except Exception as exc:
             logger.exception(f'Failed to load weights from "{file_path}"')
