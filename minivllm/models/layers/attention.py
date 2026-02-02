@@ -227,8 +227,11 @@ class Attention(nn.Module):
         # Store K/V to cache if cache is initialized
         if k_cache.numel() and v_cache.numel():
             self._cache_initialized = True
-            self.backend.store_kv_cache(k, v, k_cache, v_cache,
-                                        context.slot_mapping)
+            # Only store if slot_mapping is available and valid
+            if context.slot_mapping is not None and context.slot_mapping.numel(
+            ) > 0:
+                self.backend.store_kv_cache(k, v, k_cache, v_cache,
+                                            context.slot_mapping)
         elif not context.is_prefill and not self._cache_initialized:
             # In decode phase, KV cache must be initialized
             raise RuntimeError(
