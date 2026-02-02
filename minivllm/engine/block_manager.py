@@ -169,12 +169,8 @@ class BlockManager:
                 f'ref_count={block.ref_count}. Cannot allocate.')
 
         block.reset()
-        # Optimization: if allocating the first free block, use popleft for O(1)
-        if self.free_block_ids and self.free_block_ids[0] == block_id:
-            self.free_block_ids.popleft()
-        else:
-            # O(N) removal for specific block
-            self.free_block_ids.remove(block_id)
+        # Remove from free set (O(1))
+        self.free_block_ids.remove(block_id)
 
         self.used_block_ids.add(block_id)
         return block
@@ -203,7 +199,7 @@ class BlockManager:
                 del self.hash_to_block_id[block.hash]
 
         self.used_block_ids.remove(block_id)
-        self.free_block_ids.append(block_id)
+        self.free_block_ids.add(block_id)
 
     def can_allocate(self, sequence: Sequence) -> bool:
         """Check if sequence can be allocated.
@@ -286,7 +282,7 @@ class BlockManager:
                         f'No free blocks available for allocation. '
                         f'Need {sequence.num_blocks} blocks, '
                         f'have {len(self.free_block_ids)} free blocks.')
-                block_id = self.free_block_ids[0]
+                block_id = next(iter(self.free_block_ids))
                 block: Block = self._allocate_block(block_id)
             else:
                 # Cache hit: reuse existing block
