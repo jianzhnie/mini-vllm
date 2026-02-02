@@ -239,6 +239,12 @@ class StandardAttentionBackend(AttentionBackend):
         valid_key = key[valid_mask].view(-1, hidden_size)
         valid_value = value[valid_mask].view(-1, hidden_size)
 
+        # Ensure valid_key/valid_value match cache dtype
+        if valid_key.dtype != k_cache.dtype:
+            valid_key = valid_key.to(k_cache.dtype)
+        if valid_value.dtype != v_cache.dtype:
+            valid_value = valid_value.to(v_cache.dtype)
+
         # Reshape cache to [total_tokens, hidden_size] for direct indexing
         # This assumes cache is contiguous in memory compatible with this view
         k_cache_reshaped = k_cache.view(-1, hidden_size)
