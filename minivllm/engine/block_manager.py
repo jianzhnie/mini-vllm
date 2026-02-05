@@ -10,12 +10,16 @@ between sequences with common token prefixes, reducing total memory usage.
 
 from __future__ import annotations
 
-from typing import Dict, List, Set
+from collections import deque
+from typing import Deque, Dict, List, Optional, Set
 
 import numpy as np
 import xxhash
 
 from minivllm.engine.sequence import Sequence
+from minivllm.utils.logger_utils import get_logger
+
+logger = get_logger(__name__)
 
 
 class Block:
@@ -44,6 +48,7 @@ class Block:
         self.ref_count: int = 0
         self.hash: int = -1
         self.token_ids: List[int] = []
+        self.last_access_time: Optional[float] = None  # 用于缓存策略
 
     def update(self, hash_val: int, token_ids: List[int]) -> None:
         """Update block with token data and hash.
@@ -53,7 +58,8 @@ class Block:
             token_ids: List of token IDs for this block.
         """
         self.hash = hash_val
-        self.token_ids = token_ids
+        self.token_ids = token_ids.copy()
+        self.last_access_time = None  # 重置访问时间
 
     def reset(self) -> None:
         """Reset block to initial allocated state.
@@ -63,7 +69,8 @@ class Block:
         """
         self.ref_count = 1
         self.hash = -1
-        self.token_ids = []
+        self.token_ids.clear()
+        self.last_access_time = None  # 重置访问时间
 
 
 class BlockManager:
@@ -107,11 +114,18 @@ class BlockManager:
             raise ValueError(f'block_size must be positive, got {block_size}')
 
         self.block_size: int = block_size
+        self.num_blocks: int = num_blocks
         self.blocks: List[Block] = [Block(i) for i in range(num_blocks)]
         self.hash_to_block_id: Dict[int, int] = {}
-        # Use a set for free_block_ids to allow O(1) removal
-        self.free_block_ids: Set[int] = set(range(num_blocks))
+        # Use a double-ended queue for efficient allocation/deallocation
+        self.free_block_ids: Deque[int] = deque(range(num_blocks))
+        # Use a set for efficient membership testing
         self.used_block_ids: Set[int] = set()
+        self.stats = {
+            'total_allocations': 0,
+            'cache_hits': 0,
+            'cache_misses': 0,
+        }
 
     @classmethod
     def compute_hash(cls, token_ids: List[int], prefix: int = -1) -> int:
@@ -143,14 +157,20 @@ class BlockManager:
         hash_prev: xxhash.xxh64 = xxhash.xxh64()
         if prefix != -1:
             hash_prev.update(prefix.to_bytes(8, 'little'))
-        hash_prev.update(np.array(token_ids, dtype=np.int32).tobytes())
+        if isinstance(token_ids, list):
+            token_array = np.array(token_ids, dtype=np.int32)
+        else:
+            token_array = token_ids
+        hash_prev.update(input=token_array.tobytes())
         return hash_prev.intdigest()
 
-    def _allocate_block(self, block_id: int) -> Block:
+    def _allocate_block(self, block_id: int, reset: bool = True) -> Block:
         """Allocate a block from the free pool.
 
         Args:
             block_id: ID of the block to allocate.
+            reset: Whether to reset the block state (clear data).
+                Set to False when resurrecting a cached block.
 
         Returns:
             The allocated Block object.
@@ -161,18 +181,38 @@ class BlockManager:
         if block_id < 0 or block_id >= len(self.blocks):
             raise RuntimeError(f'Invalid block_id: {block_id}. '
                                f'Valid range: [0, {len(self.blocks)})')
+        if not self.free_block_ids:
+            raise RuntimeError('No free blocks available')
 
-        block: Block = self.blocks[block_id]
+        # Check if it is the first element (O(1) operation)
+        if self.free_block_ids and self.free_block_ids[0] == block_id:
+            actual_id: int = self.free_block_ids.popleft()
+        else:
+            # Remove specific element from middle (O(n) operation)
+            if block_id in self.free_block_ids:
+                self.free_block_ids.remove(block_id)
+                actual_id = block_id
+            else:
+                raise RuntimeError(f'Block {block_id} not in free blocks')
+
+        block: Block = self.blocks[actual_id]
         if block.ref_count != 0:
             raise RuntimeError(
-                f'Block {block_id} is already allocated with '
-                f'ref_count={block.ref_count}. Cannot allocate.')
+                f'Block {actual_id} already allocated with ref_count={block.ref_count}'
+            )
 
-        block.reset()
-        # Remove from free set (O(1))
-        self.free_block_ids.remove(block_id)
+        if reset:
+            # If resetting, we need to clean up old hash mapping if it exists
+            if block.hash != -1 and self.hash_to_block_id.get(
+                    block.hash) == actual_id:
+                del self.hash_to_block_id[block.hash]
+            block.reset()
+        else:
+            # Resurrecting: just set ref_count to 1
+            block.ref_count = 1
 
-        self.used_block_ids.add(block_id)
+        self.used_block_ids.add(actual_id)
+        self.stats['total_allocations'] += 1
         return block
 
     def _deallocate_block(self, block_id: int) -> None:
@@ -192,14 +232,13 @@ class BlockManager:
         if block.ref_count != 0:
             raise RuntimeError(f'Cannot deallocate block {block_id} with '
                                f'ref_count={block.ref_count} (must be 0)')
-
-        # Clean up hash mapping to prevent memory leak and stale entries
-        if block.hash != -1:
-            if self.hash_to_block_id.get(block.hash) == block_id:
-                del self.hash_to_block_id[block.hash]
+        # 清理哈希映射
+        if block.hash != -1 and self.hash_to_block_id.get(
+                block.hash) == block_id:
+            del self.hash_to_block_id[block.hash]
 
         self.used_block_ids.remove(block_id)
-        self.free_block_ids.add(block_id)
+        self.free_block_ids.append(block_id)
 
     def can_allocate(self, sequence: Sequence) -> bool:
         """Check if sequence can be allocated.
@@ -210,7 +249,9 @@ class BlockManager:
         Returns:
             True if enough free blocks exist for the sequence.
         """
-        return len(self.free_block_ids) >= sequence.num_blocks
+        required_blocks = sequence.num_blocks
+        available_blocks = len(self.free_block_ids)
+        return available_blocks >= required_blocks
 
     def allocate(self, sequence: Sequence) -> None:
         """Allocate blocks for a sequence, using prefix caching when possible.
@@ -282,8 +323,9 @@ class BlockManager:
                         f'No free blocks available for allocation. '
                         f'Need {sequence.num_blocks} blocks, '
                         f'have {len(self.free_block_ids)} free blocks.')
-                block_id = next(iter(self.free_block_ids))
+                block_id = self.free_block_ids[0]
                 block: Block = self._allocate_block(block_id)
+                self.stats['cache_misses'] += 1
             else:
                 # Cache hit: reuse existing block
                 sequence.num_cached_tokens += self.block_size  # Track cached tokens
@@ -294,7 +336,8 @@ class BlockManager:
                     block.ref_count += 1  # Increment reference count
                 else:
                     # Block exists in cache but not currently allocated
-                    block = self._allocate_block(block_id)
+                    # Resurrect it without resetting data
+                    block = self._allocate_block(block_id, reset=False)
 
             # Update block with token data and register in hash table (for full blocks)
             if hash_prev != -1:
@@ -303,8 +346,15 @@ class BlockManager:
                 self.hash_to_block_id[
                     hash_prev] = block_id  # Register in cache mapping
 
+                sequence.num_cached_tokens += self.block_size
+
             # Add physical block ID to sequence's block table
             sequence.block_table.append(block_id)
+
+        total = self.stats['cache_hits'] + self.stats['cache_misses']
+        if total > 0:
+            hit_rate = self.stats['cache_hits'] / total * 100
+            logger.info(f'Prefix cache hit rate: {hit_rate:.1f}%')
 
     def deallocate(self, sequence: Sequence) -> None:
         """Deallocate blocks for a sequence.
@@ -350,8 +400,10 @@ class BlockManager:
         """
         # A new block is needed only when crossing a block boundary
         # This happens when: len(sequence) % block_size == 0 -> len(sequence) + 1
-        is_at_boundary: bool = (len(sequence) % self.block_size == 0)
-        return len(self.free_block_ids) >= (1 if is_at_boundary else 0)
+        needs_new_block: bool = (len(sequence) % self.block_size == 0)
+        required_blocks = 1 if needs_new_block else 0
+
+        return len(self.free_block_ids) >= required_blocks
 
     def may_append(self, sequence: Sequence) -> None:
         """Append tokens to a sequence's last block, allocating new blocks
@@ -387,7 +439,7 @@ class BlockManager:
                                  'This may trigger sequence preemption.')
 
             # Pick any free block
-            block_id: int = next(iter(self.free_block_ids))
+            block_id: int = self.free_block_ids[0]
             self._allocate_block(block_id)
             block_table.append(block_id)
 
@@ -403,9 +455,9 @@ class BlockManager:
             else:
                 prefix: int = -1
 
-            h: int = self.compute_hash(token_ids, prefix)
-            last_block.update(h, token_ids)
-            self.hash_to_block_id[h] = last_block.block_id
+            hash_val: int = self.compute_hash(token_ids, prefix)
+            last_block.update(hash_val, token_ids)
+            self.hash_to_block_id[hash_val] = last_block.block_id
 
         else:
             # In a partial block (between 1 and block_size-1 tokens)
