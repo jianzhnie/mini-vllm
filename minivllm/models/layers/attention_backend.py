@@ -341,7 +341,7 @@ class NPUAttentionBackend(AttentionBackend):
     It handles necessary layout transformations (BNSD <-> BSND) transparently.
     """
 
-    def __init__(self, enable_monitoring: bool = False):
+    def __init__(self):
         """Initialize NPU attention backend."""
         self._npu_available = self._check_npu_availability()
         self._fallback_backend = StandardAttentionBackend()
@@ -464,24 +464,6 @@ class NPUAttentionBackend(AttentionBackend):
                 torch.npu.empty_cache()
             return True
         return False
-
-    def get_health_report(self) -> dict:
-        """Get performance health report."""
-        if not self._npu_available:
-            return {'status': 'unavailable'}
-        return {
-            'status':
-            'healthy',
-            'backend':
-            'npu',
-            'api':
-            'unified_inference'
-            if self.npu_fused_infer_attention_score else 'legacy',
-        }
-
-    def reset_metrics(self) -> None:
-        """Reset performance metrics."""
-        pass
 
     def prepare_npu_cache(
         self,
