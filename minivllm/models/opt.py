@@ -3,7 +3,7 @@
 This module implements the OPT architecture using the mini-vLLM building blocks.
 """
 
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import torch
 from torch import nn
@@ -322,9 +322,30 @@ class OPTForCausalLM(nn.Module):
         self,
         input_ids: torch.Tensor,
         positions: torch.Tensor,
-    ) -> torch.Tensor:
+    ) -> Tuple[torch.Tensor]:
         hidden_states = self.model(input_ids, positions)
-        return hidden_states
+        logits = self.lm_head(hidden_states)
+        return (logits, )
+
+    def set_kv_cache(self,
+                     kv_cache: List[Tuple[torch.Tensor, torch.Tensor]],
+                     block_size: int = 256) -> None:
+        """Set KV cache for all attention layers.
+
+        Args:
+            kv_cache: List of (k_cache, v_cache) tuples, one for each layer.
+            block_size: Block size for KV cache.
+        """
+        for layer_idx, layer in enumerate(self.model.decoder.layers):
+            if layer_idx < len(kv_cache):
+                k_cache, v_cache = kv_cache[layer_idx]
+                # OPT uses OPTAttention which wraps Attention
+                # layer.self_attn is OPTAttention
+                # layer.self_attn.attn is Attention
+                if hasattr(layer.self_attn, 'attn'):
+                    layer.self_attn.attn.k_cache = k_cache
+                    layer.self_attn.attn.v_cache = v_cache
+                    layer.self_attn.attn._cache_initialized = True
 
     def compute_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
         """Compute logits from hidden states."""
