@@ -47,7 +47,7 @@ Dependencies:
 """
 
 import math
-from typing import Any, Dict, Tuple
+from typing import Any, Tuple
 
 import torch
 from torch import nn
@@ -162,7 +162,6 @@ class Attention(nn.Module):
         head_dim: int,
         scale: float,
         num_kv_heads: int,
-        enable_npu_monitoring: bool = False,
     ) -> None:
         super().__init__()
         self.num_heads: int = num_heads
@@ -173,8 +172,7 @@ class Attention(nn.Module):
         # Initialize appropriate backend
         self.backend: AttentionBackend
         if _NPU_FLASH_ATTN_AVAILABLE:
-            self.backend = NPUAttentionBackend(
-                enable_monitoring=enable_npu_monitoring)
+            self.backend = NPUAttentionBackend()
             logger.info('NPU Flash Attention backend initialized')
         elif _FLASH_ATTN_AVAILABLE:
             self.backend = FlashAttentionBackend()
@@ -368,99 +366,6 @@ class Attention(nn.Module):
 
         return attn_out
 
-    def get_performance_report(self) -> Dict[str, Any]:
-        """Get performance report from NPU attention backend.
-
-        Returns:
-            Performance metrics dictionary or empty dict if NPU backend not available
-        """
-        if isinstance(self.backend, NPUAttentionBackend) and hasattr(
-                self.backend, 'get_health_report'):
-            return self.backend.get_health_report()
-        return {
-            'status': 'unavailable',
-            'message': 'NPU attention backend not initialized',
-        }
-
-    def reset_performance_metrics(self) -> None:
-        """Reset NPU attention performance metrics for fresh monitoring."""
-        if isinstance(self.backend, NPUAttentionBackend) and hasattr(
-                self.backend, 'reset_metrics'):
-            self.backend.reset_metrics()
-        else:
-            logger.warning(
-                'NPU attention backend not available for metrics reset')
-
-    def get_optimization_suggestions(self) -> Dict[str, Any]:
-        """Get optimization suggestions based on current configuration and environment.
-
-        Returns:
-            Dictionary with optimization suggestions and best practices
-        """
-        suggestions = {
-            'environment': {},
-            'configuration': {},
-            'performance': {},
-            'best_practices': []
-        }
-
-        # Environment suggestions
-        if torch.npu.is_available():
-            suggestions['environment']['npu_available'] = True
-            suggestions['best_practices'].append('✅ NPU设备已就绪')
-
-            if npu_fused_infer_attention_score is not None:
-                suggestions['environment']['optimal_api'] = 'unified_inference'
-                suggestions['best_practices'].append('✅ 推荐使用统一推理接口')
-            else:
-                suggestions['environment']['optimal_api'] = 'legacy'
-                suggestions['best_practices'].append(
-                    '⚠️ 建议升级到支持统一接口的PyTorch版本')
-        else:
-            suggestions['environment']['npu_available'] = False
-            suggestions['best_practices'].append('❌ NPU设备不可用，将使用CPU/CUDA实现')
-
-        # Configuration suggestions
-        if self.head_dim % 16 != 0:
-            suggestions['configuration']['head_dim_alignment'] = 'misaligned'
-            suggestions['best_practices'].append(
-                f'⚠️ head_dim={self.head_dim}未16对齐，建议填充到{(self.head_dim//16+1)*16}'
-            )
-        else:
-            suggestions['configuration']['head_dim_alignment'] = 'aligned'
-            suggestions['best_practices'].append('✅ head_dim已16对齐')
-
-        if self.num_kv_heads != self.num_heads:
-            ratio = self.num_heads // self.num_kv_heads
-            suggestions['configuration']['gqa_ratio'] = ratio
-            suggestions['best_practices'].append(f'✅ GQA优化已启用，比例={ratio}')
-        else:
-            suggestions['configuration']['gqa_ratio'] = 1
-            suggestions['best_practices'].append('ℹ️ 标准多头注意力')
-
-        # Performance suggestions
-        if isinstance(self.backend, NPUAttentionBackend):
-            report = self.backend.get_health_report()
-            if report.get('status') == 'warning':
-                suggestions['performance']['health'] = 'warning'
-                suggestions['best_practices'].extend(
-                    report.get('recommendations', []))
-            elif report.get('status') == 'unhealthy':
-                suggestions['performance']['health'] = 'unhealthy'
-                suggestions['best_practices'].extend(
-                    report.get('recommendations', []))
-            else:
-                suggestions['performance']['health'] = 'healthy'
-                suggestions['best_practices'].append('✅ NPU注意力运行健康')
-
-        # General best practices
-        suggestions['best_practices'].extend([
-            '💡 使用BNSD数据布局以获得最佳NPU性能', '💡 启用稀疏模式3用于GPT类模型', '💡 长序列考虑使用分块处理',
-            '💡 内存受限时考虑量化推理'
-        ])
-
-        return suggestions
-
     def _fallback_attention(
         self,
         q: torch.Tensor,
@@ -589,6 +494,23 @@ class Attention(nn.Module):
                                                        cached_v.unsqueeze(0))
             cached_k = cached_k.squeeze(0)
             cached_v = cached_v.squeeze(0)
+
+            # DEBUG: Check if cached_k contains valid data
+            if cached_k.abs().sum() == 0:
+                logger.debug(
+                    f'[DEBUG] Decode Step: cached_k is all zeros! Batch size: {batch_size}'
+                )
+                logger.debug(f'[DEBUG] Context Lens: {context.context_lens}')
+                logger.debug(
+                    f"[DEBUG] Block Tables sample: {context.block_tables[0] if len(context.block_tables) > 0 else 'Empty'}"
+                )
+                logger.debug(
+                    f"[DEBUG] Slot Mapping sample: {context.slot_mapping[:10] if context.slot_mapping is not None else 'None'}"
+                )
+                # Check k_cache status
+                logger.debug(
+                    f'[DEBUG] Global k_cache non-zero elements: {self.k_cache.count_nonzero()}'
+                )
 
             # Compute attention for single query token per sequence
             # q: [batch, num_heads, head_dim]
