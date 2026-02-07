@@ -84,6 +84,7 @@ class Sequence:
         self.num_prompt_tokens: int = len(self.token_ids)
         self.num_cached_tokens: int = 0
         self.block_table: List[int] = []
+        self.sampling_params: SamplingParams = sampling_params
         self.temperature: float = sampling_params.temperature
         self.top_p: float = sampling_params.top_p
         self.top_k: int = sampling_params.top_k
