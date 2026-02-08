@@ -438,7 +438,10 @@ class InferenceExecutor:
             Model logits.
         """
         with torch.no_grad():
-            return self.model(input_ids=input_ids, positions=positions)[0]
+            output = self.model(input_ids=input_ids, positions=positions)
+            if isinstance(output, tuple):
+                output = output[0]
+            return self.model.compute_logits(output)
 
     def _sample_tokens(self, logits: torch.Tensor,
                        sequences: List[Sequence]) -> List[int]:
