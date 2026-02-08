@@ -322,10 +322,9 @@ class OPTForCausalLM(nn.Module):
         self,
         input_ids: torch.Tensor,
         positions: torch.Tensor,
-    ) -> Tuple[torch.Tensor]:
+    ) -> torch.Tensor:
         hidden_states = self.model(input_ids, positions)
-        logits = self.lm_head(hidden_states)
-        return (logits, )
+        return hidden_states
 
     def set_kv_cache(self,
                      kv_cache: List[Tuple[torch.Tensor, torch.Tensor]],
