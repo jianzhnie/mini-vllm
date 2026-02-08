@@ -110,9 +110,17 @@ class ModelRunner:
         hf_config: Any = config.hf_config
         # Normalize torch_dtype to a torch.dtype
         try:
-            if isinstance(hf_config.torch_dtype, str):
-                dtype_opt = getattr(torch, hf_config.torch_dtype, None)
+            # Check for 'dtype' first to avoid deprecation warning
+            if hasattr(hf_config, 'dtype'):
+                target_dtype = hf_config.dtype
+            else:
+                target_dtype = getattr(hf_config, 'torch_dtype', None)
+
+            if isinstance(target_dtype, str):
+                dtype_opt = getattr(torch, target_dtype, None)
                 hf_config.torch_dtype = dtype_opt or torch.bfloat16
+            elif isinstance(target_dtype, torch.dtype):
+                hf_config.torch_dtype = target_dtype
         except Exception:
             hf_config.torch_dtype = torch.bfloat16
         self.block_size: int = config.kvcache_block_size
