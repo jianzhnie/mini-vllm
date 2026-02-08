@@ -120,19 +120,24 @@ class LLMEngine:
             This method attempts graceful shutdown with timeouts and
             forced termination as fallback. Errors are logged as warnings.
         """
+        logger.info('LLMEngine exit called')
         errors: List[str] = []
 
         try:
             # Step 1: Signal model runner to exit
             if hasattr(self, 'model_runner'):
                 try:
+                    logger.info('Signaling model runner to exit')
                     self.model_runner.call('exit')
                     del self.model_runner
                 except Exception as e:
                     errors.append(f'Failed to exit model runner: {e}')
+                    logger.error(f'Failed to exit model runner: {e}',
+                                 exc_info=True)
 
             # Step 2: Terminate worker processes
             if hasattr(self, 'ps'):
+                logger.info(f'Terminating {len(self.ps)} worker processes')
                 for i, p in enumerate(self.ps):
                     try:
                         p.join(timeout=5)
@@ -148,11 +153,14 @@ class LLMEngine:
                             p.join(timeout=2)
                             if p.is_alive():
                                 p.kill()
+                        logger.info(f'Worker process {i} terminated')
                     except Exception as e:
                         errors.append(f'Failed to terminate worker {i}: {e}')
 
         except Exception as e:
             errors.append(f'Unexpected error during engine cleanup: {e}')
+            logger.error(f'Unexpected error during engine cleanup: {e}',
+                         exc_info=True)
 
         finally:
             if errors:
@@ -161,12 +169,13 @@ class LLMEngine:
                 warnings.warn(
                     f"Errors during engine cleanup: {'; '.join(errors)}",
                     RuntimeWarning)
+            logger.info('LLMEngine exit completed')
 
     def add_request(
         self,
         prompt: Union[str, List[int]],
         sampling_params: Optional[SamplingParams] = None,
-    ) -> None:
+    ) -> int:
         """Add a new generation request to the engine.
 
         Args:
@@ -174,6 +183,9 @@ class LLMEngine:
                 If string, it will be tokenized using the engine's tokenizer.
             sampling_params: SamplingParams controlling generation behavior.
                 Defaults to SamplingParams() if not provided.
+
+        Returns:
+            The sequence ID of the added request.
         """
         if sampling_params is None:
             sampling_params = SamplingParams()
@@ -187,6 +199,7 @@ class LLMEngine:
         # Create sequence and add to scheduler
         sequence: Sequence = Sequence(prompt_tokens, sampling_params)
         self.scheduler.add(sequence)
+        return sequence.seq_id
 
     def step(self) -> Tuple[List[Tuple[int, List[int]]], int]:
         """Execute one inference step.
