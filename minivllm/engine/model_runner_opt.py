@@ -345,8 +345,6 @@ class ModelRunner:
                 method_name, args, kwargs = cmd
 
                 if method_name == 'exit':
-                    logger.info(f'Worker {self.rank} received exit command')
-                    self.cleanup()
                     break
 
                 # Execute command
@@ -361,7 +359,7 @@ class ModelRunner:
         except KeyboardInterrupt:
             logger.info(f'Worker {self.rank} interrupted')
         except Exception as e:
-            logger.error(f'Worker {self.rank} error: {e}', exc_info=True)
+            logger.error(f'Worker {self.rank} error: {e}')
         finally:
             logger.info(f'Worker {self.rank} exiting')
 
@@ -372,19 +370,16 @@ class ModelRunner:
         try:
             # Clean up inference executor
             if self.inference_executor:
-                logger.debug('Cleaning up inference executor...')
                 self.inference_executor.cleanup()
                 self.inference_executor = None
 
             # Clean up model manager
             if self.model_manager:
-                logger.debug('Cleaning up model manager...')
                 self.model_manager.cleanup()
                 self.model_manager = None
 
             # Clean up distributed manager
             if self.distributed_manager:
-                logger.debug('Cleaning up distributed manager...')
                 self.distributed_manager.cleanup()
                 self.distributed_manager = None
 
@@ -392,7 +387,7 @@ class ModelRunner:
             logger.info('ModelRunner cleanup completed')
 
         except Exception as e:
-            logger.error(f'Error during cleanup: {e}', exc_info=True)
+            logger.error(f'Error during cleanup: {e}')
 
     def exit(self) -> None:
         """Exit the runner and cleanup resources."""

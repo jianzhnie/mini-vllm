@@ -120,24 +120,19 @@ class LLMEngine:
             This method attempts graceful shutdown with timeouts and
             forced termination as fallback. Errors are logged as warnings.
         """
-        logger.info('LLMEngine exit called')
         errors: List[str] = []
 
         try:
             # Step 1: Signal model runner to exit
             if hasattr(self, 'model_runner'):
                 try:
-                    logger.info('Signaling model runner to exit')
                     self.model_runner.call('exit')
                     del self.model_runner
                 except Exception as e:
                     errors.append(f'Failed to exit model runner: {e}')
-                    logger.error(f'Failed to exit model runner: {e}',
-                                 exc_info=True)
 
             # Step 2: Terminate worker processes
             if hasattr(self, 'ps'):
-                logger.info(f'Terminating {len(self.ps)} worker processes')
                 for i, p in enumerate(self.ps):
                     try:
                         p.join(timeout=5)
@@ -153,14 +148,11 @@ class LLMEngine:
                             p.join(timeout=2)
                             if p.is_alive():
                                 p.kill()
-                        logger.info(f'Worker process {i} terminated')
                     except Exception as e:
                         errors.append(f'Failed to terminate worker {i}: {e}')
 
         except Exception as e:
             errors.append(f'Unexpected error during engine cleanup: {e}')
-            logger.error(f'Unexpected error during engine cleanup: {e}',
-                         exc_info=True)
 
         finally:
             if errors:
@@ -169,7 +161,6 @@ class LLMEngine:
                 warnings.warn(
                     f"Errors during engine cleanup: {'; '.join(errors)}",
                     RuntimeWarning)
-            logger.info('LLMEngine exit completed')
 
     def add_request(
         self,
