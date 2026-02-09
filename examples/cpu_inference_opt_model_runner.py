@@ -18,9 +18,14 @@ os.environ['CUDA_VISIBLE_DEVICES'] = ''
 os.environ['ASCEND_RT_VISIBLE_DEVICES'] = ''
 os.environ['XPU_VISIBLE_DEVICES'] = ''
 
+import minivllm.engine.llm_engine  # noqa: E402
 from minivllm.engine.llm_engine import LLMEngine  # noqa: E402
+from minivllm.engine.model_runner_opt import ModelRunner as ModelRunnerOpt  # noqa: E402
 from minivllm.sampling_params import SamplingParams  # noqa: E402
 from minivllm.utils.logger_utils import get_logger  # noqa: E402
+
+# Patch LLMEngine to use optimized ModelRunner
+minivllm.engine.llm_engine.ModelRunner = ModelRunnerOpt
 
 logger = get_logger(__name__)
 
