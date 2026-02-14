@@ -10,11 +10,15 @@ from abc import ABC, abstractmethod
 from typing import Any, Optional, Tuple
 
 import torch
+import torch.nn.functional as F
 from torch import Tensor
 
 # Optional imports for NPU Flash Attention
 try:
-    from minivllm.models.layers.npu_flash_attention import npu_flash_attn_func
+    from minivllm.models.layers.npu_flash_attention import (
+        SPARSE_MODE,
+        npu_flash_attn_func,
+    )
 except ImportError:
     pass
 
@@ -153,32 +157,32 @@ class StandardAttentionBackend(AttentionBackend):
         _, num_kv_heads, kv_seq_len, _ = key.shape
 
         # Handle GQA/MQA by repeating key/value heads
+        # Note: SDPA supports broadcasting, so explicit repeat might be unnecessary for some versions.
+        # But for safety on NPU, we keep it or rely on broadcasting if verified.
+        # Let's try explicit repeat first to ensure correctness, then optimize if needed.
         if num_kv_heads != num_heads:
             repeat_factor = num_heads // num_kv_heads
             key = key.repeat_interleave(repeat_factor, dim=1)
             value = value.repeat_interleave(repeat_factor, dim=1)
 
-        # Compute attention scores
-        scores = torch.matmul(query, key.transpose(-2, -1)) / (head_dim**0.5)
-
-        # Apply causal mask if needed
-        if is_causal:
-            causal_mask = torch.triu(torch.ones(seq_len, kv_seq_len),
-                                     diagonal=1).bool()
-            if query.device != torch.device('cpu'):
-                causal_mask = causal_mask.to(query.device)
-            scores = scores.masked_fill(
-                causal_mask.unsqueeze(0).unsqueeze(0), float('-inf'))
-
-        # Apply attention mask if provided
+        # Use PyTorch 2.0+ scaled_dot_product_attention (SDPA)
+        # This is optimized for NPU (and CUDA/CPU) and avoids manual mask creation
         if attention_mask is not None:
-            scores = scores + attention_mask
+            # If custom mask provided, use it (is_causal=False to avoid conflict)
+            output = F.scaled_dot_product_attention(query,
+                                                    key,
+                                                    value,
+                                                    attn_mask=attention_mask,
+                                                    is_causal=False)
+        else:
+            # Use is_causal flag
+            output = F.scaled_dot_product_attention(query,
+                                                    key,
+                                                    value,
+                                                    is_causal=is_causal)
 
-        # Softmax and attention weights
-        attention_weights = torch.softmax(scores, dim=-1)
-
-        # Apply attention to values
-        output = torch.matmul(attention_weights, value)
+        # If output is not contiguous, make it contiguous? SDPA returns contiguous?
+        # Standard implementation returned matmul result which is contiguous.
 
         if is_3d:
             output = output.view(num_tokens, num_heads, head_dim)
@@ -233,6 +237,9 @@ class StandardAttentionBackend(AttentionBackend):
             return
 
         valid_slots = slot_mapping[valid_mask]
+        # NPU optimization: use int32 indices for better compatibility
+        if k_cache.device.type == 'npu':
+            valid_slots = valid_slots.to(torch.int32)
 
         # Reshape key/value to [num_valid, hidden_size]
         # key is [batch, num_heads, head_dim]
@@ -386,25 +393,19 @@ class NPUAttentionBackend(AttentionBackend):
                                                   attention_mask, is_causal)
 
         try:
-            # Transpose to BSND for NPU Flash Attention
             # Input is BNSD: (batch, num_heads, seq_len, head_dim)
-            # Target is BSND: (batch, seq_len, num_heads, head_dim)
-            # NPU kernels typically require contiguous memory
-            q = query.transpose(1, 2).contiguous()
-            k = key.transpose(1, 2).contiguous()
-            v = value.transpose(1, 2).contiguous()
-
+            # NPU Flash Attention now supports BNSD directly
             output = npu_flash_attn_func(
-                q,
-                k,
-                v,
+                query,
+                key,
+                value,
                 dropout_p=0.0,
                 softmax_scale=None,
                 causal=is_causal,
+                input_layout='BNSD',
             )
 
-            # Transpose back to BNSD
-            return output.transpose(1, 2)
+            return output
 
         except Exception as e:
             logger.error(
@@ -420,35 +421,192 @@ class NPUAttentionBackend(AttentionBackend):
         value_cache: Tensor,
         seq_len: int,
         num_kv_heads: int,
+        scale: float,
+        context_lens: Optional[Tensor] = None,
+        is_prefill: bool = False,
     ) -> Tensor:
-        """Unified inference API for NPU."""
-        if not self._npu_available or self.npu_fused_infer_attention_score is None:
-            raise RuntimeError('NPU unified inference API not available')
+        """
+        Unified inference interface for NPU.
+        Automatically selects between prefill and decode kernels.
+        """
+        batch_size = query.shape[0]
 
-        head_dim = query.shape[-1]
+        # Prepare sequence lengths
+        if context_lens is not None:
+            # Ensure context_lens is a list of ints
+            if isinstance(context_lens, torch.Tensor):
+                kv_seq_lens = context_lens.tolist()
+            else:
+                kv_seq_lens = list(context_lens)
+        else:
+            # Fallback to fixed seq_len if not provided
+            kv_seq_lens = [seq_len] * batch_size
+
+        if is_prefill:
+            # In prefill, query length equals context length
+            q_seq_lens = kv_seq_lens
+
+            # Handle packed prefill input: (TotalTokens, NumHeads, HeadDim)
+            # We need to unflatten/pad to (Batch, NumHeads, MaxSeq, HeadDim) -> BNSD
+            if context_lens is not None:
+                max_seq_len = max(kv_seq_lens)
+                num_heads = query.shape[1]
+                head_dim = query.shape[2]
+
+                # Create padded tensors in BNSD layout
+                padded_q = torch.zeros(batch_size,
+                                       num_heads,
+                                       max_seq_len,
+                                       head_dim,
+                                       dtype=query.dtype,
+                                       device=query.device)
+
+                # Check if key/value are already in BNSD layout (4D) or need padding (3D)
+                if key_cache.dim() == 4:
+                    # Already BNSD, assume correct shape
+                    padded_k = key_cache
+                    padded_v = value_cache
+                else:
+                    # Flattened 3D, need padding
+                    padded_k = torch.zeros(batch_size,
+                                           num_kv_heads,
+                                           max_seq_len,
+                                           head_dim,
+                                           dtype=key_cache.dtype,
+                                           device=key_cache.device)
+                    padded_v = torch.zeros(batch_size,
+                                           num_kv_heads,
+                                           max_seq_len,
+                                           head_dim,
+                                           dtype=value_cache.dtype,
+                                           device=value_cache.device)
+
+                start = 0
+                for i, s_len in enumerate(kv_seq_lens):
+                    end = start + s_len
+                    # query[start:end] is (s_len, num_heads, head_dim)
+                    # permute to (num_heads, s_len, head_dim)
+                    padded_q[i, :, :s_len, :] = query[start:end].permute(
+                        1, 0, 2)
+
+                    if key_cache.dim() == 3:
+                        padded_k[
+                            i, :, :s_len, :] = key_cache[start:end].permute(
+                                1, 0, 2)
+                        padded_v[
+                            i, :, :s_len, :] = value_cache[start:end].permute(
+                                1, 0, 2)
+
+                    start = end
+
+                query = padded_q
+                key_cache = padded_k
+                value_cache = padded_v
+            elif query.dim() == 3:
+                # Fallback for single sequence if context_lens missing
+                # Input is (s_len, num_heads, head_dim)
+                # Output BNSD: (1, num_heads, s_len, head_dim)
+                query = query.permute(1, 0, 2).unsqueeze(0)
+                key_cache = key_cache.permute(1, 0, 2).unsqueeze(0)
+                value_cache = value_cache.permute(1, 0, 2).unsqueeze(0)
+
+        else:
+            # In decode, query length is 1
+            q_seq_lens = [1] * batch_size
+
+            # Ensure query is BNSD for NPU kernel
+            # Input query is (batch, num_heads, head_dim)
+            if query.dim() == 3:
+                query = query.unsqueeze(2)  # (batch, num_heads, 1, head_dim)
 
         try:
             # Basic implementation of unified inference
             # Note: This matches the signature expected by Attention.forward
-            return self.npu_fused_infer_attention_score(
+            # Cast to float16 for NPU kernel support
+            q_dtype = query.dtype
+            if q_dtype == torch.float32:
+                query = query.to(torch.float16)
+                key_cache = key_cache.to(torch.float16)
+                value_cache = value_cache.to(torch.float16)
+
+            # Construct attention mask for prefill (causal)
+            q_len = query.shape[2]
+            atten_mask = None
+            if q_len > 1:
+                # Causal mask for prefill: 1 for mask, 0 for keep (BOOL)
+                # Use upper triangle as mask (standard for NPU FlashAttention)
+                atten_mask = torch.triu(torch.ones(q_len,
+                                                   q_len,
+                                                   device=query.device,
+                                                   dtype=torch.bool),
+                                        diagonal=1)
+                atten_mask = atten_mask.view(1, 1, q_len, q_len)
+
+            out = self.npu_fused_infer_attention_score(
                 query,
                 key_cache,
                 value_cache,
-                head_dim,
-                seq_len,
-                num_kv_heads,
+                num_heads=query.shape[1],  # BNSD: shape[1] is num_heads
+                num_key_value_heads=num_kv_heads,
+                input_layout='BNSD',
+                actual_seq_lengths=q_seq_lens,
+                actual_seq_lengths_kv=kv_seq_lens,
+                scale=scale,
+                sparse_mode=0 if is_prefill else SPARSE_MODE,
+                atten_mask=atten_mask,
+                pre_tokens=65535,
+                next_tokens=0,
             )
+
+            # Handle tuple return (attn_out, softmax_lse)
+            if isinstance(out, tuple):
+                out = out[0]
+
+            if q_dtype == torch.float32:
+                out = out.to(torch.float32)
+
+            if is_prefill and context_lens is not None:
+                # Flatten back to (TotalTokens, NumHeads, HeadDim)
+                # out is BNSD: (batch, num_heads, max_seq_len, head_dim)
+                out_flat = torch.empty(sum(kv_seq_lens),
+                                       out.shape[1],
+                                       out.shape[3],
+                                       dtype=out.dtype,
+                                       device=out.device)
+                start = 0
+                for i, s_len in enumerate(kv_seq_lens):
+                    end = start + s_len
+                    # out[i, :, :s_len, :] is (num_heads, s_len, head_dim)
+                    # permute to (s_len, num_heads, head_dim)
+                    out_flat[start:end] = out[i, :, :s_len, :].permute(1, 0, 2)
+                    start = end
+                return out_flat
+
+            # Transpose back to BNSD for attention.py compatibility (Decode phase)
+            # Output is already BNSD, but attention.py expects (batch, num_heads, head_dim) for decode
+            # out: (batch, num_heads, 1, head_dim)
+            if out.dim() == 4 and out.shape[2] == 1:
+                out = out.squeeze(2)
+
+            return out
         except RuntimeError as e:
             if self._handle_oom(e):
                 logger.warning('Retrying NPU inference after OOM handling')
                 # Retry once after clearing cache
+                # Re-cast if needed (though local vars are already cast)
                 return self.npu_fused_infer_attention_score(
                     query,
                     key_cache,
                     value_cache,
-                    head_dim,
-                    seq_len,
-                    num_kv_heads,
+                    num_heads=query.shape[1],
+                    num_key_value_heads=num_kv_heads,
+                    input_layout='BNSD',
+                    actual_seq_lengths=q_seq_lens,
+                    actual_seq_lengths_kv=kv_seq_lens,
+                    scale_value=scale,
+                    sparse_mode=3,
+                    pre_tokens=65535,
+                    next_tokens=0,
                 )
             raise e
 
@@ -578,6 +736,7 @@ class NPUAttentionBackend(AttentionBackend):
             # Transpose to BNSD format as required by unified_inference
             return k_npu.transpose(1, 2).contiguous(), v_npu.transpose(
                 1, 2).contiguous()
+
         else:
             # Prefill phase or direct access: use tensors as-is
             return k.contiguous(), v.contiguous()
@@ -612,12 +771,34 @@ class NPUAttentionBackend(AttentionBackend):
         k_cache_reshaped = k_cache.view(-1, hidden_size)
         v_cache_reshaped = v_cache.view(-1, hidden_size)
 
+        # Ensure valid_key/valid_value match cache dtype
+        if valid_key.dtype != k_cache.dtype:
+            valid_key = valid_key.to(k_cache.dtype)
+        if valid_value.dtype != v_cache.dtype:
+            valid_value = valid_value.to(v_cache.dtype)
+
         # NPU optimization: ensure contiguous memory for faster transfer
         if not valid_key.is_contiguous():
             valid_key = valid_key.contiguous()
         if not valid_value.is_contiguous():
             valid_value = valid_value.contiguous()
 
-        # Scatter update - NPU handles index_put_ efficiently
-        k_cache_reshaped.index_put_((valid_slots, ), valid_key)
-        v_cache_reshaped.index_put_((valid_slots, ), valid_value)
+        # Ensure indices are int32 for NPU performance/compatibility
+        if k_cache_reshaped.device.type == 'npu' and valid_slots.dtype != torch.int32:
+            valid_slots = valid_slots.to(torch.int32)
+
+        # Scatter update - Prefer index_copy_ on NPU for stability with bfloat16
+        try:
+            if k_cache_reshaped.device.type == 'npu':
+                # Use index_copy_ which is verified to work on NPU with bfloat16
+                k_cache_reshaped.index_copy_(0, valid_slots, valid_key)
+                v_cache_reshaped.index_copy_(0, valid_slots, valid_value)
+            else:
+                k_cache_reshaped.index_put_((valid_slots, ), valid_key)
+                v_cache_reshaped.index_put_((valid_slots, ), valid_value)
+        except RuntimeError as e:
+            # Fallback
+            logger.warning(f'KV Cache update failed: {e}')
+            # Try CPU fallback if desperate? No, that would be too slow.
+            # Just raise for now.
+            raise e

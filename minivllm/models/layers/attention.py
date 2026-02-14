@@ -222,6 +222,16 @@ class Attention(nn.Module):
         context = get_context()
         k_cache, v_cache = self.k_cache, self.v_cache
 
+        # Ensure input tensors match cache dtype (critical for NPU operations)
+        if k_cache.numel() > 0:
+            target_dtype = k_cache.dtype
+            if q.dtype != target_dtype:
+                q = q.to(target_dtype)
+            if k.dtype != target_dtype:
+                k = k.to(target_dtype)
+            if v.dtype != target_dtype:
+                v = v.to(target_dtype)
+
         # Store K/V to cache if cache is initialized
         if k_cache.numel() and v_cache.numel():
             self._cache_initialized = True
@@ -258,8 +268,8 @@ class Attention(nn.Module):
                 else:
                     # Use cached K/V for decode
                     npu_k_cache, npu_v_cache = self.backend.prepare_npu_cache(
-                        k_cache,
-                        v_cache,
+                        k,
+                        v,
                         k_cache,
                         v_cache,
                         context,
@@ -268,7 +278,15 @@ class Attention(nn.Module):
                     )
 
                 attn_out = self.backend.unified_inference(
-                    q, npu_k_cache, npu_v_cache, seq_length, self.num_kv_heads)
+                    q,
+                    npu_k_cache,
+                    npu_v_cache,
+                    seq_length,
+                    self.num_kv_heads,
+                    scale=self.scale,
+                    context_lens=context.context_lens,
+                    is_prefill=context.is_prefill,
+                )
 
                 # Reshape output back to expected format [N, num_heads, head_dim]
                 if attn_out.dim() == 4 and attn_out.shape[2] == 1:
