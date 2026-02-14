@@ -110,8 +110,11 @@ class ModelRunner:
         hf_config: Any = config.hf_config
         # Normalize torch_dtype to a torch.dtype
         try:
+            # Check if config overrides dtype
+            if hasattr(config, 'dtype') and config.dtype != 'auto':
+                target_dtype = config.dtype
             # Check for 'dtype' first to avoid deprecation warning
-            if hasattr(hf_config, 'dtype'):
+            elif hasattr(hf_config, 'dtype'):
                 target_dtype = hf_config.dtype
             else:
                 target_dtype = getattr(hf_config, 'torch_dtype', None)
@@ -1045,6 +1048,29 @@ class ModelRunner:
                 self.graphs[bs] = graph
                 synchronize(self.device)
                 reset_context()
+            elif self.device.type == 'npu':
+                try:
+                    graph: Any = torch.npu.graphs.Graph()
+                    set_context(False,
+                                slot_mapping=slot_mapping[:bs],
+                                context_lens=context_lens[:bs],
+                                block_tables=block_tables[:bs])
+
+                    # Warmup: run model once to establish memory patterns
+                    outputs[:bs] = self.model(input_ids[:bs], positions[:bs])
+
+                    # Capture: record the computation graph for replay
+                    with torch.npu.graphs.graph(graph):
+                        outputs[:bs] = self.model(input_ids[:bs],
+                                                  positions[:bs])
+
+                    self.graphs[bs] = graph
+                    synchronize(self.device)
+                    reset_context()
+                except Exception as e:
+                    logger.warning(
+                        f'NPU graph capture failed for batch size {bs}: {e}')
+                    reset_context()
             else:
                 # Other devices don't support graph capture yet
                 break
