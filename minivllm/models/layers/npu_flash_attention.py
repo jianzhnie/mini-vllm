@@ -80,6 +80,7 @@ def npu_flash_attn_func(
     dropout_p: float = 0.0,
     softmax_scale: Optional[float] = None,
     causal: bool = False,
+    input_layout: str = 'BSND',
     **kwargs: Any,
 ) -> Tensor:
     """Execute NPU FlashAttention function.
@@ -91,6 +92,7 @@ def npu_flash_attn_func(
         dropout_p: Dropout probability
         softmax_scale: Scaling factor for softmax
         causal: Whether to apply causal masking
+        input_layout: Data layout ("BSND" or "BNSD")
         **kwargs: Additional arguments
 
     Returns:
@@ -104,25 +106,29 @@ def npu_flash_attn_func(
     if softmax_scale is None:
         softmax_scale = 1.0 / math.sqrt(q.shape[-1])
 
-    if not causal:
+    if input_layout == 'BSND':
         head_num = q.shape[2]
+    else:
+        # BNSD
+        head_num = q.shape[1]
+
+    if not causal:
         output = npu_fusion_attention(q,
                                       k,
                                       v,
                                       head_num,
-                                      'BSND',
+                                      input_layout,
                                       keep_prob=keep_prob,
                                       scale=softmax_scale)[0]
     else:
-        seq_len = q.shape[1]
+        seq_len = q.shape[1] if input_layout == 'BSND' else q.shape[2]
         attn_mask_npu = get_attn_mask_npu(q.device, size=seq_len)
-        head_num = q.shape[2]
         output = npu_fusion_attention(
             q,
             k,
             v,
             head_num,
-            'BSND',
+            input_layout,
             keep_prob=keep_prob,
             scale=softmax_scale,
             atten_mask=attn_mask_npu,
