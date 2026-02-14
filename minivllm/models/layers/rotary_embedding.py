@@ -65,7 +65,45 @@ def apply_rotary_emb(x: torch.Tensor, cos: torch.Tensor,
     if _NPU_ROPE_AVAILABLE and x.device.type == 'npu':
         import torch_npu
 
-        return torch_npu.npu_rotary_mul(x, cos, sin)
+        # Expand cos/sin to match x shape for NPU kernel compatibility
+        # NPU kernel expects full dimension coverage
+        if cos.shape[-1] != x.shape[-1]:
+            cos = torch.cat([cos, cos], dim=-1)
+        if sin.shape[-1] != x.shape[-1]:
+            sin = torch.cat([sin, sin], dim=-1)
+
+        # NPU kernel requires 4D input
+        needs_unsqueeze = x.dim() == 3
+        if needs_unsqueeze:
+            x = x.unsqueeze(1)  # [tokens, 1, heads, dim]
+
+            # Adjust cos/sin to match 4D structure [tokens, 1, 1, dim]
+            cos = cos.reshape(x.shape[0], 1, 1, x.shape[-1])
+            sin = sin.reshape(x.shape[0], 1, 1, x.shape[-1])
+
+        if cos.shape != x.shape:
+            cos = cos.expand_as(x)
+        if sin.shape != x.shape:
+            sin = sin.expand_as(x)
+
+        # Ensure cos/sin match x dtype to avoid implicit casting issues on NPU
+        if cos.dtype != x.dtype:
+            cos = cos.to(x.dtype)
+        if sin.dtype != x.dtype:
+            sin = sin.to(x.dtype)
+
+        # NPU kernels often require contiguous memory
+        if not cos.is_contiguous():
+            cos = cos.contiguous()
+        if not sin.is_contiguous():
+            sin = sin.contiguous()
+
+        out = torch_npu.npu_rotary_mul(x, cos, sin)
+
+        if needs_unsqueeze:
+            out = out.squeeze(1)
+
+        return out
 
     # Convert to float for stable mathematical operations
     # The rotation uses trigonometric functions that work best in float precision
