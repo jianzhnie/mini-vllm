@@ -23,7 +23,7 @@ from minivllm.utils.device import (
     move_tensor_to_device,
     reset_peak_memory_stats,
     should_use_pin_memory,
-    supports_cuda_graph,
+    supports_device_graph,
 )
 from minivllm.utils.logger_utils import get_logger
 from minivllm.utils.memory_pool import get_memory_pool
@@ -124,10 +124,13 @@ class InferenceExecutor:
                 }
                 dtype = dtype_map.get(dtype, torch.float16)
 
+            hf_config = self.config.hf_config
+            head_dim = getattr(
+                hf_config, 'head_dim',
+                hf_config.hidden_size // hf_config.num_attention_heads)
+
             kv_cache_shape = (self.config.num_kvcache_blocks, self.block_size,
-                              self.num_kv_heads,
-                              self.config.hf_config.hidden_size //
-                              self.config.hf_config.num_attention_heads)
+                              self.num_kv_heads, head_dim)
 
             # Ensure shape contains only integers
             kv_cache_shape = tuple(int(x) for x in kv_cache_shape)
@@ -171,6 +174,31 @@ class InferenceExecutor:
         elif hasattr(self.model, 'kv_cache'):
             self.model.kv_cache = self.kv_cache
             self.model.block_size = self.block_size
+        else:
+            # Fallback: iterate over modules and assign cache slices
+            layer_id = 0
+            for module in self.model.modules():
+                if hasattr(module, 'k_cache') and hasattr(module, 'v_cache'):
+                    # Check if we have enough cache slices
+                    if layer_id >= len(self.kv_cache):
+                        logger.warning(
+                            f'Not enough KV cache slices for all layers. '
+                            f'Allocated: {len(self.kv_cache)}, Needed > {layer_id}'
+                        )
+                        break
+
+                    # Assign cache slices
+                    # self.kv_cache is a list of (k_cache, v_cache) tuples
+                    module.k_cache = self.kv_cache[layer_id][0]
+                    module.v_cache = self.kv_cache[layer_id][1]
+                    layer_id += 1
+
+            if layer_id == 0:
+                logger.warning(
+                    'No attention layers found with k_cache/v_cache attributes. '
+                    'KV cache may not be properly initialized.')
+            else:
+                logger.info(f'Assigned KV cache to {layer_id} layers.')
 
     def _prepare_block_tables(self, sequences: List[Sequence]) -> torch.Tensor:
         """Prepare block tables for sequences.
@@ -395,8 +423,8 @@ class InferenceExecutor:
         """
         batch_size = len(input_ids)
 
-        # Try to use CUDA graph if available
-        if (not self.enforce_eager and supports_cuda_graph()
+        # Try to use device graph if available
+        if (not self.enforce_eager and supports_device_graph()
                 and batch_size in self.graphs):
             return self._execute_with_graph(input_ids, positions)
         else:
@@ -404,7 +432,7 @@ class InferenceExecutor:
 
     def _execute_with_graph(self, input_ids: torch.Tensor,
                             positions: torch.Tensor) -> torch.Tensor:
-        """Execute using captured CUDA graph.
+        """Execute using captured device graph.
 
         Args:
             input_ids: Input token IDs.
@@ -482,17 +510,17 @@ class InferenceExecutor:
 
         return next_tokens.tolist()
 
-    def capture_cuda_graphs(self, max_batch_size: int) -> None:
-        """Capture CUDA graphs for different batch sizes.
+    def capture_device_graphs(self, max_batch_size: int) -> None:
+        """Capture device graphs for different batch sizes.
 
         Args:
             max_batch_size: Maximum batch size to capture.
         """
-        if self.enforce_eager or not supports_cuda_graph():
-            logger.debug('Skipping CUDA graph capture')
+        if self.enforce_eager or not supports_device_graph():
+            logger.debug('Skipping device graph capture')
             return
 
-        logger.info('Capturing CUDA graphs...')
+        logger.info('Capturing device graphs...')
 
         try:
             # Create dummy inputs for graph capture
@@ -500,39 +528,55 @@ class InferenceExecutor:
                 self._capture_graph_for_batch_size(batch_size)
 
             logger.info(
-                f'Captured CUDA graphs for batch sizes 1-{max_batch_size}')
+                f'Captured device graphs for batch sizes 1-{max_batch_size}')
 
         except Exception as e:
-            logger.warning(f'Failed to capture CUDA graphs: {e}')
+            logger.warning(f'Failed to capture device graphs: {e}')
             self.graphs.clear()
             self.graph_vars.clear()
 
     def _capture_graph_for_batch_size(self, batch_size: int) -> None:
-        """Capture CUDA graph for specific batch size.
+        """Capture device graph for specific batch size.
 
         Args:
             batch_size: Batch size to capture.
         """
+        device = get_current_device()
+
         # Create dummy inputs
-        input_ids = torch.zeros(batch_size,
-                                dtype=torch.long,
-                                device=get_current_device())
-        positions = torch.zeros(batch_size,
-                                dtype=torch.long,
-                                device=get_current_device())
+        input_ids = torch.zeros(batch_size, dtype=torch.long, device=device)
+        positions = torch.zeros(batch_size, dtype=torch.long, device=device)
 
         # Create graph variables
         self.graph_vars[f'input_ids_{batch_size}'] = input_ids
         self.graph_vars[f'positions_{batch_size}'] = positions
 
         # Capture graph
-        static_graph = torch.cuda.CUDAGraph()
+        if device.type == 'cuda':
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph):
+                logits = self.model(input_ids=input_ids,
+                                    positions=positions)[0]
+                self.graph_vars[f'logits_{batch_size}'] = logits
+        elif device.type == 'npu':
+            # NPU graph capture
+            try:
+                graph = torch.npu.graphs.Graph()
+                with torch.npu.graphs.graph(graph):
+                    logits = self.model(input_ids=input_ids,
+                                        positions=positions)[0]
+                    self.graph_vars[f'logits_{batch_size}'] = logits
+            except AttributeError:
+                # Fallback if torch.npu.graphs is not available
+                logger.warning(
+                    'NPU graph support detected but torch.npu.graphs not available'
+                )
+                return
+        else:
+            logger.warning(f'Device graph not implemented for {device.type}')
+            return
 
-        with torch.cuda.graph(static_graph):
-            logits = self.model(input_ids=input_ids, positions=positions)[0]
-            self.graph_vars[f'logits_{batch_size}'] = logits
-
-        self.graphs[batch_size] = static_graph
+        self.graphs[batch_size] = graph
 
     def get_performance_metrics(self) -> Dict[str, float]:
         """Get performance metrics.
@@ -574,7 +618,7 @@ class InferenceExecutor:
 
     def cleanup(self) -> None:
         """Clean up resources."""
-        # Clear CUDA graphs
+        # Clear device graphs
         self.graphs.clear()
         self.graph_vars.clear()
 
