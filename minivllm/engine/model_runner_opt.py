@@ -142,7 +142,7 @@ class ModelRunner:
 
             # Capture optimization graphs
             if self.rank == 0:  # Only main process captures graphs
-                self.inference_executor.capture_cuda_graphs(max_num_seqs)
+                self.inference_executor.capture_device_graphs(max_num_seqs)
 
             # Final synchronization
             self.distributed_manager.synchronize()
