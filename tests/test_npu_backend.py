@@ -134,8 +134,12 @@ class TestNPUUnifiedInference(unittest.TestCase):
         seq_len = 10
         num_kv_heads = 4
 
-        backend.unified_inference(query, key_cache, value_cache, seq_len,
-                                  num_kv_heads)
+        backend.unified_inference(query,
+                                  key_cache,
+                                  value_cache,
+                                  seq_len,
+                                  num_kv_heads,
+                                  scale=1.0)
 
         # Verify call
         backend.npu_fused_infer_attention_score.assert_called_once()
@@ -145,6 +149,8 @@ class TestNPUUnifiedInference(unittest.TestCase):
         self.assertIs(args[2], value_cache)
         self.assertEqual(args[4], seq_len)
         self.assertEqual(args[5], num_kv_heads)
+        kwargs = backend.npu_fused_infer_attention_score.call_args[1]
+        self.assertEqual(kwargs['scale'], 1.0)
 
 
 if __name__ == '__main__':
