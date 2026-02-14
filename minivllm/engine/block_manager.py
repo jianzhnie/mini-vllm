@@ -161,7 +161,7 @@ class BlockManager:
             token_array = np.array(token_ids, dtype=np.int32)
         else:
             token_array = token_ids
-        hash_prev.update(input=token_array.tobytes())
+        hash_prev.update(token_array.tobytes())
         return hash_prev.intdigest()
 
     def _allocate_block(self, block_id: int, reset: bool = True) -> Block:
