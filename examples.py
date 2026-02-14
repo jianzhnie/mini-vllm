@@ -20,35 +20,52 @@ def main() -> None:
     logger.info('Example starting...')
     # Model paths
     model_name_or_path = os.path.expanduser('~/hfhub/models/facebook/opt-125m')
+    # model_name_or_path = '/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-0.6B'
     logger.info(f'Loading model from: {model_name_or_path}')
 
     try:
         # Initialize LLM
         # enforce_eager=True is useful for debugging/development
         llm = LLM(model=model_name_or_path,
+                  max_num_seqs=16,
+                  max_model_len=256,
                   enforce_eager=True,
-                  tensor_parallel_size=1)
+                  trust_remote_code=True,
+                  num_kvcache_blocks=128,
+                  dtype='bfloat16')
+
+        tokenizer = llm.tokenizer
+
     except Exception as e:
         logger.error(f'Failed to initialize LLM: {e}', exc_info=True)
         return
 
-    sampling_params = SamplingParams(temperature=0.8,
+    sampling_params = SamplingParams(temperature=0.6,
                                      top_p=0.95,
                                      top_k=40,
-                                     max_tokens=20)
-    prompts: List[str] = [
-        'Hello, who are you?',
-        'What is your name?',
-        'Where are you from?',
-        'Where is the capital of France?',
-        'Tell me a joke.',
-        'Introduce yourself',
-        'List all prime numbers within 100',
+                                     max_tokens=50)
+    raw_prompts: List[str] = [
+        'Hello, who are you?', 'What is your name?', 'Where are you from?',
+        'Where is the capital of France?', 'Tell me a joke.',
+        'Introduce yourself', 'List all prime numbers within 100'
     ]
 
-    # Generate texts from the prompts.
-    # The output is a list of dictionaries containing the prompt,
-    # generated text, and other information.
+    # Apply chat template if available, otherwise use raw prompts
+    prompts = []
+    if hasattr(tokenizer, 'apply_chat_template'):
+        logger.info('Applying chat template to prompts...')
+        for p in raw_prompts:
+            messages = [{'role': 'user', 'content': p}]
+            # tokenize=False to get string
+            formatted = tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True)
+            prompts.append(formatted)
+    else:
+        logger.info('Chat template not available, using raw prompts.')
+        prompts = raw_prompts
+
+    logger.info(f'First formatted prompt: {prompts[0]!r}')
+
     outputs = llm.generate(prompts, sampling_params)
 
     for prompt, output in zip(prompts, outputs):

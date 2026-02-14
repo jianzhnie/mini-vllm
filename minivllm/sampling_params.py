@@ -22,12 +22,13 @@ class SamplingParams:
             values make output more random, lower values more
             deterministic.
             Must be > 1e-10. Default: 1.0.
-        top_p: Float that controls the cumulative probability of the top tokens to consider.
-            Must be in (0, 1]. Set to 1 to consider all tokens. Default: 1.0.
+        top_p: Float that controls the cumulative probability of the top tokens to
+            consider. Must be in (0, 1]. Set to 1 to consider all tokens.
+            Default: 1.0.
         top_k: Integer that controls the number of top tokens to consider.
             Must be -1 or > 0. Set to -1 to consider all tokens. Default: -1.
-        min_p: Float that represents the minimum probability for a token to be considered,
-            relative to the probability of the most likely token.
+        min_p: Float that represents the minimum probability for a token to be
+            considered, relative to the probability of the most likely token.
             Must be in [0, 1]. Default: 0.0.
         max_tokens: Maximum number of tokens to generate in completion.
             Default: 64.
