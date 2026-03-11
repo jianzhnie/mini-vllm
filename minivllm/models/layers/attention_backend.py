@@ -17,10 +17,12 @@ from torch import Tensor
 try:
     from minivllm.models.layers.npu_flash_attention import (
         SPARSE_MODE,
+        get_attn_mask_npu,
         npu_flash_attn_func,
     )
 except ImportError:
-    pass
+    SPARSE_MODE = 0
+    get_attn_mask_npu = None
 
 # Optional imports for NPU unified inference
 try:
@@ -393,19 +395,32 @@ class NPUAttentionBackend(AttentionBackend):
                                                   attention_mask, is_causal)
 
         try:
-            # Input is BNSD: (batch, num_heads, seq_len, head_dim)
-            # NPU Flash Attention now supports BNSD directly
+            q_dtype = query.dtype
+            k_dtype = key.dtype
+            v_dtype = value.dtype
+            if q_dtype != torch.bfloat16:
+                query = query.to(torch.bfloat16)
+            if k_dtype != torch.bfloat16:
+                key = key.to(torch.bfloat16)
+            if v_dtype != torch.bfloat16:
+                value = value.to(torch.bfloat16)
+
+            q = query.transpose(1, 2)
+            k = key.transpose(1, 2)
+            v = value.transpose(1, 2)
             output = npu_flash_attn_func(
-                query,
-                key,
-                value,
+                q,
+                k,
+                v,
                 dropout_p=0.0,
                 softmax_scale=None,
                 causal=is_causal,
-                input_layout='BNSD',
+                input_layout='BSND',
             )
 
-            return output
+            if q_dtype != torch.bfloat16:
+                output = output.to(q_dtype)
+            return output.transpose(1, 2)
 
         except Exception as e:
             logger.error(
@@ -522,12 +537,12 @@ class NPUAttentionBackend(AttentionBackend):
         try:
             # Basic implementation of unified inference
             # Note: This matches the signature expected by Attention.forward
-            # Cast to float16 for NPU kernel support
+            # Cast to bfloat16 for NPU kernel support
             q_dtype = query.dtype
-            if q_dtype == torch.float32:
-                query = query.to(torch.float16)
-                key_cache = key_cache.to(torch.float16)
-                value_cache = value_cache.to(torch.float16)
+            if q_dtype != torch.bfloat16:
+                query = query.to(torch.bfloat16)
+                key_cache = key_cache.to(torch.bfloat16)
+                value_cache = value_cache.to(torch.bfloat16)
 
             # Construct attention mask for prefill (causal)
             q_len = query.shape[2]
@@ -542,28 +557,46 @@ class NPUAttentionBackend(AttentionBackend):
                                         diagonal=1)
                 atten_mask = atten_mask.view(1, 1, q_len, q_len)
 
-            out = self.npu_fused_infer_attention_score(
-                query,
-                key_cache,
-                value_cache,
-                num_heads=query.shape[1],  # BNSD: shape[1] is num_heads
-                num_key_value_heads=num_kv_heads,
-                input_layout='BNSD',
-                actual_seq_lengths=q_seq_lens,
-                actual_seq_lengths_kv=kv_seq_lens,
-                scale=scale,
-                sparse_mode=0 if is_prefill else SPARSE_MODE,
-                atten_mask=atten_mask,
-                pre_tokens=65535,
-                next_tokens=0,
-            )
+            try:
+                out = self.npu_fused_infer_attention_score(
+                    query,
+                    key_cache,
+                    value_cache,
+                    atten_mask,
+                    seq_len,
+                    num_kv_heads,
+                    input_layout='BNSD',
+                    actual_seq_lengths=q_seq_lens,
+                    actual_seq_lengths_kv=kv_seq_lens,
+                    num_heads=query.shape[1],
+                    sparse_mode=0 if is_prefill else SPARSE_MODE,
+                    pre_tokens=65535,
+                    next_tokens=0,
+                    scale=scale,
+                )
+            except TypeError:
+                out = self.npu_fused_infer_attention_score(
+                    query,
+                    key_cache,
+                    value_cache,
+                    num_heads=query.shape[1],
+                    num_key_value_heads=num_kv_heads,
+                    input_layout='BNSD',
+                    actual_seq_lengths=q_seq_lens,
+                    actual_seq_lengths_kv=kv_seq_lens,
+                    scale=scale,
+                    sparse_mode=0 if is_prefill else SPARSE_MODE,
+                    atten_mask=atten_mask,
+                    pre_tokens=65535,
+                    next_tokens=0,
+                )
 
             # Handle tuple return (attn_out, softmax_lse)
             if isinstance(out, tuple):
                 out = out[0]
 
-            if q_dtype == torch.float32:
-                out = out.to(torch.float32)
+            if q_dtype != torch.bfloat16:
+                out = out.to(q_dtype)
 
             if is_prefill and context_lens is not None:
                 # Flatten back to (TotalTokens, NumHeads, HeadDim)
@@ -592,22 +625,38 @@ class NPUAttentionBackend(AttentionBackend):
         except RuntimeError as e:
             if self._handle_oom(e):
                 logger.warning('Retrying NPU inference after OOM handling')
-                # Retry once after clearing cache
-                # Re-cast if needed (though local vars are already cast)
-                return self.npu_fused_infer_attention_score(
-                    query,
-                    key_cache,
-                    value_cache,
-                    num_heads=query.shape[1],
-                    num_key_value_heads=num_kv_heads,
-                    input_layout='BNSD',
-                    actual_seq_lengths=q_seq_lens,
-                    actual_seq_lengths_kv=kv_seq_lens,
-                    scale_value=scale,
-                    sparse_mode=3,
-                    pre_tokens=65535,
-                    next_tokens=0,
-                )
+                try:
+                    return self.npu_fused_infer_attention_score(
+                        query,
+                        key_cache,
+                        value_cache,
+                        None,
+                        seq_len,
+                        num_kv_heads,
+                        input_layout='BNSD',
+                        actual_seq_lengths=q_seq_lens,
+                        actual_seq_lengths_kv=kv_seq_lens,
+                        num_heads=query.shape[1],
+                        sparse_mode=SPARSE_MODE,
+                        pre_tokens=65535,
+                        next_tokens=0,
+                        scale=scale,
+                    )
+                except TypeError:
+                    return self.npu_fused_infer_attention_score(
+                        query,
+                        key_cache,
+                        value_cache,
+                        num_heads=query.shape[1],
+                        num_key_value_heads=num_kv_heads,
+                        input_layout='BNSD',
+                        actual_seq_lengths=q_seq_lens,
+                        actual_seq_lengths_kv=kv_seq_lens,
+                        scale=scale,
+                        sparse_mode=SPARSE_MODE,
+                        pre_tokens=65535,
+                        next_tokens=0,
+                    )
             raise e
 
     def _handle_oom(self, e: RuntimeError) -> bool:
@@ -787,10 +836,10 @@ class NPUAttentionBackend(AttentionBackend):
         if k_cache_reshaped.device.type == 'npu' and valid_slots.dtype != torch.int32:
             valid_slots = valid_slots.to(torch.int32)
 
-        # Scatter update - Prefer index_copy_ on NPU for stability with bfloat16
+        # Scatter update - Prefer index_copy_ on NPU for stability with bbfloat16
         try:
             if k_cache_reshaped.device.type == 'npu':
-                # Use index_copy_ which is verified to work on NPU with bfloat16
+                # Use index_copy_ which is verified to work on NPU with bbfloat16
                 k_cache_reshaped.index_copy_(0, valid_slots, valid_key)
                 v_cache_reshaped.index_copy_(0, valid_slots, valid_value)
             else:
