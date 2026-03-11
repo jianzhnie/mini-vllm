@@ -122,7 +122,7 @@ class InferenceExecutor:
                     'float32': torch.float32,
                     'bfloat16': torch.bfloat16,
                 }
-                dtype = dtype_map.get(dtype, torch.float16)
+                dtype = dtype_map.get(dtype, torch.bfloat16)
 
             hf_config = self.config.hf_config
             head_dim = getattr(
