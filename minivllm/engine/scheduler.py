@@ -131,6 +131,9 @@ class Scheduler:
         Raises:
             AssertionError: If scheduling invariants are violated.
         """
+        if self.is_finished():
+            raise RuntimeError('No sequences scheduled')
+
         # Phase 1: Prefill phase for waiting sequences
         scheduled_sequences, is_prefill = self._schedule_prefill()
         if scheduled_sequences:
