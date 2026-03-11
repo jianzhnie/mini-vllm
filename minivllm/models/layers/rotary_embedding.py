@@ -1,10 +1,4 @@
-"""Rotary positional embedding helpers.
-
-This module provides a lightweight rotary embedding implementation and a
-cached factory (`get_rope`). The `RotaryEmbedding` stores precomputed
-cos/sin values for positions and applies them to query/key tensors.
-"""
-
+"""Rotary positional embedding helpers."""
 from functools import lru_cache
 from typing import Any, Dict, Optional, Tuple
 
@@ -16,7 +10,6 @@ from minivllm.utils.logger_utils import get_logger
 
 logger = get_logger(__name__)
 
-# Try to import NPU specific kernels
 _NPU_ROPE_AVAILABLE = False
 if is_torch_npu_available():
     try:
@@ -61,49 +54,53 @@ def apply_rotary_emb(x: torch.Tensor, cos: torch.Tensor,
         >>> rotated = apply_rotary_emb(x, cos, sin)
         >>> print(rotated.shape)  # torch.Size([2, 8, 64])
     """
-    # NPU optimization
-    if _NPU_ROPE_AVAILABLE and x.device.type == 'npu':
-        import torch_npu
+    if x.device.type == 'npu':
+        try:
+            import torch_npu
+        except ImportError:
+            torch_npu = None
 
-        # Expand cos/sin to match x shape for NPU kernel compatibility
-        # NPU kernel expects full dimension coverage
-        if cos.shape[-1] != x.shape[-1]:
-            cos = torch.cat([cos, cos], dim=-1)
-        if sin.shape[-1] != x.shape[-1]:
-            sin = torch.cat([sin, sin], dim=-1)
+        if torch_npu is not None and hasattr(torch_npu, 'npu_rotary_mul'):
+            needs_unsqueeze = x.dim() == 3
+            if needs_unsqueeze:
+                x = x.unsqueeze(1)
 
-        # NPU kernel requires 4D input
-        needs_unsqueeze = x.dim() == 3
-        if needs_unsqueeze:
-            x = x.unsqueeze(1)  # [tokens, 1, heads, dim]
+            if cos.shape[-1] != x.shape[-1]:
+                cos = torch.cat([cos, cos], dim=-1)
+            if sin.shape[-1] != x.shape[-1]:
+                sin = torch.cat([sin, sin], dim=-1)
 
-            # Adjust cos/sin to match 4D structure [tokens, 1, 1, dim]
-            cos = cos.reshape(x.shape[0], 1, 1, x.shape[-1])
-            sin = sin.reshape(x.shape[0], 1, 1, x.shape[-1])
+            if cos.dim() == 2:
+                cos = cos.unsqueeze(0).unsqueeze(1)
+            elif cos.dim() == 3:
+                cos = cos.unsqueeze(1)
 
-        if cos.shape != x.shape:
-            cos = cos.expand_as(x)
-        if sin.shape != x.shape:
-            sin = sin.expand_as(x)
+            if sin.dim() == 2:
+                sin = sin.unsqueeze(0).unsqueeze(1)
+            elif sin.dim() == 3:
+                sin = sin.unsqueeze(1)
 
-        # Ensure cos/sin match x dtype to avoid implicit casting issues on NPU
-        if cos.dtype != x.dtype:
-            cos = cos.to(x.dtype)
-        if sin.dtype != x.dtype:
-            sin = sin.to(x.dtype)
+            if cos.shape != x.shape:
+                cos = cos.expand_as(x)
+            if sin.shape != x.shape:
+                sin = sin.expand_as(x)
 
-        # NPU kernels often require contiguous memory
-        if not cos.is_contiguous():
-            cos = cos.contiguous()
-        if not sin.is_contiguous():
-            sin = sin.contiguous()
+            if cos.dtype != x.dtype:
+                cos = cos.to(x.dtype)
+            if sin.dtype != x.dtype:
+                sin = sin.to(x.dtype)
 
-        out = torch_npu.npu_rotary_mul(x, cos, sin)
+            if not cos.is_contiguous():
+                cos = cos.contiguous()
+            if not sin.is_contiguous():
+                sin = sin.contiguous()
 
-        if needs_unsqueeze:
-            out = out.squeeze(1)
+            out = torch_npu.npu_rotary_mul(x, cos, sin)
 
-        return out
+            if needs_unsqueeze:
+                out = out.squeeze(1)
+
+            return out
 
     # Convert to float for stable mathematical operations
     # The rotation uses trigonometric functions that work best in float precision
