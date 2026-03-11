@@ -16,9 +16,7 @@ import torch.distributed as dist
 
 from minivllm.config import Config
 from minivllm.engine.sequence import Sequence
-from minivllm.models.opt import OPTForCausalLM
-from minivllm.models.qwen2 import Qwen2ForCausalLM
-from minivllm.models.qwen3 import Qwen3ForCausalLM
+from minivllm.models import create_model
 from minivllm.sampling.sampler import Sampler
 from minivllm.utils.context import Context, get_context, reset_context, set_context
 from minivllm.utils.device import (
@@ -137,32 +135,7 @@ class ModelRunner:
         # environments where model loading is skipped (tests, stubs).
 
         # Load model based on HuggingFace config
-        architectures = getattr(hf_config, 'architectures', [])
-        model_type = getattr(hf_config, 'model_type', '')
-
-        is_qwen2 = False
-        is_opt = False
-        if architectures:
-            if 'Qwen2ForCausalLM' in architectures:
-                is_qwen2 = True
-            elif 'OPTForCausalLM' in architectures:
-                is_opt = True
-
-        if not is_qwen2 and not is_opt:
-            if model_type == 'qwen2':
-                is_qwen2 = True
-            elif model_type == 'opt':
-                is_opt = True
-
-        if is_qwen2:
-            logger.info('Loading Qwen2 model architecture')
-            self.model = Qwen2ForCausalLM(hf_config)
-        elif is_opt:
-            logger.info('Loading OPT model architecture')
-            self.model = OPTForCausalLM(hf_config)
-        else:
-            logger.info('Loading Qwen3 model architecture (default)')
-            self.model = Qwen3ForCausalLM(hf_config)
+        self.model = create_model(hf_config)
         self.sampler = Sampler()
         load_model(self.model, config.model)
 
@@ -518,8 +491,12 @@ class ModelRunner:
 
         # Calculate number of cache blocks that fit in available memory
         # Use device_memory_utilization (backward compatible with gpu_memory_utilization)
-        available_memory: int = int(total * config.device_memory_utilization -
-                                    used - peak + current)
+        if self.device.type == 'cpu':
+            available_memory: int = int(free *
+                                        config.device_memory_utilization)
+        else:
+            available_memory = int(total * config.device_memory_utilization -
+                                   used - peak + current)
 
         if available_memory <= 0:
             raise RuntimeError(
