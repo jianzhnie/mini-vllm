@@ -232,13 +232,12 @@ class BlockManager:
         if block.ref_count != 0:
             raise RuntimeError(f'Cannot deallocate block {block_id} with '
                                f'ref_count={block.ref_count} (must be 0)')
-        # 清理哈希映射
-        if block.hash != -1 and self.hash_to_block_id.get(
-                block.hash) == block_id:
-            del self.hash_to_block_id[block.hash]
 
         self.used_block_ids.remove(block_id)
         self.free_block_ids.append(block_id)
+
+    def get_num_free_blocks(self) -> int:
+        return len(self.free_block_ids)
 
     def can_allocate(self, sequence: Sequence) -> bool:
         """Check if sequence can be allocated.
@@ -285,11 +284,10 @@ class BlockManager:
 
         if len(self.free_block_ids) < sequence.num_blocks:
             raise ValueError(
-                f'Not enough free blocks: need {sequence.num_blocks}, '
+                f'No free blocks available for allocation: need {sequence.num_blocks}, '
                 f'have {len(self.free_block_ids)}')
 
         hash_prev: int = -1  # Hash of previous block for chained hashing
-        cache_miss: bool = False  # Flag to track if we've encountered a cache miss
 
         # Iterate through each logical block in the sequence
         for i in range(sequence.num_blocks):
@@ -305,18 +303,15 @@ class BlockManager:
                 hash_prev = -1  # Partial blocks can't be cached
 
             # Look up in prefix cache
-            block_id: int = self.hash_to_block_id.get(hash_prev, -1)
+            block_id: int = -1
+            if hash_prev != -1:
+                block_id = self.hash_to_block_id.get(hash_prev, -1)
 
-            # Validate cache hit: hash match AND token ID match
-            # This double-check ensures we don't have hash collisions
-            if block_id == -1:
-                cache_miss = True  # No hash match found
-            elif block_id not in range(len(self.blocks)):
-                cache_miss = True  # Invalid block_id
-            elif self.blocks[block_id].token_ids != token_ids:
-                cache_miss = True  # Hash collision detected - token IDs don't match
+            cache_hit = (hash_prev != -1 and block_id != -1
+                         and 0 <= block_id < len(self.blocks)
+                         and self.blocks[block_id].token_ids == token_ids)
 
-            if cache_miss:
+            if not cache_hit:
                 # Cache miss: allocate a new block from free pool
                 if not self.free_block_ids:
                     raise ValueError(
@@ -326,9 +321,14 @@ class BlockManager:
                 block_id = self.free_block_ids[0]
                 block: Block = self._allocate_block(block_id)
                 self.stats['cache_misses'] += 1
+
+                if hash_prev != -1:
+                    block.update(hash_prev, token_ids)
+                    self.hash_to_block_id[hash_prev] = block_id
             else:
                 # Cache hit: reuse existing block
-                sequence.num_cached_tokens += self.block_size  # Track cached tokens
+                self.stats['cache_hits'] += 1
+                sequence.num_cached_tokens += self.block_size
 
                 if block_id in self.used_block_ids:
                     # Block is already in use by another sequence
@@ -338,15 +338,6 @@ class BlockManager:
                     # Block exists in cache but not currently allocated
                     # Resurrect it without resetting data
                     block = self._allocate_block(block_id, reset=False)
-
-            # Update block with token data and register in hash table (for full blocks)
-            if hash_prev != -1:
-                block.update(hash_prev,
-                             token_ids)  # Store hash and tokens in block
-                self.hash_to_block_id[
-                    hash_prev] = block_id  # Register in cache mapping
-
-                sequence.num_cached_tokens += self.block_size
 
             # Add physical block ID to sequence's block table
             sequence.block_table.append(block_id)
