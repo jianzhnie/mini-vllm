@@ -1,4 +1,3 @@
-import os
 from typing import List
 
 import torch
@@ -19,7 +18,7 @@ def main() -> None:
     """Run the example text generation."""
     logger.info('Example starting...')
     # Model paths
-    model_name_or_path = os.path.expanduser('~/hfhub/models/facebook/opt-125m')
+    model_name_or_path = '/Users/jianzhengnie/hfhub/models/facebook/opt-125m'
     # model_name_or_path = '/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-0.6B'
     logger.info(f'Loading model from: {model_name_or_path}')
 
@@ -27,12 +26,14 @@ def main() -> None:
         # Initialize LLM
         # enforce_eager=True is useful for debugging/development
         llm = LLM(model=model_name_or_path,
-                  max_num_seqs=16,
-                  max_model_len=256,
+                  max_num_seqs=8,
+                  max_model_len=64,
                   enforce_eager=True,
                   trust_remote_code=True,
-                  num_kvcache_blocks=128,
-                  dtype='bfloat16')
+                  device_memory_utilization=0.4,
+                  kvcache_block_size=64,
+                  num_kvcache_blocks=-1,
+                  dtype='float32')
 
         tokenizer = llm.tokenizer
 
@@ -43,7 +44,7 @@ def main() -> None:
     sampling_params = SamplingParams(temperature=0.6,
                                      top_p=0.95,
                                      top_k=40,
-                                     max_tokens=50)
+                                     max_tokens=32)
     raw_prompts: List[str] = [
         'Hello, who are you?', 'What is your name?', 'Where are you from?',
         'Where is the capital of France?', 'Tell me a joke.',
@@ -52,7 +53,8 @@ def main() -> None:
 
     # Apply chat template if available, otherwise use raw prompts
     prompts = []
-    if hasattr(tokenizer, 'apply_chat_template'):
+    if hasattr(tokenizer,
+               'apply_chat_template') and tokenizer.chat_template is not None:
         logger.info('Applying chat template to prompts...')
         for p in raw_prompts:
             messages = [{'role': 'user', 'content': p}]
@@ -69,7 +71,7 @@ def main() -> None:
     outputs = llm.generate(prompts, sampling_params)
 
     for prompt, output in zip(prompts, outputs):
-        logger.info('\n')
+        logger.info('=' * 100)
         logger.info(f'Prompt: {prompt!r}')
         # output is a dict with 'text' and 'token_ids'
         logger.info(f"Completion: {output['text']!r}")

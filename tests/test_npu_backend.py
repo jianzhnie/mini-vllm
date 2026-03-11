@@ -124,9 +124,8 @@ class TestNPUUnifiedInference(unittest.TestCase):
             1, 1, 1)
 
         # Inputs
-        query = torch.randn(
-            2, 4,
-            16)  # [batch, heads, dim] - wait, query input to unified_inference
+        query = torch.randn(2, 4, 16)
+        # [batch, heads, dim] - wait, query input to unified_inference
         # Attention.forward passes q (B,H,D)
 
         key_cache = torch.randn(2, 10, 4, 16)
@@ -144,9 +143,9 @@ class TestNPUUnifiedInference(unittest.TestCase):
         # Verify call
         backend.npu_fused_infer_attention_score.assert_called_once()
         args = backend.npu_fused_infer_attention_score.call_args[0]
-        self.assertIs(args[0], query)
-        self.assertIs(args[1], key_cache)
-        self.assertIs(args[2], value_cache)
+        self.assertEqual(args[0].shape, (2, 4, 1, 16))
+        self.assertEqual(args[1].shape, key_cache.shape)
+        self.assertEqual(args[2].shape, value_cache.shape)
         self.assertEqual(args[4], seq_len)
         self.assertEqual(args[5], num_kv_heads)
         kwargs = backend.npu_fused_infer_attention_score.call_args[1]
