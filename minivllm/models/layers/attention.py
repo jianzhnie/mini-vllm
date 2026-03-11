@@ -47,6 +47,7 @@ Dependencies:
 """
 
 import math
+import os
 from typing import Any, Tuple
 
 import torch
@@ -171,7 +172,9 @@ class Attention(nn.Module):
 
         # Initialize appropriate backend
         self.backend: AttentionBackend
-        if _NPU_FLASH_ATTN_AVAILABLE:
+        use_npu_fa = os.getenv('MINIVLLM_USE_NPU_FA',
+                               '0').lower() in {'1', 'true', 'yes'}
+        if _NPU_FLASH_ATTN_AVAILABLE and use_npu_fa:
             self.backend = NPUAttentionBackend()
             logger.info('NPU Flash Attention backend initialized')
         elif _FLASH_ATTN_AVAILABLE:
