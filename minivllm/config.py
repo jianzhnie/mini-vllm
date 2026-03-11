@@ -55,6 +55,7 @@ class Config:
     MIN_TENSOR_PARALLEL_SIZE: ClassVar[int] = 1
     MAX_TENSOR_PARALLEL_SIZE: ClassVar[int] = 8
     BLOCK_SIZE_DIVISOR: ClassVar[int] = 256
+    DEFAULT_MAX_MODEL_LEN: ClassVar[int] = 4096
 
     model: str
     max_num_batched_tokens: int = 16384
@@ -185,15 +186,17 @@ class Config:
             return
 
         model_max_len: int = getattr(self.hf_config, 'max_position_embeddings',
-                                     4096)
-
-        if self.max_model_len > model_max_len:
+                                     self.DEFAULT_MAX_MODEL_LEN)
+        if (self.max_num_batched_tokens < self.max_model_len
+                and model_max_len < self.max_model_len):
             import warnings
+
+            new_max_model_len = min(model_max_len, self.max_num_batched_tokens)
             warnings.warn(
                 f'auto-adjusting max_model_len from {self.max_model_len} '
-                f'to {model_max_len} (model\'s maximum context length).',
+                f'to {new_max_model_len} (model/batch constraints).',
                 UserWarning)
-            self.max_model_len = model_max_len
+            self.max_model_len = new_max_model_len
 
     def _validate_batch_token_constraints(self) -> None:
         """Verify batch size is sufficient for model length requirements."""
