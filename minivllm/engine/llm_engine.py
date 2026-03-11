@@ -345,7 +345,9 @@ class LLMEngine:
         ]
 
         # Decode token IDs to text
-        texts = self.tokenizer.batch_decode(sorted_outputs)
+        texts = self.tokenizer.batch_decode(sorted_outputs,
+                                            skip_special_tokens=True,
+                                            clean_up_tokenization_spaces=True)
         result_dicts: List[Dict[str, Union[str, List[int]]]] = [{
             'text':
             text,
