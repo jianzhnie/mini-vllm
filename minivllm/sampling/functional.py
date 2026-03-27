@@ -23,6 +23,10 @@ try:
     # Disable compile on NPU to avoid backend errors
     if hasattr(torch, 'npu') and torch.npu.is_available():
         compile_ops = False
+    # Disable compile on CPU to avoid OpenMP issues on macOS
+    elif not torch.cuda.is_available() and not torch.backends.mps.is_available(
+    ):
+        compile_ops = False
 except ImportError:
     compile_ops = False
 
