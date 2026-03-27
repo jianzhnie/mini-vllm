@@ -6,6 +6,7 @@ on CUDA devices), and distributed tensor parallelism using PyTorch's distributed
 backend. Supports multiple device types including CUDA, NPU, XPU, etc.
 """
 
+import os
 import pickle
 from multiprocessing.shared_memory import SharedMemory
 from multiprocessing.synchronize import Event
@@ -106,6 +107,13 @@ class ModelRunner:
             in the __init__ loop waiting for commands from the main process.
             Device graph optimization (CUDA Graph) is only supported on CUDA devices.
         """
+        if str(rank) != os.environ.get('RANK'):
+            os.environ['RANK'] = str(rank)
+        if str(rank) != os.environ.get('LOCAL_RANK'):
+            os.environ['LOCAL_RANK'] = str(rank)
+        if str(config.tensor_parallel_size) != os.environ.get('WORLD_SIZE'):
+            os.environ['WORLD_SIZE'] = str(config.tensor_parallel_size)
+
         self.config: Config = config
         hf_config: Any = config.hf_config
         # Normalize torch_dtype to a torch.dtype
@@ -132,11 +140,36 @@ class ModelRunner:
         self.rank: int = rank
         self.event: Union[Event, List[Event]] = event
 
-        # Optional attributes that may be set later when model/sampler
-        # are available. Initialize to None to avoid AttributeError in
-        # environments where model loading is skipped (tests, stubs).
+        # Get current device for this rank
+        self.device: torch.device = get_current_device()
+        self.device_name: str = self.device.type
+        self.device_index: int = self.device.index if self.device.index is not None else 0
 
-        # Load model based on HuggingFace config
+        # Validate device is available
+        validate_device(self.device)
+        logger.info(
+            f'Rank {self.rank}: Using device {self.device} ({self.device_name})'
+        )
+
+        set_device(self.device)
+
+        # Initialize distributed communication
+        if self.world_size > 1:
+            backend: str = get_distributed_backend()
+            logger.info(
+                f'Rank {self.rank}: Initializing distributed backend {backend}'
+            )
+            dist.init_process_group(backend=backend,
+                                    world_size=self.world_size,
+                                    rank=rank)
+
+        self.kv_cache: Optional[torch.Tensor] = None
+        self.share_memory: Optional[SharedMemory] = None
+        self.graphs: Optional[Dict[int, Any]] = None
+        self.graph_vars: Optional[Dict[str, torch.Tensor]] = None
+        self.graph_bs: Optional[List[int]] = None
+        self.graph_pool: Optional[Any] = None
+
         architectures = getattr(hf_config, 'architectures', [])
         model_type = getattr(hf_config, 'model_type', '')
 
@@ -154,49 +187,6 @@ class ModelRunner:
             elif model_type == 'opt':
                 is_opt = True
 
-        if is_qwen2:
-            logger.info('Loading Qwen2 model architecture')
-            self.model = Qwen2ForCausalLM(hf_config)
-        elif is_opt:
-            logger.info('Loading OPT model architecture')
-            self.model = OPTForCausalLM(hf_config)
-        else:
-            logger.info('Loading Qwen3 model architecture (default)')
-            self.model = Qwen3ForCausalLM(hf_config)
-        self.sampler = Sampler()
-        load_model(self.model, config.model)
-
-        self.kv_cache: Optional[torch.Tensor] = None
-        self.share_memory: Optional[SharedMemory] = None
-        # Use Any type for graphs to support different device graph types
-        self.graphs: Optional[Dict[int, Any]] = None
-        self.graph_vars: Optional[Dict[str, torch.Tensor]] = None
-        self.graph_bs: Optional[List[int]] = None
-        self.graph_pool: Optional[Any] = None
-
-        # Get current device for this rank
-        self.device: torch.device = get_current_device()
-        self.device_name: str = self.device.type
-        self.device_index: int = self.device.index if self.device.index is not None else 0
-
-        # Validate device is available
-        validate_device(self.device)
-        logger.info(
-            f'Rank {self.rank}: Using device {self.device} ({self.device_name})'
-        )
-
-        # Initialize distributed communication
-        if self.world_size > 1:
-            backend: str = get_distributed_backend()
-            logger.info(
-                f'Rank {self.rank}: Initializing distributed backend {backend}'
-            )
-            dist.init_process_group(backend=backend,
-                                    world_size=self.world_size,
-                                    rank=rank)
-
-        # Set device and dtype
-        set_device(self.device)
         default_dtype: torch.dtype = torch.get_default_dtype()
         torch.set_default_dtype(hf_config.torch_dtype)
         # torch.set_default_device is available in PyTorch 2.0+
@@ -208,6 +198,18 @@ class ModelRunner:
             logger.debug(
                 'torch.set_default_device not available, using device context manager'
             )
+
+        if is_qwen2:
+            logger.info('Loading Qwen2 model architecture')
+            self.model = Qwen2ForCausalLM(hf_config)
+        elif is_opt:
+            logger.info('Loading OPT model architecture')
+            self.model = OPTForCausalLM(hf_config)
+        else:
+            logger.info('Loading Qwen3 model architecture (default)')
+            self.model = Qwen3ForCausalLM(hf_config)
+        self.sampler = Sampler()
+        load_model(self.model, config.model)
 
         # Move model and sampler to device
         self.model = self.model.to(self.device)
@@ -234,6 +236,15 @@ class ModelRunner:
         if self.world_size > 1:
             if rank == 0:
                 # Main process: create shared memory
+                try:
+                    # Clean up existing shared memory if any
+                    existing_shm = SharedMemory(name='minivllm', create=False)
+                    existing_shm.unlink()
+                except FileNotFoundError:
+                    pass
+                except Exception as e:
+                    logger.warning(f"Failed to cleanup existing shared memory: {e}")
+
                 self.share_memory = SharedMemory(name='minivllm',
                                                  create=True,
                                                  size=2**20)

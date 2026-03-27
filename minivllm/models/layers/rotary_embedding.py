@@ -1,10 +1,6 @@
-"""Rotary positional embedding helpers.
+"""Rotary positional embedding helpers."""
 
-This module provides a lightweight rotary embedding implementation and a
-cached factory (`get_rope`). The `RotaryEmbedding` stores precomputed
-cos/sin values for positions and applies them to query/key tensors.
-"""
-
+import os
 from functools import lru_cache
 from typing import Any, Dict, Optional, Tuple
 
@@ -16,17 +12,19 @@ from minivllm.utils.logger_utils import get_logger
 
 logger = get_logger(__name__)
 
-# Try to import NPU specific kernels
 _NPU_ROPE_AVAILABLE = False
 if is_torch_npu_available():
     try:
         import torch_npu
 
-        if hasattr(torch_npu, 'npu_rotary_mul'):
+        if hasattr(torch_npu, "npu_rotary_mul"):
             _NPU_ROPE_AVAILABLE = True
-            logger.info('NPU RoPE kernel available')
+            logger.info("NPU RoPE kernel available")
     except ImportError:
         pass
+
+_USE_NPU_ROPE = _NPU_ROPE_AVAILABLE and os.getenv(
+    "MINIVLLM_USE_NPU_ROPE", "0").lower() in {"1", "true", "yes"}
 
 
 def apply_rotary_emb(x: torch.Tensor, cos: torch.Tensor,
@@ -61,23 +59,17 @@ def apply_rotary_emb(x: torch.Tensor, cos: torch.Tensor,
         >>> rotated = apply_rotary_emb(x, cos, sin)
         >>> print(rotated.shape)  # torch.Size([2, 8, 64])
     """
-    # NPU optimization
-    if _NPU_ROPE_AVAILABLE and x.device.type == 'npu':
+    if _USE_NPU_ROPE and x.device.type == "npu":
         import torch_npu
 
-        # Expand cos/sin to match x shape for NPU kernel compatibility
-        # NPU kernel expects full dimension coverage
         if cos.shape[-1] != x.shape[-1]:
             cos = torch.cat([cos, cos], dim=-1)
         if sin.shape[-1] != x.shape[-1]:
             sin = torch.cat([sin, sin], dim=-1)
 
-        # NPU kernel requires 4D input
         needs_unsqueeze = x.dim() == 3
         if needs_unsqueeze:
-            x = x.unsqueeze(1)  # [tokens, 1, heads, dim]
-
-            # Adjust cos/sin to match 4D structure [tokens, 1, 1, dim]
+            x = x.unsqueeze(1)
             cos = cos.reshape(x.shape[0], 1, 1, x.shape[-1])
             sin = sin.reshape(x.shape[0], 1, 1, x.shape[-1])
 
@@ -86,13 +78,11 @@ def apply_rotary_emb(x: torch.Tensor, cos: torch.Tensor,
         if sin.shape != x.shape:
             sin = sin.expand_as(x)
 
-        # Ensure cos/sin match x dtype to avoid implicit casting issues on NPU
         if cos.dtype != x.dtype:
             cos = cos.to(x.dtype)
         if sin.dtype != x.dtype:
             sin = sin.to(x.dtype)
 
-        # NPU kernels often require contiguous memory
         if not cos.is_contiguous():
             cos = cos.contiguous()
         if not sin.is_contiguous():

@@ -47,6 +47,7 @@ Dependencies:
 """
 
 import math
+import os
 from typing import Any, Tuple
 
 import torch
@@ -171,7 +172,9 @@ class Attention(nn.Module):
 
         # Initialize appropriate backend
         self.backend: AttentionBackend
-        if _NPU_FLASH_ATTN_AVAILABLE:
+        use_npu_fa = os.getenv('MINIVLLM_USE_NPU_FA',
+                               '0').lower() in {'1', 'true', 'yes'}
+        if _NPU_FLASH_ATTN_AVAILABLE and use_npu_fa:
             self.backend = NPUAttentionBackend()
             logger.info('NPU Flash Attention backend initialized')
         elif _FLASH_ATTN_AVAILABLE:
@@ -497,12 +500,20 @@ class Attention(nn.Module):
                         break
                     tokens_in_block = min(block_size, seqlen - token_idx)
                     if tokens_in_block > 0:
-                        cached_k[i, token_idx:token_idx +
-                                 tokens_in_block] = self.k_cache[
-                                     block_id, :tokens_in_block]
-                        cached_v[i, token_idx:token_idx +
-                                 tokens_in_block] = self.v_cache[
-                                     block_id, :tokens_in_block]
+                        try:
+                            cached_k[i, token_idx:token_idx +
+                                     tokens_in_block] = self.k_cache[
+                                         block_id, :tokens_in_block]
+                            cached_v[i, token_idx:token_idx +
+                                     tokens_in_block] = self.v_cache[
+                                         block_id, :tokens_in_block]
+                        except RuntimeError as e:
+                            logger.error(f"Shape mismatch in _fallback_attention:")
+                            logger.error(f"cached_k slice shape: {cached_k[i, token_idx:token_idx + tokens_in_block].shape}")
+                            logger.error(f"k_cache slice shape: {self.k_cache[block_id, :tokens_in_block].shape}")
+                            logger.error(f"num_kv_heads: {self.num_kv_heads}, head_dim: {self.head_dim}")
+                            logger.error(f"k_cache total shape: {self.k_cache.shape}")
+                            raise e
                     token_idx += tokens_in_block
                     if token_idx >= seqlen:
                         break
