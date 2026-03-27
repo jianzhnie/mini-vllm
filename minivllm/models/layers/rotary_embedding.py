@@ -1,4 +1,5 @@
 """Rotary positional embedding helpers."""
+import os
 from functools import lru_cache
 from typing import Any, Dict, Optional, Tuple
 
@@ -20,6 +21,9 @@ if is_torch_npu_available():
             logger.info('NPU RoPE kernel available')
     except ImportError:
         pass
+
+_USE_NPU_ROPE = _NPU_ROPE_AVAILABLE and os.getenv(
+    'MINIVLLM_USE_NPU_ROPE', '0').lower() in {'1', 'true', 'yes'}
 
 
 def apply_rotary_emb(x: torch.Tensor, cos: torch.Tensor,
@@ -54,53 +58,49 @@ def apply_rotary_emb(x: torch.Tensor, cos: torch.Tensor,
         >>> rotated = apply_rotary_emb(x, cos, sin)
         >>> print(rotated.shape)  # torch.Size([2, 8, 64])
     """
-    if x.device.type == 'npu':
-        try:
-            import torch_npu
-        except ImportError:
-            torch_npu = None
+    if _USE_NPU_ROPE and x.device.type == 'npu':
+        import torch_npu
 
-        if torch_npu is not None and hasattr(torch_npu, 'npu_rotary_mul'):
-            needs_unsqueeze = x.dim() == 3
-            if needs_unsqueeze:
-                x = x.unsqueeze(1)
+        needs_unsqueeze = x.dim() == 3
+        if needs_unsqueeze:
+            x = x.unsqueeze(1)
 
-            if cos.shape[-1] != x.shape[-1]:
-                cos = torch.cat([cos, cos], dim=-1)
-            if sin.shape[-1] != x.shape[-1]:
-                sin = torch.cat([sin, sin], dim=-1)
+        if cos.shape[-1] != x.shape[-1]:
+            cos = torch.cat([cos, cos], dim=-1)
+        if sin.shape[-1] != x.shape[-1]:
+            sin = torch.cat([sin, sin], dim=-1)
 
-            if cos.dim() == 2:
-                cos = cos.unsqueeze(0).unsqueeze(1)
-            elif cos.dim() == 3:
-                cos = cos.unsqueeze(1)
+        if cos.dim() == 2:
+            cos = cos.unsqueeze(0).unsqueeze(1)
+        elif cos.dim() == 3:
+            cos = cos.unsqueeze(1)
 
-            if sin.dim() == 2:
-                sin = sin.unsqueeze(0).unsqueeze(1)
-            elif sin.dim() == 3:
-                sin = sin.unsqueeze(1)
+        if sin.dim() == 2:
+            sin = sin.unsqueeze(0).unsqueeze(1)
+        elif sin.dim() == 3:
+            sin = sin.unsqueeze(1)
 
-            if cos.shape != x.shape:
-                cos = cos.expand_as(x)
-            if sin.shape != x.shape:
-                sin = sin.expand_as(x)
+        if cos.shape != x.shape:
+            cos = cos.expand_as(x)
+        if sin.shape != x.shape:
+            sin = sin.expand_as(x)
 
-            if cos.dtype != x.dtype:
-                cos = cos.to(x.dtype)
-            if sin.dtype != x.dtype:
-                sin = sin.to(x.dtype)
+        if cos.dtype != x.dtype:
+            cos = cos.to(x.dtype)
+        if sin.dtype != x.dtype:
+            sin = sin.to(x.dtype)
 
-            if not cos.is_contiguous():
-                cos = cos.contiguous()
-            if not sin.is_contiguous():
-                sin = sin.contiguous()
+        if not cos.is_contiguous():
+            cos = cos.contiguous()
+        if not sin.is_contiguous():
+            sin = sin.contiguous()
 
-            out = torch_npu.npu_rotary_mul(x, cos, sin)
+        out = torch_npu.npu_rotary_mul(x, cos, sin)
 
-            if needs_unsqueeze:
-                out = out.squeeze(1)
+        if needs_unsqueeze:
+            out = out.squeeze(1)
 
-            return out
+        return out
 
     # Convert to float for stable mathematical operations
     # The rotation uses trigonometric functions that work best in float precision

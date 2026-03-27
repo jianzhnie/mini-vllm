@@ -5,6 +5,8 @@ pipeline including model loading, scheduling, and token generation.
 """
 
 import atexit
+import os
+import socket
 from dataclasses import fields
 from time import perf_counter
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
@@ -82,6 +84,14 @@ class LLMEngine:
         self.events: List[mp.Event] = []
 
         if config.tensor_parallel_size > 1:
+            os.environ.setdefault('MASTER_ADDR', '127.0.0.1')
+            if 'MASTER_PORT' not in os.environ:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.bind(('127.0.0.1', 0))
+                port = sock.getsockname()[1]
+                sock.close()
+                os.environ['MASTER_PORT'] = str(port)
+
             ctx: mp.context.SpawnContext = mp.get_context('spawn')
             for i in range(1, config.tensor_parallel_size):
                 event: mp.Event = ctx.Event()

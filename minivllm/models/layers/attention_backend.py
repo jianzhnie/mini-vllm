@@ -404,7 +404,6 @@ class NPUAttentionBackend(AttentionBackend):
                 key = key.to(torch.bfloat16)
             if v_dtype != torch.bfloat16:
                 value = value.to(torch.bfloat16)
-
             q = query.transpose(1, 2)
             k = key.transpose(1, 2)
             v = value.transpose(1, 2)

@@ -500,12 +500,28 @@ class Attention(nn.Module):
                         break
                     tokens_in_block = min(block_size, seqlen - token_idx)
                     if tokens_in_block > 0:
-                        cached_k[i, token_idx:token_idx +
-                                 tokens_in_block] = self.k_cache[
-                                     block_id, :tokens_in_block]
-                        cached_v[i, token_idx:token_idx +
-                                 tokens_in_block] = self.v_cache[
-                                     block_id, :tokens_in_block]
+                        try:
+                            cached_k[i, token_idx:token_idx +
+                                     tokens_in_block] = self.k_cache[
+                                         block_id, :tokens_in_block]
+                            cached_v[i, token_idx:token_idx +
+                                     tokens_in_block] = self.v_cache[
+                                         block_id, :tokens_in_block]
+                        except RuntimeError as e:
+                            logger.error(
+                                'Shape mismatch in _fallback_attention:')
+                            logger.error(
+                                f'cached_k slice shape: {cached_k[i, token_idx:token_idx + tokens_in_block].shape}'
+                            )
+                            logger.error(
+                                f'k_cache slice shape: {self.k_cache[block_id, :tokens_in_block].shape}'
+                            )
+                            logger.error(
+                                f'num_kv_heads: {self.num_kv_heads}, head_dim: {self.head_dim}'
+                            )
+                            logger.error(
+                                f'k_cache total shape: {self.k_cache.shape}')
+                            raise e
                     token_idx += tokens_in_block
                     if token_idx >= seqlen:
                         break
