@@ -54,7 +54,7 @@ class Config:
     MAX_DEVICE_MEMORY_UTIL: ClassVar[float] = 1.0
     MIN_TENSOR_PARALLEL_SIZE: ClassVar[int] = 1
     MAX_TENSOR_PARALLEL_SIZE: ClassVar[int] = 8
-    BLOCK_SIZE_DIVISOR: ClassVar[int] = 64
+    BLOCK_SIZE_DIVISOR: ClassVar[int] = 256
     DEFAULT_MAX_MODEL_LEN: ClassVar[int] = 4096
 
     model: str
@@ -66,7 +66,7 @@ class Config:
     enforce_eager: bool = False
     hf_config: Optional[PretrainedConfig] = None
     eos: int = -1
-    kvcache_block_size: int = 64
+    kvcache_block_size: int = 256
     num_kvcache_blocks: int = -1
     trust_remote_code: bool = False
     dtype: str = 'auto'
@@ -145,7 +145,7 @@ class Config:
             raise ValueError(
                 f'kvcache_block_size must be divisible by {self.BLOCK_SIZE_DIVISOR} '
                 f'for optimal performance, got {self.kvcache_block_size}. '
-                f'Common values: 64, 128, 256, 512, 1024.')
+                f'Common values: 256, 512, 1024.')
 
     def _validate_tensor_parallel_size(self) -> None:
         """Validate tensor parallel size for system compatibility."""

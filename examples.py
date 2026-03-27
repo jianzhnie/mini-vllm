@@ -53,7 +53,7 @@ class ExampleConfig:
         max_num_seqs: Maximum number of sequences to process in parallel.
         max_model_len: Maximum sequence length for the model.
         device_memory_utilization: Fraction of device memory to use (0.1-1.0).
-        kvcache_block_size: Size of KV cache blocks in tokens (must be divisible by 64).
+        kvcache_block_size: Size of KV cache blocks in tokens (must be divisible by 256).
         dtype: Data type for model weights ('auto', 'float16', 'float32', 'bfloat16').
         enforce_eager: Force eager execution mode (disables CUDA Graph).
         temperature: Sampling temperature (> 1e-10, higher = more random).
@@ -66,7 +66,7 @@ class ExampleConfig:
     max_num_seqs: int = 8
     max_model_len: int = 64
     device_memory_utilization: float = 0.4
-    kvcache_block_size: int = 64
+    kvcache_block_size: int = 256
     dtype: str = 'float32'
     enforce_eager: bool = True
     temperature: float = 0.6
@@ -230,9 +230,9 @@ def validate_config(config: ExampleConfig) -> None:
             f'device_memory_utilization must be in [0.1, 1.0], got {config.device_memory_utilization}'
         )
 
-    if config.kvcache_block_size % 64 != 0:
+    if config.kvcache_block_size % 256 != 0:
         raise ValueError(
-            f'kvcache_block_size must be divisible by 64, got {config.kvcache_block_size}'
+            f'kvcache_block_size must be divisible by 256, got {config.kvcache_block_size}'
         )
 
 
