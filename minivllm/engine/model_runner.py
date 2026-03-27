@@ -505,7 +505,26 @@ class ModelRunner:
                 f'Required per block: {block_bytes} bytes. '
                 f'Try reducing device_memory_utilization or max_model_len.')
 
-        config.num_kvcache_blocks = int(available_memory // block_bytes)
+        max_blocks_per_seq = ((config.max_model_len + self.block_size - 1) //
+                              self.block_size)
+        max_total_blocks = int(config.max_num_seqs * max_blocks_per_seq)
+
+        if config.num_kvcache_blocks > 0:
+            if config.num_kvcache_blocks > max_total_blocks:
+                config.num_kvcache_blocks = max_total_blocks
+
+            required_bytes = int(config.num_kvcache_blocks * block_bytes)
+            if required_bytes > available_memory:
+                raise RuntimeError(
+                    f'Insufficient memory for KV cache allocation. '
+                    f'Device: {self.device.type}, Available: {available_memory} bytes, '
+                    f'Required: {required_bytes} bytes. '
+                    f'Try reducing num_kvcache_blocks, device_memory_utilization, or max_model_len.'
+                )
+        else:
+            config.num_kvcache_blocks = int(available_memory // block_bytes)
+            if config.num_kvcache_blocks > max_total_blocks:
+                config.num_kvcache_blocks = max_total_blocks
 
         if config.num_kvcache_blocks <= 0:
             raise ValueError(
