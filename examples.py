@@ -230,9 +230,9 @@ def validate_config(config: ExampleConfig) -> None:
             f'device_memory_utilization must be in [0.1, 1.0], got {config.device_memory_utilization}'
         )
 
-    if config.kvcache_block_size % 256 != 0:
+    if config.kvcache_block_size % 64 != 0:
         raise ValueError(
-            f'kvcache_block_size must be divisible by 256, got {config.kvcache_block_size}'
+            f'kvcache_block_size must be divisible by 64, got {config.kvcache_block_size}'
         )
 
 

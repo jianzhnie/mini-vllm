@@ -56,7 +56,7 @@ def main():
             log(f'Failed to download model: {e}')
             sys.exit(1)
 
-    import minivllm.engine.model_runner
+    import minivllm.engine.model_runner  # noqa: E402
     print(
         f'DEBUG: minivllm.engine.model_runner file: {minivllm.engine.model_runner.__file__}'
     )

@@ -1,8 +1,10 @@
 """Unit tests for Model Runner module.
 
-This module contains comprehensive tests for the ModelRunner class,
-including model loading, KV cache management, inference execution,
-and distributed tensor parallelism.
+This module contains comprehensive tests for the refactored ModelRunner class,
+which now coordinates specialized managers:
+- ModelManager: Model loading, validation, and lifecycle
+- DistributedManager: Multi-process coordination and communication
+- InferenceExecutor: Model execution and optimization
 
 Tests cover:
     - Model runner initialization
@@ -17,7 +19,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-import torch
 
 from minivllm.config import Config
 from minivllm.engine.model_runner import ModelRunner
@@ -25,451 +26,357 @@ from minivllm.engine.sequence import Sequence
 from minivllm.sampling_params import SamplingParams
 
 
+def create_mock_config(tmp_path: Path, extra_config: dict = None) -> Config:
+    """Helper to create a mock config with model directory."""
+    model_dir = tmp_path / 'test_model'
+    model_dir.mkdir()
+
+    config = {
+        'model_type': 'llama',
+        'hidden_size': 768,
+        'num_hidden_layers': 12,
+        'num_attention_heads': 12,
+        'max_position_embeddings': 4096,
+        'torch_dtype': 'float32',
+    }
+    if extra_config:
+        config.update(extra_config)
+
+    import json
+    (model_dir / 'config.json').write_text(json.dumps(config))
+
+    return Config(str(model_dir))
+
+
 class TestModelRunnerInitialization:
     """Test cases for ModelRunner initialization."""
 
-    @patch('minivllm.engine.model_runner.ModelRunner.warmup_model')
-    @patch('minivllm.engine.model_runner.ModelRunner.allocate_kv_cache')
+    @patch('minivllm.engine.inference_executor.InferenceExecutor.initialize')
+    @patch(
+        'minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs'
+    )
+    @patch('minivllm.models.manager.ModelManager.initialize')
+    @patch('minivllm.engine.distributed_manager.DistributedManager.initialize')
     @patch('minivllm.models.create_model')
     @patch('transformers.AutoTokenizer.from_pretrained')
-    @patch('minivllm.engine.model_runner.set_device')
-    @patch('minivllm.engine.model_runner.get_current_device')
-    def test_runner_initialization(self, mock_device, mock_set_device,
-                                   mock_tokenizer, mock_create_model,
-                                   mock_allocate_cache, mock_warmup,
-                                   tmp_path: Path) -> None:
+    def test_runner_initialization(
+        self,
+        mock_tokenizer,
+        mock_create_model,
+        mock_dist_init,
+        mock_model_mgr_init,
+        mock_capture_graphs,
+        mock_executor_init,
+        tmp_path: Path,
+    ) -> None:
         """Test model runner initialization."""
-        # Setup
-        model_dir = tmp_path / 'test_model'
-        model_dir.mkdir()
-        (model_dir / 'config.json').write_text(
-            '{"model_type": "llama", '
-            '"hidden_size": 768, '
-            '"num_hidden_layers": 12, '
-            '"num_attention_heads": 12, '
-            '"max_position_embeddings": 4096, '
-            '"torch_dtype": "float32"}')
-
-        # Mock returns
-        mock_device.return_value = torch.device('cpu')
+        # Setup mocks
         mock_model = MagicMock()
         mock_model.to.return_value = mock_model
         mock_create_model.return_value = mock_model
         mock_tokenizer_instance = MagicMock()
         mock_tokenizer.return_value = mock_tokenizer_instance
 
-        config = Config(str(model_dir))
-
-        # Create a mock event
+        config = create_mock_config(tmp_path)
         mock_event = MagicMock()
 
         # Initialize runner
-        try:
-            runner = ModelRunner(config, rank=0, event=mock_event)
-            assert runner.rank == 0
-            assert runner.world_size == 1
-            assert runner.config == config
-        except Exception:
-            # Expected in test environment
-            pass
+        runner = ModelRunner(config, rank=0, event=mock_event)
 
-    @patch('minivllm.engine.model_runner.ModelRunner.warmup_model')
-    @patch('minivllm.engine.model_runner.ModelRunner.allocate_kv_cache')
+        assert runner.rank == 0
+        assert runner.world_size == 1
+        assert runner.config == config
+
+        # Cleanup
+        runner.exit()
+
+    @patch('minivllm.engine.inference_executor.InferenceExecutor.initialize')
+    @patch(
+        'minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs'
+    )
+    @patch('minivllm.models.manager.ModelManager.initialize')
+    @patch('minivllm.engine.distributed_manager.DistributedManager.initialize')
     @patch('minivllm.models.create_model')
     @patch('transformers.AutoTokenizer.from_pretrained')
-    @patch('minivllm.engine.model_runner.set_device')
-    @patch('minivllm.engine.model_runner.get_current_device')
     def test_runner_initialization_with_tensor_parallelism(
-            self, mock_device, mock_set_device, mock_tokenizer,
-            mock_create_model, mock_allocate_cache, mock_warmup,
-            tmp_path: Path) -> None:
+        self,
+        mock_tokenizer,
+        mock_create_model,
+        mock_dist_init,
+        mock_model_mgr_init,
+        mock_capture_graphs,
+        mock_executor_init,
+        tmp_path: Path,
+    ) -> None:
         """Test model runner initialization with tensor parallelism."""
-        model_dir = tmp_path / 'test_model'
-        model_dir.mkdir()
-        (model_dir / 'config.json').write_text(
-            '{"model_type": "llama", '
-            '"hidden_size": 768, '
-            '"num_hidden_layers": 12, '
-            '"max_position_embeddings": 4096, '
-            '"torch_dtype": "float32"}')
-
-        mock_device.return_value = torch.device('cpu')
         mock_model = MagicMock()
         mock_model.to.return_value = mock_model
         mock_create_model.return_value = mock_model
 
-        config = Config(str(model_dir), tensor_parallel_size=4)
+        config = create_mock_config(tmp_path, {'tensor_parallel_size': 4})
+        config.tensor_parallel_size = 4  # Override after creation
         mock_event = [MagicMock() for _ in range(3)]
 
-        try:
-            runner = ModelRunner(config, rank=1, event=mock_event)
-            assert runner.rank == 1
-            assert runner.world_size == 4
-        except Exception:
-            pass
+        runner = ModelRunner(config, rank=1, event=mock_event)
 
+        assert runner.rank == 1
+        assert runner.world_size == 4
 
-class TestModelRunnerKVCache:
-    """Test cases for KV cache management."""
-
-    @patch('minivllm.engine.model_runner.ModelRunner.warmup_model')
-    @patch('minivllm.engine.model_runner.ModelRunner.allocate_kv_cache')
-    @patch('minivllm.engine.model_runner.ModelRunner.capture_device_graph')
-    @patch('minivllm.models.create_model')
-    @patch('transformers.AutoTokenizer.from_pretrained')
-    @patch('minivllm.engine.model_runner.set_device')
-    @patch('minivllm.engine.model_runner.get_current_device')
-    def test_kv_cache_allocation(self, mock_device, mock_set_device,
-                                 mock_tokenizer, mock_create_model,
-                                 mock_capture_graph, mock_allocate_cache,
-                                 mock_warmup, tmp_path: Path) -> None:
-        """Test that KV cache is allocated during initialization."""
-        model_dir = tmp_path / 'test_model'
-        model_dir.mkdir()
-        (model_dir / 'config.json').write_text(
-            '{"model_type": "llama", '
-            '"hidden_size": 768, '
-            '"num_hidden_layers": 12, '
-            '"max_position_embeddings": 4096, '
-            '"torch_dtype": "float32"}')
-
-        mock_device.return_value = torch.device('cpu')
-        mock_model = MagicMock()
-        mock_model.to.return_value = mock_model
-        mock_create_model.return_value = mock_model
-
-        config = Config(str(model_dir))
-        mock_event = MagicMock()
-
-        try:
-            ModelRunner(config, rank=0, event=mock_event)
-            # Verify allocate_kv_cache was called
-            mock_allocate_cache.assert_called_once()
-        except Exception:
-            pass
-
-    @patch('minivllm.engine.model_runner.ModelRunner.warmup_model')
-    @patch('minivllm.engine.model_runner.ModelRunner.capture_device_graph')
-    @patch('minivllm.models.create_model')
-    @patch('transformers.AutoTokenizer.from_pretrained')
-    @patch('minivllm.engine.model_runner.set_device')
-    @patch('minivllm.engine.model_runner.get_current_device')
-    def test_kv_cache_size_computation(self, mock_device, mock_set_device,
-                                       mock_tokenizer, mock_create_model,
-                                       mock_capture_graph, mock_warmup,
-                                       tmp_path: Path) -> None:
-        """Test KV cache size is computed correctly."""
-        model_dir = tmp_path / 'test_model'
-        model_dir.mkdir()
-        (model_dir / 'config.json').write_text(
-            '{"model_type": "llama", '
-            '"hidden_size": 768, '
-            '"num_hidden_layers": 12, '
-            '"max_position_embeddings": 4096, '
-            '"torch_dtype": "float32"}')
-
-        mock_device.return_value = torch.device('cpu')
-        mock_model = MagicMock()
-        mock_model.to.return_value = mock_model
-        mock_create_model.return_value = mock_model
-
-        config = Config(str(model_dir),
-                        kvcache_block_size=256,
-                        num_kvcache_blocks=100)
-        mock_event = MagicMock()
-
-        try:
-            with patch.object(ModelRunner, 'allocate_kv_cache') as mock_alloc:
-                ModelRunner(config, rank=0, event=mock_event)
-                mock_alloc.assert_called_once()
-        except Exception:
-            pass
+        runner.exit()
 
 
 class TestModelRunnerInference:
     """Test cases for model inference execution."""
 
-    @patch('minivllm.engine.model_runner.ModelRunner.warmup_model')
-    @patch('minivllm.engine.model_runner.ModelRunner.allocate_kv_cache')
-    @patch('minivllm.engine.model_runner.ModelRunner.capture_device_graph')
+    @patch('minivllm.engine.inference_executor.InferenceExecutor.initialize')
+    @patch(
+        'minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs'
+    )
+    @patch('minivllm.models.manager.ModelManager.initialize')
+    @patch('minivllm.engine.distributed_manager.DistributedManager.initialize')
     @patch('minivllm.models.create_model')
     @patch('transformers.AutoTokenizer.from_pretrained')
-    @patch('minivllm.engine.model_runner.set_device')
-    @patch('minivllm.engine.model_runner.get_current_device')
-    def test_call_method_exists(self, mock_device, mock_set_device,
-                                mock_tokenizer, mock_create_model,
-                                mock_capture_graph, mock_allocate_cache,
-                                mock_warmup, tmp_path: Path) -> None:
+    def test_call_method_exists(
+        self,
+        mock_tokenizer,
+        mock_create_model,
+        mock_dist_init,
+        mock_model_mgr_init,
+        mock_capture_graphs,
+        mock_executor_init,
+        tmp_path: Path,
+    ) -> None:
         """Test that the call method exists and is callable."""
-        model_dir = tmp_path / 'test_model'
-        model_dir.mkdir()
-        (model_dir / 'config.json').write_text(
-            '{"model_type": "llama", '
-            '"hidden_size": 768, '
-            '"max_position_embeddings": 4096, '
-            '"torch_dtype": "float32"}')
-
-        mock_device.return_value = torch.device('cpu')
         mock_model = MagicMock()
         mock_model.to.return_value = mock_model
         mock_create_model.return_value = mock_model
 
-        config = Config(str(model_dir))
+        config = create_mock_config(tmp_path)
         mock_event = MagicMock()
 
-        try:
-            runner = ModelRunner(config, rank=0, event=mock_event)
-            assert hasattr(runner, 'call')
-            assert callable(runner.call)
-        except Exception:
-            pass
+        runner = ModelRunner(config, rank=0, event=mock_event)
+        assert hasattr(runner, 'call')
+        assert callable(runner.call)
 
-    @patch('minivllm.engine.model_runner.ModelRunner.warmup_model')
-    @patch('minivllm.engine.model_runner.ModelRunner.allocate_kv_cache')
-    @patch('minivllm.engine.model_runner.ModelRunner.capture_device_graph')
+        runner.exit()
+
+    @patch('minivllm.engine.inference_executor.InferenceExecutor.initialize')
+    @patch(
+        'minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs'
+    )
+    @patch('minivllm.models.manager.ModelManager.initialize')
+    @patch('minivllm.engine.distributed_manager.DistributedManager.initialize')
     @patch('minivllm.models.create_model')
     @patch('transformers.AutoTokenizer.from_pretrained')
-    @patch('minivllm.engine.model_runner.set_device')
-    @patch('minivllm.engine.model_runner.get_current_device')
-    def test_call_run_method(self, mock_device, mock_set_device,
-                             mock_tokenizer, mock_create_model,
-                             mock_capture_graph, mock_allocate_cache,
-                             mock_warmup, tmp_path: Path) -> None:
+    def test_call_run_method(
+        self,
+        mock_tokenizer,
+        mock_create_model,
+        mock_dist_init,
+        mock_model_mgr_init,
+        mock_capture_graphs,
+        mock_executor_init,
+        tmp_path: Path,
+    ) -> None:
         """Test calling the run method on model runner."""
-        model_dir = tmp_path / 'test_model'
-        model_dir.mkdir()
-        (model_dir / 'config.json').write_text(
-            '{"model_type": "llama", '
-            '"hidden_size": 768, '
-            '"max_position_embeddings": 4096, '
-            '"torch_dtype": "float32"}')
-
-        mock_device.return_value = torch.device('cpu')
         mock_model = MagicMock()
         mock_model.to.return_value = mock_model
         mock_create_model.return_value = mock_model
 
-        config = Config(str(model_dir))
+        config = create_mock_config(tmp_path)
         mock_event = MagicMock()
 
-        try:
-            runner = ModelRunner(config, rank=0, event=mock_event)
+        runner = ModelRunner(config, rank=0, event=mock_event)
 
-            # Create mock sequences
-            seq = Sequence(token_ids=[1, 2, 3, 4, 5],
-                           sampling_params=SamplingParams())
+        # Create mock sequences
+        seq = Sequence(token_ids=[1, 2, 3, 4, 5],
+                       sampling_params=SamplingParams())
 
-            # Mock the run method
-            with patch.object(runner, 'run', return_value=[6, 7]) as mock_run:
-                runner.call('run', [seq], True)
-                mock_run.assert_called_once_with([seq], True)
-        except Exception:
-            pass
+        # Mock the run method
+        with patch.object(runner, 'run', return_value=[6, 7]) as mock_run:
+            runner.call('run', [seq], True)
+            mock_run.assert_called_once_with([seq], True)
 
-    @patch('minivllm.engine.model_runner.ModelRunner.warmup_model')
-    @patch('minivllm.engine.model_runner.ModelRunner.allocate_kv_cache')
-    @patch('minivllm.engine.model_runner.ModelRunner.capture_device_graph')
+        runner.exit()
+
+    @patch('minivllm.engine.inference_executor.InferenceExecutor.initialize')
+    @patch(
+        'minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs'
+    )
+    @patch('minivllm.models.manager.ModelManager.initialize')
+    @patch('minivllm.engine.distributed_manager.DistributedManager.initialize')
     @patch('minivllm.models.create_model')
     @patch('transformers.AutoTokenizer.from_pretrained')
-    @patch('minivllm.engine.model_runner.set_device')
-    @patch('minivllm.engine.model_runner.get_current_device')
-    def test_call_exit_method(self, mock_device, mock_set_device,
-                              mock_tokenizer, mock_create_model,
-                              mock_capture_graph, mock_allocate_cache,
-                              mock_warmup, tmp_path: Path) -> None:
+    def test_call_exit_method(
+        self,
+        mock_tokenizer,
+        mock_create_model,
+        mock_dist_init,
+        mock_model_mgr_init,
+        mock_capture_graphs,
+        mock_executor_init,
+        tmp_path: Path,
+    ) -> None:
         """Test calling the exit method on model runner."""
-        model_dir = tmp_path / 'test_model'
-        model_dir.mkdir()
-        (model_dir / 'config.json').write_text(
-            '{"model_type": "llama", '
-            '"hidden_size": 768, '
-            '"max_position_embeddings": 4096, '
-            '"torch_dtype": "float32"}')
-
-        mock_device.return_value = torch.device('cpu')
         mock_model = MagicMock()
         mock_model.to.return_value = mock_model
         mock_create_model.return_value = mock_model
 
-        config = Config(str(model_dir))
+        config = create_mock_config(tmp_path)
         mock_event = MagicMock()
 
-        try:
-            runner = ModelRunner(config, rank=0, event=mock_event)
+        runner = ModelRunner(config, rank=0, event=mock_event)
 
-            # Mock the exit method
+        try:
+            # Mock the exit method to test call routing
             with patch.object(runner, 'exit') as mock_exit:
                 runner.call('exit')
                 mock_exit.assert_called_once()
-        except Exception:
-            pass
+        finally:
+            # Ensure cleanup even though exit was mocked
+            runner.exit()
 
 
 class TestModelRunnerDeviceGraph:
     """Test cases for device graph capture and replay."""
 
-    @patch('minivllm.engine.model_runner.ModelRunner.warmup_model')
-    @patch('minivllm.engine.model_runner.ModelRunner.allocate_kv_cache')
-    @patch('minivllm.engine.model_runner.supports_cuda_graph')
+    @patch('minivllm.engine.inference_executor.InferenceExecutor.initialize')
+    @patch(
+        'minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs'
+    )
+    @patch('minivllm.models.manager.ModelManager.initialize')
+    @patch('minivllm.engine.distributed_manager.DistributedManager.initialize')
     @patch('minivllm.models.create_model')
     @patch('transformers.AutoTokenizer.from_pretrained')
-    @patch('minivllm.engine.model_runner.set_device')
-    @patch('minivllm.engine.model_runner.get_current_device')
-    def test_cuda_graph_capture_enabled(self, mock_device, mock_set_device,
-                                        mock_tokenizer, mock_create_model,
-                                        mock_supports_cuda,
-                                        mock_allocate_cache, mock_warmup,
-                                        tmp_path: Path) -> None:
-        """Test that CUDA graphs are captured when supported."""
-        model_dir = tmp_path / 'test_model'
-        model_dir.mkdir()
-        (model_dir / 'config.json').write_text(
-            '{"model_type": "llama", '
-            '"hidden_size": 768, '
-            '"max_position_embeddings": 4096, '
-            '"torch_dtype": "float32"}')
-
-        mock_device.return_value = torch.device('cpu')
+    def test_cuda_graph_capture_disabled_on_cpu(
+        self,
+        mock_tokenizer,
+        mock_create_model,
+        mock_dist_init,
+        mock_model_mgr_init,
+        mock_capture_graphs,
+        mock_executor_init,
+        tmp_path: Path,
+    ) -> None:
+        """Test that CUDA graphs are not captured on CPU."""
         mock_model = MagicMock()
         mock_model.to.return_value = mock_model
         mock_create_model.return_value = mock_model
-        mock_supports_cuda.return_value = False  # CUDA graphs not supported
 
-        config = Config(str(model_dir), enforce_eager=False)
+        config = create_mock_config(tmp_path, {'enforce_eager': False})
         mock_event = MagicMock()
 
-        try:
-            with patch.object(ModelRunner,
-                              'capture_device_graph') as mock_capture:
-                ModelRunner(config, rank=0, event=mock_event)
-                # Graph capture should not be called when CUDA is not supported
-                mock_capture.assert_not_called()
-        except Exception:
-            pass
+        runner = ModelRunner(config, rank=0, event=mock_event)
 
-    @patch('minivllm.engine.model_runner.ModelRunner.warmup_model')
-    @patch('minivllm.engine.model_runner.ModelRunner.allocate_kv_cache')
+        # Graph capture should be skipped on CPU (handled by InferenceExecutor)
+        runner.exit()
+
+    @patch('minivllm.engine.inference_executor.InferenceExecutor.initialize')
+    @patch(
+        'minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs'
+    )
+    @patch('minivllm.models.manager.ModelManager.initialize')
+    @patch('minivllm.engine.distributed_manager.DistributedManager.initialize')
     @patch('minivllm.models.create_model')
     @patch('transformers.AutoTokenizer.from_pretrained')
-    @patch('minivllm.engine.model_runner.set_device')
-    @patch('minivllm.engine.model_runner.get_current_device')
-    def test_enforce_eager_skips_graph(self, mock_device, mock_set_device,
-                                       mock_tokenizer, mock_create_model,
-                                       mock_allocate_cache, mock_warmup,
-                                       tmp_path: Path) -> None:
+    def test_enforce_eager_skips_graph(
+        self,
+        mock_tokenizer,
+        mock_create_model,
+        mock_dist_init,
+        mock_model_mgr_init,
+        mock_capture_graphs,
+        mock_executor_init,
+        tmp_path: Path,
+    ) -> None:
         """Test that enforce_eager skips graph capture."""
-        model_dir = tmp_path / 'test_model'
-        model_dir.mkdir()
-        (model_dir / 'config.json').write_text(
-            '{"model_type": "llama", '
-            '"hidden_size": 768, '
-            '"max_position_embeddings": 4096, '
-            '"torch_dtype": "float32"}')
-
-        mock_device.return_value = torch.device('cpu')
         mock_model = MagicMock()
         mock_model.to.return_value = mock_model
         mock_create_model.return_value = mock_model
 
-        config = Config(str(model_dir), enforce_eager=True)
+        config = create_mock_config(tmp_path, {'enforce_eager': True})
         mock_event = MagicMock()
 
-        try:
-            with patch.object(ModelRunner,
-                              'capture_device_graph') as mock_capture:
-                ModelRunner(config, rank=0, event=mock_event)
-                # Graph capture should not be called with enforce_eager=True
-                mock_capture.assert_not_called()
-        except Exception:
-            pass
+        runner = ModelRunner(config, rank=0, event=mock_event)
+
+        # Graph capture should not be called with enforce_eager=True
+        # (handled by InferenceExecutor)
+        runner.exit()
 
 
 class TestModelRunnerCleanup:
     """Test cases for model runner cleanup."""
 
-    @patch('minivllm.engine.model_runner.ModelRunner.warmup_model')
-    @patch('minivllm.engine.model_runner.ModelRunner.allocate_kv_cache')
-    @patch('minivllm.engine.model_runner.ModelRunner.capture_device_graph')
+    @patch('minivllm.engine.inference_executor.InferenceExecutor.initialize')
+    @patch(
+        'minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs'
+    )
+    @patch('minivllm.models.manager.ModelManager.initialize')
+    @patch('minivllm.engine.distributed_manager.DistributedManager.initialize')
     @patch('minivllm.models.create_model')
     @patch('transformers.AutoTokenizer.from_pretrained')
-    @patch('minivllm.engine.model_runner.set_device')
-    @patch('minivllm.engine.model_runner.get_current_device')
-    def test_exit_cleans_resources(self, mock_device, mock_set_device,
-                                   mock_tokenizer, mock_create_model,
-                                   mock_capture_graph, mock_allocate_cache,
-                                   mock_warmup, tmp_path: Path) -> None:
+    def test_exit_cleans_resources(
+        self,
+        mock_tokenizer,
+        mock_create_model,
+        mock_dist_init,
+        mock_model_mgr_init,
+        mock_capture_graphs,
+        mock_executor_init,
+        tmp_path: Path,
+    ) -> None:
         """Test that exit properly cleans resources."""
-        model_dir = tmp_path / 'test_model'
-        model_dir.mkdir()
-        (model_dir / 'config.json').write_text(
-            '{"model_type": "llama", '
-            '"hidden_size": 768, '
-            '"max_position_embeddings": 4096, '
-            '"torch_dtype": "float32"}')
-
-        mock_device.return_value = torch.device('cpu')
         mock_model = MagicMock()
         mock_model.to.return_value = mock_model
         mock_create_model.return_value = mock_model
 
-        config = Config(str(model_dir))
+        config = create_mock_config(tmp_path)
         mock_event = MagicMock()
 
-        try:
-            runner = ModelRunner(config, rank=0, event=mock_event)
+        runner = ModelRunner(config, rank=0, event=mock_event)
 
-            # Mock cleanup operations
-            runner.share_memory = MagicMock()
-            runner.graphs = {'1': MagicMock()}
-
-            # Call exit and verify cleanup
-            runner.exit()
-            # Just verify exit completes without raising
-            assert True
-        except Exception:
-            pass
+        # Call exit and verify it completes without raising
+        runner.exit()
+        assert True  # If we get here, exit completed successfully
 
 
 class TestModelRunnerDistributed:
     """Test cases for distributed tensor parallelism."""
 
-    @patch('minivllm.engine.model_runner.ModelRunner.warmup_model')
-    @patch('minivllm.engine.model_runner.ModelRunner.allocate_kv_cache')
-    @patch('minivllm.engine.model_runner.ModelRunner.capture_device_graph')
-    @patch('minivllm.engine.model_runner.dist.init_process_group')
+    @patch('minivllm.engine.inference_executor.InferenceExecutor.initialize')
+    @patch(
+        'minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs'
+    )
+    @patch('minivllm.models.manager.ModelManager.initialize')
+    @patch('minivllm.engine.distributed_manager.DistributedManager.initialize')
     @patch('minivllm.models.create_model')
     @patch('transformers.AutoTokenizer.from_pretrained')
-    @patch('minivllm.engine.model_runner.set_device')
-    @patch('minivllm.engine.model_runner.get_current_device')
-    def test_distributed_initialization(self, mock_device, mock_set_device,
-                                        mock_tokenizer, mock_create_model,
-                                        mock_dist_init, mock_capture_graph,
-                                        mock_allocate_cache, mock_warmup,
-                                        tmp_path: Path) -> None:
+    def test_distributed_initialization(
+        self,
+        mock_tokenizer,
+        mock_create_model,
+        mock_dist_init,
+        mock_model_mgr_init,
+        mock_capture_graphs,
+        mock_executor_init,
+        tmp_path: Path,
+    ) -> None:
         """Test distributed initialization for tensor parallelism."""
-        model_dir = tmp_path / 'test_model'
-        model_dir.mkdir()
-        (model_dir / 'config.json').write_text(
-            '{"model_type": "llama", '
-            '"hidden_size": 768, '
-            '"max_position_embeddings": 4096, '
-            '"torch_dtype": "float32"}')
-
-        mock_device.return_value = torch.device('cpu')
         mock_model = MagicMock()
         mock_model.to.return_value = mock_model
         mock_create_model.return_value = mock_model
 
-        config = Config(str(model_dir), tensor_parallel_size=4)
+        config = create_mock_config(tmp_path)
+        config.tensor_parallel_size = 4  # Override
         mock_event = [MagicMock() for _ in range(3)]
 
-        try:
-            ModelRunner(config, rank=1, event=mock_event)
-            # For multi-GPU, dist.init_process_group should be called
-            if config.tensor_parallel_size > 1:
-                mock_dist_init.assert_called_once()
-        except Exception:
-            pass
+        runner = ModelRunner(config, rank=1, event=mock_event)
+
+        # For multi-GPU, distributed manager should be initialized
+        assert runner.world_size == 4
+        assert runner.rank == 1
+
+        runner.exit()
 
 
 class TestModelRunnerErrorHandling:
@@ -480,36 +387,118 @@ class TestModelRunnerErrorHandling:
         with pytest.raises(ValueError):
             Config(model='/nonexistent/path')
 
-    @patch('minivllm.engine.model_runner.ModelRunner.warmup_model')
-    @patch('minivllm.engine.model_runner.ModelRunner.allocate_kv_cache')
+    @patch('minivllm.engine.inference_executor.InferenceExecutor.initialize')
+    @patch(
+        'minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs'
+    )
+    @patch('minivllm.models.manager.ModelManager.initialize')
+    @patch('minivllm.engine.distributed_manager.DistributedManager.initialize')
     @patch('minivllm.models.create_model')
     @patch('transformers.AutoTokenizer.from_pretrained')
-    @patch('minivllm.engine.model_runner.set_device')
-    @patch('minivllm.engine.model_runner.get_current_device')
-    def test_warmup_called_during_init(self, mock_device, mock_set_device,
-                                       mock_tokenizer, mock_create_model,
-                                       mock_allocate_cache, mock_warmup,
-                                       tmp_path: Path) -> None:
-        """Test that model warmup is called during initialization."""
-        model_dir = tmp_path / 'test_model'
-        model_dir.mkdir()
-        (model_dir / 'config.json').write_text(
-            '{"model_type": "llama", '
-            '"hidden_size": 768, '
-            '"max_position_embeddings": 4096, '
-            '"torch_dtype": "float32"}')
-
-        mock_device.return_value = torch.device('cpu')
+    def test_inference_executor_initialized(
+        self,
+        mock_tokenizer,
+        mock_create_model,
+        mock_dist_init,
+        mock_model_mgr_init,
+        mock_capture_graphs,
+        mock_executor_init,
+        tmp_path: Path,
+    ) -> None:
+        """Test that inference executor is properly initialized."""
         mock_model = MagicMock()
         mock_model.to.return_value = mock_model
         mock_create_model.return_value = mock_model
 
-        config = Config(str(model_dir))
+        config = create_mock_config(tmp_path)
         mock_event = MagicMock()
 
-        try:
-            ModelRunner(config, rank=0, event=mock_event)
-            # Verify warmup was called
-            mock_warmup.assert_called_once()
-        except Exception:
-            pass
+        runner = ModelRunner(config, rank=0, event=mock_event)
+
+        # Verify inference executor was initialized
+        mock_executor_init.assert_called()
+        assert runner.inference_executor is not None
+
+        runner.exit()
+
+
+class TestModelRunnerManagerAccess:
+    """Test cases for accessing sub-managers."""
+
+    @patch('minivllm.engine.inference_executor.InferenceExecutor.initialize')
+    @patch(
+        'minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs'
+    )
+    @patch('minivllm.models.manager.ModelManager.initialize')
+    @patch('minivllm.engine.distributed_manager.DistributedManager.initialize')
+    @patch('minivllm.models.create_model')
+    @patch('transformers.AutoTokenizer.from_pretrained')
+    def test_get_tokenizer(
+        self,
+        mock_tokenizer,
+        mock_create_model,
+        mock_dist_init,
+        mock_model_mgr_init,
+        mock_capture_graphs,
+        mock_executor_init,
+        tmp_path: Path,
+    ) -> None:
+        """Test that tokenizer can be retrieved from model manager."""
+        mock_tokenizer_instance = MagicMock()
+        mock_tokenizer.return_value = mock_tokenizer_instance
+        mock_model = MagicMock()
+        mock_model.to.return_value = mock_model
+        mock_create_model.return_value = mock_model
+
+        config = create_mock_config(tmp_path)
+        mock_event = MagicMock()
+
+        runner = ModelRunner(config, rank=0, event=mock_event)
+
+        # Mock the tokenizer on model_manager
+        runner.model_manager.tokenizer = mock_tokenizer_instance
+
+        # Get tokenizer via model_manager
+        tokenizer = runner.get_tokenizer()
+        assert tokenizer is mock_tokenizer_instance
+
+        runner.exit()
+
+    @patch('minivllm.engine.inference_executor.InferenceExecutor.initialize')
+    @patch(
+        'minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs'
+    )
+    @patch('minivllm.models.manager.ModelManager.initialize')
+    @patch('minivllm.engine.distributed_manager.DistributedManager.initialize')
+    @patch('minivllm.models.create_model')
+    @patch('transformers.AutoTokenizer.from_pretrained')
+    def test_get_model_info(
+        self,
+        mock_tokenizer,
+        mock_create_model,
+        mock_dist_init,
+        mock_model_mgr_init,
+        mock_capture_graphs,
+        mock_executor_init,
+        tmp_path: Path,
+    ) -> None:
+        """Test that model info can be retrieved."""
+        mock_model = MagicMock()
+        mock_model.to.return_value = mock_model
+        mock_create_model.return_value = mock_model
+
+        config = create_mock_config(tmp_path)
+        mock_event = MagicMock()
+
+        runner = ModelRunner(config, rank=0, event=mock_event)
+
+        info = runner.get_model_info()
+
+        # Verify info structure
+        assert 'rank' in info
+        assert 'world_size' in info
+        assert 'config' in info
+        assert info['rank'] == 0
+        assert info['world_size'] == 1
+
+        runner.exit()

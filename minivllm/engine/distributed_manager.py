@@ -2,13 +2,13 @@
 
 This module provides the DistributedManager class which handles:
 - Multi-process coordination
-- Shared memory management
-- Distributed communication setup
+- Shared memory management (optional, for high-performance IPC)
+- Distributed communication setup using PyTorch distributed backend
 - Synchronization between processes
+- Data broadcast and gather operations
 """
 
 import pickle
-from multiprocessing.shared_memory import SharedMemory
 from multiprocessing.synchronize import Event
 from typing import Any, Dict, List, Optional, Union
 
@@ -16,7 +16,7 @@ import torch
 import torch.distributed as dist
 
 from minivllm.config import Config
-from minivllm.utils.device import get_dist_info, get_distributed_backend
+from minivllm.utils.device import get_distributed_backend
 from minivllm.utils.logger_utils import get_logger
 
 logger = get_logger(__name__)
@@ -28,23 +28,24 @@ class DistributedManager:
     """Manages distributed inference coordination and communication.
 
     This class handles all aspects of distributed inference including
-    process coordination, shared memory management, and distributed
-    backend initialization.
+    process coordination, distributed backend initialization, and
+    inter-process communication via PyTorch distributed.
 
     Attributes:
         config: Engine configuration.
         rank: Current process rank (0 = main process).
         world_size: Total number of processes.
         backend: Distributed backend being used.
-        shm: Shared memory instance for IPC.
         events: Synchronization events.
         is_distributed: Whether running in distributed mode.
     """
 
-    def __init__(self,
-                 config: Config,
-                 rank: int,
-                 events: Union[Event, List[Event], None] = None) -> None:
+    def __init__(
+        self,
+        config: Config,
+        rank: int,
+        events: Union[Event, List[Event], None] = None,
+    ) -> None:
         """Initialize the distributed manager.
 
         Args:
@@ -55,33 +56,37 @@ class DistributedManager:
         self.config = config
         self.rank = rank
         self.world_size = config.tensor_parallel_size
-        self.backend = None
-        self.shm: Optional[SharedMemory] = None
-        self.events = events or []
+        self.backend: Optional[str] = None
+        self.events = events
         self.is_distributed = self.world_size > 1
+        self._initialized = False
 
         logger.debug(f'DistributedManager created with rank {rank}, '
                      f'world_size {self.world_size}')
 
     def initialize(self) -> None:
         """Initialize distributed communication if needed."""
+        if self._initialized:
+            return
+
         if not self.is_distributed:
             logger.debug('Running in single-process mode')
+            self._initialized = True
             return
 
         self._setup_distributed_backend()
-        self._setup_shared_memory()
         self._validate_setup()
 
+        self._initialized = True
         logger.info(f'Distributed manager initialized. '
-                    f'Rank: {self.rank}, World size: {self.world_size}')
+                    f'Rank: {self.rank}, World size: {self.world_size}, '
+                    f'Backend: {self.backend}')
 
     def _setup_distributed_backend(self) -> None:
         """Setup the distributed communication backend."""
         try:
             self.backend = get_distributed_backend()
             if not dist.is_initialized():
-                # Initialize distributed process group
                 dist.init_process_group(backend=self.backend,
                                         rank=self.rank,
                                         world_size=self.world_size)
@@ -89,59 +94,16 @@ class DistributedManager:
         except Exception as e:
             raise RuntimeError(f'Failed to setup distributed backend: {e}')
 
-    def _setup_shared_memory(self) -> None:
-        """Setup shared memory for inter-process communication."""
-        try:
-            if self.rank == 0:
-                # Calculate required shared memory size
-                shm_size = self._calculate_shm_size()
-
-                # Create shared memory
-                self.shm = SharedMemory(create=True, size=shm_size)
-                logger.debug(f'Shared memory created: {shm_size} bytes, '
-                             f'name: {self.shm.name}')
-
-                # Broadcast shared memory name to other processes
-                self.broadcast_data(self.shm.name)
-            else:
-                # Receive shared memory name from rank 0
-                shm_name = self.broadcast_data(None, src=0)
-
-                # Attach to existing shared memory
-                self.shm = SharedMemory(name=shm_name, create=False)
-                logger.debug(f'Attached to shared memory: {shm_name}')
-
-        except Exception as e:
-            logger.exception('Failed to setup shared memory')
-            raise RuntimeError(f'Failed to setup shared memory: {e}')
-
-    def _calculate_shm_size(self) -> int:
-        """Calculate required shared memory size.
-
-        Returns:
-            Size in bytes for shared memory allocation.
-        """
-        # This is a simplified calculation - actual implementation
-        # should consider model size, batch size, etc.
-        base_size = 1024 * 1024 * 100  # 100MB base
-        # 4 bytes per token
-        model_factor = (self.config.max_num_seqs * self.config.max_model_len *
-                        4)
-        return base_size + model_factor
-
     def _validate_setup(self) -> None:
         """Validate distributed setup is working correctly."""
         if not self.is_distributed:
             return
 
-        # Test distributed communication
         try:
             # Simple all_reduce test
-            tensor = torch.ones(1).to(torch.device('cpu')) * self.rank
-            # Move to correct device if possible, but CPU is safer for general test
-            # unless backend requires specific device (like NCCL).
-            # For simplicity keeping CPU as most backends support it or handle it.
-            # Actually NCCL requires CUDA tensors.
+            tensor = torch.ones(1) * self.rank
+
+            # Move to appropriate device based on backend
             if self.backend == 'nccl':
                 tensor = tensor.cuda()
             elif self.backend == 'hccl':
@@ -154,6 +116,7 @@ class DistributedManager:
                 raise RuntimeError(
                     f'Distributed test failed: got {tensor.item()}, '
                     f'expected {expected}')
+
             logger.debug('Distributed communication test passed')
         except Exception as e:
             raise RuntimeError(f'Distributed validation failed: {e}')
@@ -162,13 +125,16 @@ class DistributedManager:
         """Synchronize all processes."""
         if self.is_distributed and dist.is_initialized():
             dist.barrier()
-            logger.debug('Distributed barrier completed')
+            logger.debug(f'Rank {self.rank}: Distributed barrier completed')
 
     def broadcast_data(self, data: Any, src: int = 0) -> Any:
         """Broadcast data from source to all processes.
 
+        Uses pickle for serialization and PyTorch distributed for
+        efficient data transfer.
+
         Args:
-            data: Data to broadcast.
+            data: Data to broadcast (only valid on src process).
             src: Source rank.
 
         Returns:
@@ -178,10 +144,12 @@ class DistributedManager:
             return data
 
         try:
-            # Serialize data
+            # Serialize data on source
             if self.rank == src:
                 data_bytes = pickle.dumps(data)
                 data_size = torch.tensor([len(data_bytes)], dtype=torch.long)
+
+                # Move to appropriate device
                 if self.backend == 'nccl':
                     data_size = data_size.cuda()
                 elif self.backend == 'hccl':
@@ -193,7 +161,7 @@ class DistributedManager:
                 elif self.backend == 'hccl':
                     data_size = data_size.npu()
 
-            # Broadcast size
+            # Broadcast size first
             dist.broadcast(data_size, src=src)
 
             # Prepare buffer
@@ -214,15 +182,15 @@ class DistributedManager:
             # Broadcast data
             dist.broadcast(data_tensor, src=src)
 
+            # Deserialize on non-source processes
             if self.rank != src:
-                # Move back to CPU for pickle load
                 data = pickle.loads(data_tensor.cpu().numpy().tobytes())
 
             return data
         except Exception as e:
             raise RuntimeError(f'Broadcast failed: {e}')
 
-    def gather_data(self, data: Any, dst: int = 0) -> Optional[Any]:
+    def gather_data(self, data: Any, dst: int = 0) -> Optional[List[Any]]:
         """Gather data from all processes to destination.
 
         Args:
@@ -265,7 +233,6 @@ class DistributedManager:
                 data_tensor = data_tensor.npu()
 
             # Gather actual data
-            # Note: dist.gather requires a list of tensors on dst
             if self.rank == dst:
                 tensor_list = [
                     torch.empty(size.item(), dtype=torch.uint8)
@@ -289,25 +256,116 @@ class DistributedManager:
         except Exception as e:
             raise RuntimeError(f'Gather failed: {e}')
 
+    def all_gather_data(self, data: Any) -> List[Any]:
+        """All-gather data from all processes to all processes.
+
+        Args:
+            data: Data to gather from current process.
+
+        Returns:
+            List of gathered data from all ranks.
+        """
+        if not self.is_distributed:
+            return [data]
+
+        try:
+            # Serialize local data
+            data_bytes = pickle.dumps(data)
+            data_size = torch.tensor([len(data_bytes)], dtype=torch.long)
+
+            if self.backend == 'nccl':
+                data_size = data_size.cuda()
+            elif self.backend == 'hccl':
+                data_size = data_size.npu()
+
+            # All-gather sizes
+            size_list = [
+                torch.tensor([0], dtype=torch.long)
+                for _ in range(self.world_size)
+            ]
+            if self.backend == 'nccl':
+                size_list = [s.cuda() for s in size_list]
+            elif self.backend == 'hccl':
+                size_list = [s.npu() for s in size_list]
+
+            dist.all_gather(size_list, data_size)
+
+            # Create tensor for local data
+            data_tensor = torch.frombuffer(data_bytes, dtype=torch.uint8)
+            if self.backend == 'nccl':
+                data_tensor = data_tensor.cuda()
+            elif self.backend == 'hccl':
+                data_tensor = data_tensor.npu()
+
+            # All-gather actual data
+            max_size = max(s.item() for s in size_list)
+            tensor_list = [
+                torch.empty(max_size, dtype=torch.uint8)
+                for _ in range(self.world_size)
+            ]
+            if self.backend == 'nccl':
+                tensor_list = [t.cuda() for t in tensor_list]
+            elif self.backend == 'hccl':
+                tensor_list = [t.npu() for t in tensor_list]
+
+            # Pad data_tensor if needed
+            if data_tensor.size(0) < max_size:
+                padding = torch.zeros(max_size - data_tensor.size(0),
+                                      dtype=torch.uint8)
+                if self.backend == 'nccl':
+                    padding = padding.cuda()
+                elif self.backend == 'hccl':
+                    padding = padding.npu()
+                data_tensor = torch.cat([data_tensor, padding])
+
+            dist.all_gather(tensor_list, data_tensor)
+
+            # Unpack
+            result = []
+            for i, t in enumerate(tensor_list):
+                size = size_list[i].item()
+                result.append(pickle.loads(t[:size].cpu().numpy().tobytes()))
+            return result
+        except Exception as e:
+            raise RuntimeError(f'All-gather failed: {e}')
+
     def wait_for_events(self) -> None:
-        """Wait for synchronization events."""
+        """Wait for synchronization events (legacy compatibility)."""
+        if self.events is None:
+            return
+
         if isinstance(self.events, Event):
             self.events.wait()
         elif isinstance(self.events, list):
             for event in self.events:
                 if hasattr(event, 'wait'):
                     event.wait()
-        logger.debug('Synchronization events completed')
+        logger.debug(f'Rank {self.rank}: Synchronization events completed')
 
     def set_events(self) -> None:
-        """Set synchronization events to signal completion."""
+        """Set synchronization events to signal completion (legacy compatibility)."""
+        if self.events is None:
+            return
+
         if isinstance(self.events, Event):
             self.events.set()
         elif isinstance(self.events, list):
             for event in self.events:
                 if hasattr(event, 'set'):
                     event.set()
-        logger.debug('Synchronization events set')
+        logger.debug(f'Rank {self.rank}: Synchronization events set')
+
+    def clear_events(self) -> None:
+        """Clear synchronization events (legacy compatibility)."""
+        if self.events is None:
+            return
+
+        if isinstance(self.events, Event):
+            self.events.clear()
+        elif isinstance(self.events, list):
+            for event in self.events:
+                if hasattr(event, 'clear'):
+                    event.clear()
 
     def get_distributed_info(self) -> Dict[str, Any]:
         """Get distributed setup information.
@@ -315,32 +373,34 @@ class DistributedManager:
         Returns:
             Dictionary with distributed configuration.
         """
-        _, _, local_rank = get_dist_info()
         return {
             'is_distributed': self.is_distributed,
             'rank': self.rank,
             'world_size': self.world_size,
             'backend': self.backend,
-            'local_rank': local_rank,
+            'initialized': self._initialized,
         }
 
     def cleanup(self) -> None:
         """Clean up distributed resources."""
-        if self.shm is not None:
-            self.shm.close()
-            # Only rank 0 should unlink (delete) the shared memory
-            if self.rank == 0:
-                try:
-                    self.shm.unlink()
-                except FileNotFoundError:
-                    # Already unlinked
-                    pass
-            self.shm = None
+        if not self._initialized:
+            return
 
-        if dist.is_initialized():
-            dist.destroy_process_group()
+        try:
+            # Synchronize before cleanup
+            if self.is_distributed and dist.is_initialized():
+                dist.barrier()
 
-        logger.debug('Distributed manager cleanup completed')
+            # Destroy process group
+            if dist.is_initialized():
+                dist.destroy_process_group()
+
+            self._initialized = False
+            logger.debug(
+                f'Rank {self.rank}: Distributed manager cleanup completed')
+        except Exception as e:
+            logger.warning(
+                f'Rank {self.rank}: Error during distributed cleanup: {e}')
 
     def __enter__(self):
         """Context manager entry."""
