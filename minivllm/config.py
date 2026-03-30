@@ -178,7 +178,7 @@ class Config:
             raise ValueError(
                 f'Failed to load HuggingFace model configuration from {self.model}: {e}. '
                 f'Please ensure the model is a valid HuggingFace model or local directory.'
-            )
+            ) from e
 
     def _adjust_max_model_len(self) -> None:
         """Automatically adjust max_model_len based on model capabilities."""
@@ -195,7 +195,8 @@ class Config:
             warnings.warn(
                 f'auto-adjusting max_model_len from {self.max_model_len} '
                 f'to {new_max_model_len} (model/batch constraints).',
-                UserWarning)
+                UserWarning,
+                stacklevel=2)
             self.max_model_len = new_max_model_len
 
     def _validate_batch_token_constraints(self) -> None:

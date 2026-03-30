@@ -48,7 +48,7 @@ class Block:
         self.ref_count: int = 0
         self.hash: int = -1
         self.token_ids: List[int] = []
-        self.last_access_time: Optional[float] = None  # 用于缓存策略
+        self.last_access_time: Optional[float] = None  # For cache strategy
 
     def update(self, hash_val: int, token_ids: List[int]) -> None:
         """Update block with token data and hash.
@@ -59,7 +59,7 @@ class Block:
         """
         self.hash = hash_val
         self.token_ids = token_ids.copy()
-        self.last_access_time = None  # 重置访问时间
+        self.last_access_time = None  # Reset access time
 
     def reset(self) -> None:
         """Reset block to initial allocated state.
@@ -70,7 +70,7 @@ class Block:
         self.ref_count = 1
         self.hash = -1
         self.token_ids.clear()
-        self.last_access_time = None  # 重置访问时间
+        self.last_access_time = None  # Reset access time
 
 
 class BlockManager:
@@ -441,10 +441,11 @@ class BlockManager:
                 f'Block {last_block.block_id} hash already set')
 
             token_ids: List[int] = sequence.block(sequence.num_blocks - 1)
+            prefix: int
             if len(block_table) > 1:
-                prefix: int = self.blocks[block_table[-2]].hash
+                prefix = self.blocks[block_table[-2]].hash
             else:
-                prefix: int = -1
+                prefix = -1
 
             hash_val: int = self.compute_hash(token_ids, prefix)
             last_block.update(hash_val, token_ids)

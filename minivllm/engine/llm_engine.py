@@ -9,7 +9,7 @@ import os
 import socket
 from dataclasses import fields
 from time import perf_counter
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, TypeAlias, Union
 
 import torch.multiprocessing as mp
 from tqdm.auto import tqdm
@@ -25,6 +25,11 @@ from minivllm.utils.logger_utils import get_logger
 logger = get_logger(__name__)
 
 __all__ = ['LLMEngine']
+
+# Type aliases for complex types
+SamplingParamsInput: TypeAlias = Union[SamplingParams, List[SamplingParams],
+                                       None]
+OutputDict: TypeAlias = Dict[str, Union[str, List[int]]]
 
 
 class LLMEngine:
@@ -260,10 +265,9 @@ class LLMEngine:
     def generate(
         self,
         prompts: Union[List[str], List[List[int]]],
-        sampling_params: Union[SamplingParams, List[SamplingParams],
-                               None] = None,
+        sampling_params: SamplingParamsInput = None,
         use_tqdm: bool = True,
-    ) -> List[Dict[str, Union[str, List[int]]]]:
+    ) -> List[OutputDict]:
         """Generate text completions for multiple prompts.
 
         This is the main API for text generation. It handles:

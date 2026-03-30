@@ -121,6 +121,23 @@ class DistributedManager:
         except Exception as e:
             raise RuntimeError(f'Distributed validation failed: {e}')
 
+    def _move_to_device(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Move tensor to appropriate device based on backend.
+
+        Args:
+            tensor: The tensor to move.
+
+        Returns:
+            Tensor on the appropriate device.
+        """
+        if self.backend == 'nccl':
+            return tensor.cuda()
+        elif self.backend == 'hccl':
+            return tensor.npu()
+        elif self.backend == 'ccl':
+            return tensor.xpu()
+        return tensor
+
     def synchronize(self) -> None:
         """Synchronize all processes."""
         if self.is_distributed and dist.is_initialized():
@@ -148,38 +165,22 @@ class DistributedManager:
             if self.rank == src:
                 data_bytes = pickle.dumps(data)
                 data_size = torch.tensor([len(data_bytes)], dtype=torch.long)
-
-                # Move to appropriate device
-                if self.backend == 'nccl':
-                    data_size = data_size.cuda()
-                elif self.backend == 'hccl':
-                    data_size = data_size.npu()
             else:
                 data_size = torch.tensor([0], dtype=torch.long)
-                if self.backend == 'nccl':
-                    data_size = data_size.cuda()
-                elif self.backend == 'hccl':
-                    data_size = data_size.npu()
 
-            # Broadcast size first
+            # Move to appropriate device and broadcast size
+            data_size = self._move_to_device(data_size)
             dist.broadcast(data_size, src=src)
 
             # Prepare buffer
             if self.rank != src:
-                data_bytes_len = data_size.item()
+                data_bytes_len = int(data_size.item())
                 data_tensor = torch.empty(data_bytes_len, dtype=torch.uint8)
-                if self.backend == 'nccl':
-                    data_tensor = data_tensor.cuda()
-                elif self.backend == 'hccl':
-                    data_tensor = data_tensor.npu()
             else:
                 data_tensor = torch.frombuffer(data_bytes, dtype=torch.uint8)
-                if self.backend == 'nccl':
-                    data_tensor = data_tensor.cuda()
-                elif self.backend == 'hccl':
-                    data_tensor = data_tensor.npu()
 
-            # Broadcast data
+            # Move to device and broadcast data
+            data_tensor = self._move_to_device(data_tensor)
             dist.broadcast(data_tensor, src=src)
 
             # Deserialize on non-source processes
@@ -188,7 +189,7 @@ class DistributedManager:
 
             return data
         except Exception as e:
-            raise RuntimeError(f'Broadcast failed: {e}')
+            raise RuntimeError(f'Broadcast failed: {e}') from e
 
     def gather_data(self, data: Any, dst: int = 0) -> Optional[List[Any]]:
         """Gather data from all processes to destination.
@@ -208,40 +209,29 @@ class DistributedManager:
             data_bytes = pickle.dumps(data)
             data_size = torch.tensor([len(data_bytes)], dtype=torch.long)
 
-            if self.backend == 'nccl':
-                data_size = data_size.cuda()
-            elif self.backend == 'hccl':
-                data_size = data_size.npu()
+            # Move to device
+            data_size = self._move_to_device(data_size)
 
             # Gather sizes
             size_list = [
                 torch.tensor([0], dtype=torch.long)
                 for _ in range(self.world_size)
             ]
-            if self.backend == 'nccl':
-                size_list = [s.cuda() for s in size_list]
-            elif self.backend == 'hccl':
-                size_list = [s.npu() for s in size_list]
+            size_list = [self._move_to_device(s) for s in size_list]
 
             dist.all_gather(size_list, data_size)
 
             # Create tensor for local data
             data_tensor = torch.frombuffer(data_bytes, dtype=torch.uint8)
-            if self.backend == 'nccl':
-                data_tensor = data_tensor.cuda()
-            elif self.backend == 'hccl':
-                data_tensor = data_tensor.npu()
+            data_tensor = self._move_to_device(data_tensor)
 
             # Gather actual data
             if self.rank == dst:
                 tensor_list = [
-                    torch.empty(size.item(), dtype=torch.uint8)
+                    torch.empty(int(size.item()), dtype=torch.uint8)
                     for size in size_list
                 ]
-                if self.backend == 'nccl':
-                    tensor_list = [t.cuda() for t in tensor_list]
-                elif self.backend == 'hccl':
-                    tensor_list = [t.npu() for t in tensor_list]
+                tensor_list = [self._move_to_device(t) for t in tensor_list]
 
                 dist.gather(data_tensor, gather_list=tensor_list, dst=dst)
 
@@ -254,7 +244,7 @@ class DistributedManager:
                 dist.gather(data_tensor, dst=dst)
                 return None
         except Exception as e:
-            raise RuntimeError(f'Gather failed: {e}')
+            raise RuntimeError(f'Gather failed: {e}') from e
 
     def all_gather_data(self, data: Any) -> List[Any]:
         """All-gather data from all processes to all processes.
@@ -273,49 +263,35 @@ class DistributedManager:
             data_bytes = pickle.dumps(data)
             data_size = torch.tensor([len(data_bytes)], dtype=torch.long)
 
-            if self.backend == 'nccl':
-                data_size = data_size.cuda()
-            elif self.backend == 'hccl':
-                data_size = data_size.npu()
+            # Move to device
+            data_size = self._move_to_device(data_size)
 
             # All-gather sizes
             size_list = [
                 torch.tensor([0], dtype=torch.long)
                 for _ in range(self.world_size)
             ]
-            if self.backend == 'nccl':
-                size_list = [s.cuda() for s in size_list]
-            elif self.backend == 'hccl':
-                size_list = [s.npu() for s in size_list]
+            size_list = [self._move_to_device(s) for s in size_list]
 
             dist.all_gather(size_list, data_size)
 
             # Create tensor for local data
             data_tensor = torch.frombuffer(data_bytes, dtype=torch.uint8)
-            if self.backend == 'nccl':
-                data_tensor = data_tensor.cuda()
-            elif self.backend == 'hccl':
-                data_tensor = data_tensor.npu()
+            data_tensor = self._move_to_device(data_tensor)
 
             # All-gather actual data
-            max_size = max(s.item() for s in size_list)
+            max_size = max(int(s.item()) for s in size_list)
             tensor_list = [
                 torch.empty(max_size, dtype=torch.uint8)
                 for _ in range(self.world_size)
             ]
-            if self.backend == 'nccl':
-                tensor_list = [t.cuda() for t in tensor_list]
-            elif self.backend == 'hccl':
-                tensor_list = [t.npu() for t in tensor_list]
+            tensor_list = [self._move_to_device(t) for t in tensor_list]
 
             # Pad data_tensor if needed
             if data_tensor.size(0) < max_size:
                 padding = torch.zeros(max_size - data_tensor.size(0),
                                       dtype=torch.uint8)
-                if self.backend == 'nccl':
-                    padding = padding.cuda()
-                elif self.backend == 'hccl':
-                    padding = padding.npu()
+                padding = self._move_to_device(padding)
                 data_tensor = torch.cat([data_tensor, padding])
 
             dist.all_gather(tensor_list, data_tensor)
@@ -323,7 +299,7 @@ class DistributedManager:
             # Unpack
             result = []
             for i, t in enumerate(tensor_list):
-                size = size_list[i].item()
+                size = int(size_list[i].item())
                 result.append(pickle.loads(t[:size].cpu().numpy().tobytes()))
             return result
         except Exception as e:
