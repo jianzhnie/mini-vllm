@@ -17,6 +17,10 @@ repos:
     hooks:
       - id: trailing-whitespace
       - id: check-yaml
+      - id: check-added-large-files
+      - id: check-json
+      - id: check-toml
+      - id: debug-statements
       - id: end-of-file-fixer
       - id: requirements-txt-fixer
       - id: double-quote-string-fixer
@@ -25,3 +29,9 @@ repos:
         args: ["--remove"]
       - id: mixed-line-ending
         args: ["--fix=lf"]
+  - repo: https://github.com/psf/black
+    rev: 23.12.1
+    hooks:
+      - id: black
+        language_version: python3.10
+        args: [--line-length=88]
