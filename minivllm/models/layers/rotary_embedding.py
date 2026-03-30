@@ -154,6 +154,7 @@ class RotaryEmbedding(nn.Module):
         """
         super().__init__()
         self.head_size: int = head_size
+        self.max_position_embeddings: int = max_position_embeddings
         if rotary_dim != head_size:
             raise ValueError('rotary_dim must equal head_size')
 
