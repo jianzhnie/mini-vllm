@@ -22,8 +22,8 @@ from minivllm.utils.loader import get_default_weight_loader, load_model
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
 
-class TestModel(nn.Module):
-    """Test model with various parameter types for demonstration."""
+class DemoModel(nn.Module):
+    """Demo model with various parameter types for demonstration."""
 
     def __init__(self):
         super().__init__()
@@ -55,10 +55,12 @@ class CustomWeightLoaderModel(nn.Module):
         # Add custom weight loader to the parameter
         self.linear.weight.weight_loader = self._custom_weight_loader
 
-    def _custom_weight_loader(self,
-                              param: nn.Parameter,
-                              tensor: torch.Tensor,
-                              shard_id: int = 0) -> None:
+    def _custom_weight_loader(
+        self,
+        param: nn.Parameter,
+        tensor: torch.Tensor,
+        shard_id: int = 0,
+    ) -> None:
         """Custom weight loader that scales the weights."""
         print(f'Custom weight loader called with shard_id: {shard_id}')
         param.data.copy_(tensor * 0.5)  # Scale weights by 0.5
@@ -98,7 +100,7 @@ def test_basic_loading() -> None:
         temp_path = Path(temp_dir)
         create_test_weights(temp_path)
 
-        model = TestModel()
+        model = DemoModel()
         print('Model parameters before loading:')
         for name, param in model.named_parameters():
             print(f'  {name}: {param.shape}')
@@ -113,7 +115,7 @@ def test_error_handling() -> None:
     print('Testing Error Handling')
     print('=' * 60)
 
-    model = TestModel()
+    model = DemoModel()
 
     # Test non-existent directory
     try:

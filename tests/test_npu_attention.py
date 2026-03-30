@@ -1,11 +1,10 @@
-#!/usr/bin/env python3
-"""Test script for NPU Flash Attention integration in mini-vllm.
+"""Tests for NPU Flash Attention integration.
 
-This script tests the NPU Flash Attention functionality when running on NPU devices.
+This module tests the NPU Flash Attention functionality when running on NPU devices.
+Tests use CPU fallback when NPU is not available.
 """
 
-import unittest
-
+import pytest
 import torch
 from transformers.utils import is_torch_npu_available
 
@@ -14,21 +13,20 @@ from minivllm.models.layers.attention import _NPU_FLASH_ATTN_AVAILABLE, Attentio
 from minivllm.utils.context import Context
 
 
-class TestNPUAttention(unittest.TestCase):
+class TestNPUAvailability:
+    """Tests for NPU availability detection."""
 
-    def test_npu_availability(self):
-        """Test NPU availability and native functions."""
-        print('\nTesting NPU availability...')
-        print(f'NPU available: {is_torch_npu_available()}')
+    def test_npu_availability_report(self):
+        """Report NPU availability and native function status."""
+        print(f'\nNPU available: {is_torch_npu_available()}')
         print(f'Native NPU functions available: {_NPU_FLASH_ATTN_AVAILABLE}')
 
         if is_torch_npu_available():
             try:
                 import torch_npu
 
-                print(
-                    f"torch_npu version: {torch_npu.__version__ if hasattr(torch_npu, '__version__') else 'unknown'}"
-                )
+                version = getattr(torch_npu, '__version__', 'unknown')
+                print(f'torch_npu version: {version}')
                 print(
                     f"npu_fusion_attention available: {hasattr(torch_npu, 'npu_fusion_attention')}"
                 )
@@ -40,37 +38,65 @@ class TestNPUAttention(unittest.TestCase):
         else:
             print('NPU not available - will use CPU fallback')
 
-    def test_attention_creation(self):
-        """Test creating an Attention layer."""
-        print('Testing Attention layer creation...')
+
+class TestAttentionCreation:
+    """Tests for Attention layer creation."""
+
+    def test_attention_creation_basic(self):
+        """Test creating an Attention layer with default parameters."""
         attention = Attention(
             num_heads=8,
             head_dim=64,
             scale=1.0 / 64.0,
             num_kv_heads=8,
         )
-        print('✓ Attention layer created successfully')
-        self.assertEqual(attention.num_heads, 8)
-        self.assertEqual(attention.head_dim, 64)
-        self.assertEqual(attention.num_kv_heads, 8)
-        return attention
+        assert attention.num_heads == 8
+        assert attention.head_dim == 64
+        assert attention.num_kv_heads == 8
+        assert attention.scale == 1.0 / 64.0
 
-    def test_attention_forward(self):
-        """Test forward pass with synthetic data."""
+    def test_attention_creation_gqa(self):
+        """Test creating an Attention layer with GQA."""
+        attention = Attention(
+            num_heads=8,
+            head_dim=64,
+            scale=1.0 / 64.0,
+            num_kv_heads=2,  # GQA
+        )
+        assert attention.num_kv_heads == 2
+
+    def test_attention_creation_mqa(self):
+        """Test creating an Attention layer with MQA."""
+        attention = Attention(
+            num_heads=8,
+            head_dim=64,
+            scale=1.0 / 64.0,
+            num_kv_heads=1,  # MQA
+        )
+        assert attention.num_kv_heads == 1
+
+
+class TestAttentionForward:
+    """Tests for Attention forward pass."""
+
+    def test_prefill_forward(self):
+        """Test forward pass in prefill phase."""
         device = 'npu' if is_torch_npu_available() else 'cpu'
-        print(f'\nTesting attention forward pass on {device}...')
 
-        attention = self.test_attention_creation()
+        attention = Attention(
+            num_heads=8,
+            head_dim=64,
+            scale=1.0 / 64.0,
+            num_kv_heads=8,
+        )
 
-        # Create test tensors
         batch_size = 2
         seq_len = 16
         num_heads = 8
         num_kv_heads = 8
         head_dim = 64
 
-        # Test prefill phase
-        print('Testing prefill phase...')
+        # Create test tensors
         q = torch.randn(batch_size * seq_len,
                         num_heads,
                         head_dim,
@@ -84,7 +110,7 @@ class TestNPUAttention(unittest.TestCase):
                         head_dim,
                         device=device)
 
-        # Create mock context for prefill
+        # Create context for prefill
         context = Context(
             is_prefill=True,
             max_seqlen_q=seq_len,
@@ -97,26 +123,20 @@ class TestNPUAttention(unittest.TestCase):
             slot_mapping=torch.arange(batch_size * seq_len, device=device),
         )
 
-        # Set the context
         context_module._CONTEXT_VAR.set(context)
 
         try:
             with torch.no_grad():
                 output = attention(q, k, v)
-                print(f'✓ Prefill output shape: {output.shape}')
                 expected_shape = (batch_size * seq_len, num_heads, head_dim)
-                self.assertEqual(output.shape, expected_shape)
-        except Exception as e:
-            self.fail(f'Prefill phase failed: {e}')
+                assert output.shape == expected_shape
+        finally:
+            context_module.reset_context()
 
-    def test_npu_oom_handling(self):
-        """Test OOM handling logic (mocked)."""
-        if not is_torch_npu_available():
-            return
+    def test_decode_forward(self):
+        """Test forward pass in decode phase (single token)."""
+        device = 'npu' if is_torch_npu_available() else 'cpu'
 
-        print('\nTesting NPU OOM handling...')
-        # This is a bit hard to test without actually causing OOM,
-        # but we can check if the backend has the method.
         attention = Attention(
             num_heads=8,
             head_dim=64,
@@ -124,20 +144,79 @@ class TestNPUAttention(unittest.TestCase):
             num_kv_heads=8,
         )
 
+        batch_size = 2
+        num_heads = 8
+        num_kv_heads = 8
+        head_dim = 64
+
+        # Initialize KV cache for decode phase
+        attention.k_cache = torch.randn(10,
+                                        16,
+                                        num_kv_heads,
+                                        head_dim,
+                                        device=device)
+        attention.v_cache = torch.randn(10,
+                                        16,
+                                        num_kv_heads,
+                                        head_dim,
+                                        device=device)
+        attention._cache_initialized = True
+
+        # Single token decode
+        q = torch.randn(batch_size, num_heads, head_dim, device=device)
+        k = torch.randn(batch_size, num_kv_heads, head_dim, device=device)
+        v = torch.randn(batch_size, num_kv_heads, head_dim, device=device)
+
+        context = Context(
+            is_prefill=False,
+            max_seqlen_q=1,
+            max_seqlen_k=16,
+            cum_seqlens_q=None,
+            cum_seqlens_k=None,
+            block_tables=torch.tensor([[0, 1], [2, 3]], device=device),
+            slot_mapping=torch.arange(batch_size, device=device),
+            context_lens=torch.tensor([16, 16], device=device),
+        )
+
+        context_module._CONTEXT_VAR.set(context)
+
+        try:
+            with torch.no_grad():
+                output = attention(q, k, v)
+                expected_shape = (batch_size, num_heads, head_dim)
+                assert output.shape == expected_shape
+        finally:
+            context_module.reset_context()
+
+
+class TestNPUOOMHandling:
+    """Tests for NPU OOM handling."""
+
+    def test_oom_handling_logic(self):
+        """Test OOM handling logic (mocked)."""
+        if not is_torch_npu_available():
+            pytest.skip('NPU not available')
+
         from minivllm.models.layers.attention_backend import NPUAttentionBackend
 
+        attention = Attention(
+            num_heads=8,
+            head_dim=64,
+            scale=1.0 / 64.0,
+            num_kv_heads=8,
+        )
+
         if isinstance(attention.backend, NPUAttentionBackend):
-            # Mock exception
+            # Test OOM error handling
             oom_error = RuntimeError('NPU out of memory')
             handled = attention.backend._handle_oom(oom_error)
-            print(f'OOM handled: {handled}')
-            self.assertTrue(handled)
+            assert handled is True
 
+            # Test non-OOM error handling
             other_error = RuntimeError('Some other error')
             handled = attention.backend._handle_oom(other_error)
-            print(f'Other error handled: {handled}')
-            self.assertFalse(handled)
+            assert handled is False
 
 
 if __name__ == '__main__':
-    unittest.main()
+    pytest.main([__file__, '-v'])
