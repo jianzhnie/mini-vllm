@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -15,7 +14,7 @@ class SamplingConfig:
     frequency_penalty: float = 0.0
     presence_penalty: float = 0.0
     avoid_top_k: int = 0  # for TopTokenRestriction
-    seed: Optional[int] = None
+    seed: int | None = None
 
     def __post_init__(self):
         if self.temperature < 0:

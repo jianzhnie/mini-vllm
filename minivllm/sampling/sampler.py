@@ -2,8 +2,6 @@
 Unified Sampler class replacing the previous fragmented implementations.
 """
 
-from typing import Optional
-
 import torch
 from torch import Tensor, nn
 
@@ -22,23 +20,23 @@ class Sampler(nn.Module):
     functional usage (passing parameters at call time).
     """
 
-    def __init__(self, config: Optional[SamplingConfig] = None):
+    def __init__(self, config: SamplingConfig | None = None):
         super().__init__()
         self.config = config or SamplingConfig()
 
     def forward(
         self,
         logits: Tensor,
-        config: Optional[SamplingConfig] = None,
+        config: SamplingConfig | None = None,
         # Optional overrides for batch processing
-        temperatures: Optional[Tensor] = None,
-        top_ks: Optional[Tensor] = None,
-        top_ps: Optional[Tensor] = None,
-        min_ps: Optional[Tensor] = None,
-        typical_ps: Optional[Tensor] = None,
-        avoid_top_ks: Optional[Tensor] = None,
-        prev_tokens: Optional[Tensor] = None,
-        generator: Optional[torch.Generator] = None,
+        temperatures: Tensor | None = None,
+        top_ks: Tensor | None = None,
+        top_ps: Tensor | None = None,
+        min_ps: Tensor | None = None,
+        typical_ps: Tensor | None = None,
+        avoid_top_ks: Tensor | None = None,
+        prev_tokens: Tensor | None = None,
+        generator: torch.Generator | None = None,
     ) -> Tensor:
         """
         Sample tokens from logits.
@@ -117,10 +115,23 @@ class Sampler(nn.Module):
 
 
 class GreedySampler(Sampler):
+    """Greedy sampler that always selects the token with highest logit.
 
-    def __init__(self):
-        super().__init__(
-            SamplingConfig(temperature=1e-8))  # Effectively greedy
+    This is faster than using temperature=0 since it bypasses all sampling logic
+    and directly uses argmax.
+    """
+
+    def forward(self, logits: Tensor, **kwargs) -> Tensor:
+        """Select token with highest logit (argmax).
+
+        Args:
+            logits: [batch_size, vocab_size]
+            **kwargs: Ignored (for API compatibility)
+
+        Returns:
+            Long tensor of shape [batch_size] with selected token IDs
+        """
+        return torch.argmax(logits, dim=-1)
 
 
 class RandomSampler(Sampler):

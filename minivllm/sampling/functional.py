@@ -3,8 +3,6 @@ Stateless functional implementations of sampling strategies.
 These functions operate on logits and return modified logits or samples.
 """
 
-from typing import Optional
-
 import torch
 from torch import Tensor
 
@@ -21,11 +19,9 @@ try:
     compile_ops = True
 
     # Disable compile on NPU to avoid backend errors
-    if hasattr(torch, 'npu') and torch.npu.is_available():
-        compile_ops = False
-    # Disable compile on CPU to avoid OpenMP issues on macOS
-    elif not torch.cuda.is_available() and not torch.backends.mps.is_available(
-    ):
+    if (hasattr(torch, 'npu') and torch.npu.is_available()
+            or not torch.cuda.is_available()
+            and not torch.backends.mps.is_available()):
         compile_ops = False
 except ImportError:
     compile_ops = False
@@ -41,13 +37,22 @@ def apply_temperature(logits: Tensor, temperature: Tensor) -> Tensor:
     """
     Apply temperature scaling to logits.
 
+    Lower temperature (< 1.0) makes the distribution more peaked (greedy).
+    Higher temperature (> 1.0) makes the distribution more uniform (random).
+
     Args:
         logits: [batch_size, vocab_size]
         temperature: [batch_size] or scalar
 
     Returns:
         scaled logits
+
+    Raises:
+        ValueError: If logits is not 2D or temperature values are invalid
     """
+    if logits.dim() != 2:
+        raise ValueError(
+            f'logits must be 2D [batch_size, vocab_size], got {logits.shape}')
     if isinstance(temperature, float):
         if temperature == 1.0:
             return logits
@@ -72,15 +77,26 @@ def apply_top_k(logits: Tensor,
     """
     Apply Top-K filtering.
 
+    Keeps only the k tokens with highest logits for each sequence.
+
     Args:
         logits: [batch_size, vocab_size]
         top_k: [batch_size] or scalar integer.
                If 0 or >= vocab_size, no filtering is applied for that sample.
         filter_value: Value to set for filtered tokens.
+
+    Returns:
+        Filtered logits
     """
+    if logits.dim() != 2:
+        raise ValueError(
+            f'logits must be 2D [batch_size, vocab_size], got {logits.shape}')
+
+    vocab_size = logits.size(-1)
+
     # Handle scalar k
     if isinstance(top_k, int):
-        if top_k <= 0 or top_k >= logits.size(-1):
+        if top_k <= 0 or top_k >= vocab_size:
             return logits
         top_k = torch.full((logits.size(0), ),
                            top_k,
@@ -88,7 +104,7 @@ def apply_top_k(logits: Tensor,
                            dtype=torch.long)
 
     # Check if any k is active
-    active_mask = (top_k > 0) & (top_k < logits.size(-1))
+    active_mask = (top_k > 0) & (top_k < vocab_size)
     if not active_mask.any():
         return logits
 
@@ -128,10 +144,20 @@ def apply_top_p(logits: Tensor,
     """
     Apply Top-P (Nucleus) filtering.
 
+    Keeps the smallest set of tokens whose cumulative probability >= p.
+    This is known as "nucleus sampling" and tends to produce more coherent text.
+
     Args:
         logits: [batch_size, vocab_size]
-        top_p: [batch_size] or scalar float.
+        top_p: [batch_size] or scalar float in range [0, 1]
+
+    Returns:
+        Filtered logits
     """
+    if logits.dim() != 2:
+        raise ValueError(
+            f'logits must be 2D [batch_size, vocab_size], got {logits.shape}')
+
     # Handle scalar p
     if isinstance(top_p, float):
         if top_p >= 1.0 or top_p <= 0.0:
@@ -174,10 +200,20 @@ def apply_min_p(logits: Tensor,
     """
     Apply Min-P filtering.
 
+    Filters out tokens with probability < min_p * max_prob.
+    This removes very unlikely tokens while keeping relative probabilities.
+
     Args:
         logits: [batch_size, vocab_size]
-        min_p: [batch_size] or scalar float.
+        min_p: [batch_size] or scalar float in range [0, 1]
+
+    Returns:
+        Filtered logits
     """
+    if logits.dim() != 2:
+        raise ValueError(
+            f'logits must be 2D [batch_size, vocab_size], got {logits.shape}')
+
     # Handle scalar min_p
     if isinstance(min_p, float):
         if min_p <= 0.0:
@@ -206,15 +242,17 @@ def apply_typical_filtering(logits: Tensor,
     """
     Apply Typical Sampling filtering.
 
+    Typical sampling selects tokens based on how close their information content
+    (negative log probability) is to the expected information content (entropy).
+    This produces more coherent and diverse text compared to pure top-p sampling.
+
     Args:
         logits: [batch_size, vocab_size]
-        tau: float, typical threshold (default 1.0)
+        tau: float, typical threshold (default 1.0).
+             When tau >= 1.0, typical sampling is effectively disabled (returns original logits).
     """
-    if tau == 1.0:  # Logic in original code says if tau > 0. But default is 1.0.
-        # If typical sampling is disabled, usually we don't call this.
-        # But here we assume tau controls the strictness.
-        # Wait, if tau is used, we MUST calculate entropy.
-        pass
+    if tau >= 1.0:
+        return logits
 
     logits = logits.clone()
     probs = torch.softmax(logits, dim=-1)
@@ -410,7 +448,7 @@ def apply_presence_penalty(logits: Tensor, sequence: Tensor,
 
 
 def sample_from_logits(logits: Tensor,
-                       generator: Optional[torch.Generator] = None) -> Tensor:
+                       generator: torch.Generator | None = None) -> Tensor:
     """
     Sample one token from logits using multinomial sampling.
     """

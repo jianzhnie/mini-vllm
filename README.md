@@ -3,6 +3,8 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-yellow.svg)](https://opensource.org/licenses/Apache-2.0)
 
+简体中文 | [English](README_EN.md)
+
 🚀 **轻量级高效的大语言模型推理引擎**
 
 mini-vLLM 是一个从零开始构建的轻量级大语言模型推理引擎，目标是提供一个简单、高效、可扩展的推理解决方案，帮助开发者快速理解大语言模型的推理原理。mini-vLLM 不是 vLLM 的直接替代品，而是一个专注于理解和学习的项目。

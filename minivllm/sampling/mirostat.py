@@ -16,8 +16,6 @@ The algorithm works by:
 
 """
 
-from typing import Optional
-
 import torch
 from torch import Tensor, nn
 from torch.distributions import Categorical
@@ -45,7 +43,7 @@ class MirostatSampler(nn.Module):
         self.learning_rate = learning_rate
         self.max_temperature = max_temperature
         self.temperature = 1.0
-        self.previous_surprise: Optional[Tensor] = None
+        self.previous_surprise: Tensor | None = None
 
     def __call__(self, logits: Tensor) -> Tensor:
         """
