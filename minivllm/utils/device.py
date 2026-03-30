@@ -34,6 +34,44 @@ from minivllm.utils.logger_utils import get_logger
 
 logger = get_logger(__name__)
 
+
+def _call_device_method(
+    device_type: str,
+    method: str,
+    *args: Any,
+    default: Any = None,
+    **kwargs: Any,
+) -> Any:
+    """Call a device-specific method if available.
+
+    This is an internal helper function to reduce code duplication when
+    calling device-specific methods like empty_cache, synchronize, etc.
+
+    Args:
+        device_type: Type of device ('cuda', 'npu', 'xpu', etc.)
+        method: Method name to call on the device module
+        *args: Positional arguments to pass to the method
+        default: Default value to return if method is not available
+        **kwargs: Keyword arguments to pass to the method
+
+    Returns:
+        Result of the method call, or default value if not available
+
+    Example:
+        >>> _call_device_method('cuda', 'empty_cache')
+        >>> _call_device_method('npu', 'synchronize', device)
+    """
+    if not hasattr(torch, device_type):
+        return default
+    device_module = getattr(torch, device_type)
+    if not hasattr(device_module, method):
+        return default
+    try:
+        return getattr(device_module, method)(*args, **kwargs)
+    except Exception:
+        return default
+
+
 # Device type constants for easier reference and type checking
 DEVICE_TYPE_CUDA: str = 'cuda'
 DEVICE_TYPE_NPU: str = 'npu'
@@ -268,19 +306,11 @@ def empty_cache() -> None:
     Not all device types support this operation, in which case it will
     be silently ignored.
     """
-    try:
-        if is_torch_npu_available():
-            torch.npu.empty_cache()
-        elif is_torch_cuda_available():
-            torch.cuda.empty_cache()
-        elif is_torch_xpu_available():
-            torch.xpu.empty_cache()
-        # Other devices (MPS, MLU, MUSA, CPU) don't have empty_cache methods
-        # or don't need explicit cache clearing
-    except Exception as e:
-        logger.debug(
-            f'Failed to empty cache: {e}. This may be normal for some device types.'
-        )
+    device_type = get_default_device_name()
+    if device_type in ('cuda', 'npu', 'xpu'):
+        _call_device_method(device_type, 'empty_cache')
+    # Other devices (MPS, MLU, MUSA, CPU) don't have empty_cache methods
+    # or don't need explicit cache clearing
 
 
 def synchronize(device: Optional[torch.device] = None) -> None:
@@ -296,20 +326,10 @@ def synchronize(device: Optional[torch.device] = None) -> None:
         device = get_current_device()
 
     device_type = device.type
-    try:
-        if device_type == 'cuda':
-            torch.cuda.synchronize(device)
-        elif device_type == 'npu':
-            torch.npu.synchronize(device)
-        elif device_type == 'xpu':
-            torch.xpu.synchronize(device)
-        # Other devices (MPS, MLU, MUSA, CPU) don't have synchronize methods
-        # or don't need explicit synchronization
-    except Exception as e:
-        logger.debug(
-            f'Failed to synchronize device {device}: {e}. '
-            f'This may be normal for devices that don\'t support synchronization.'
-        )
+    if device_type in ('cuda', 'npu', 'xpu'):
+        _call_device_method(device_type, 'synchronize', device)
+    # Other devices (MPS, MLU, MUSA, CPU) don't have synchronize methods
+    # or don't need explicit synchronization
 
 
 def reset_peak_memory_stats(device: Optional[torch.device] = None) -> None:
