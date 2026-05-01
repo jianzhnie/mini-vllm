@@ -12,13 +12,12 @@ Usage:
     python examples/npu_flash_attention_example.py --model /path/to/model
 """
 
-import argparse
-import os
 import sys
-import time
-from typing import Optional
 
 import torch
+
+from minivllm.config import Config
+from minivllm.utils.example_utils import DEFAULT_MODEL
 
 
 def check_npu_environment() -> bool:
@@ -61,13 +60,9 @@ def check_npu_environment() -> bool:
 
 
 def demo_attention_layer():
-    """Demonstrate low-level NPU Flash Attention via the Attention layer.
-
-    This shows prefill and decode phases using mini-vLLM's Attention module
-    with the NPU backend automatically selected.
-    """
+    """Demonstrate low-level NPU Flash Attention via the Attention layer."""
     from minivllm.models.layers.attention import Attention
-    from minivllm.utils.context import Context, set_context, reset_context
+    from minivllm.utils.context import set_context, reset_context
 
     print('=' * 60)
     print('Demo: Low-level Attention Layer on NPU')
@@ -151,10 +146,7 @@ def demo_attention_layer():
 
 
 def demo_npu_inference_backend():
-    """Demonstrate the NPUAttentionBackend directly.
-
-    Shows unified_inference API that auto-selects prefill/decode kernels.
-    """
+    """Demonstrate the NPUAttentionBackend directly."""
     from minivllm.models.layers.attention_backend import NPUAttentionBackend
 
     print('=' * 60)
@@ -167,7 +159,6 @@ def demo_npu_inference_backend():
     num_heads = 8
     num_kv_heads = 8
     head_dim = 64
-    scale = 1.0 / (head_dim ** 0.5)
 
     # Prefill
     batch_size = 2
@@ -187,33 +178,39 @@ def demo_npu_inference_backend():
     print()
 
 
-def demo_llm_inference(model_path: Optional[str] = None):
-    """Demonstrate full LLM inference on NPU using the high-level API.
-
-    Args:
-        model_path: Path to a local model or HuggingFace model ID.
-    """
+def demo_llm_inference(model_path=None):
+    """Demonstrate full LLM inference on NPU using the high-level API."""
     from minivllm import LLM, SamplingParams
 
     print('=' * 60)
     print('Demo: Full LLM Inference on NPU')
     print('=' * 60)
 
-    model = model_path or os.environ.get(
-        'MINIVLLM_MODEL', 'facebook/opt-125m')
+    if model_path:
+        config = Config(
+            model=model_path,
+            max_num_seqs=4,
+            max_model_len=128,
+            enforce_eager=True,
+            trust_remote_code=True,
+            device_memory_utilization=0.8,
+            dtype='float16',
+        )
+    else:
+        config = Config(
+            model=DEFAULT_MODEL,
+            max_num_seqs=4,
+            max_model_len=128,
+            enforce_eager=True,
+            trust_remote_code=True,
+            device_memory_utilization=0.8,
+            dtype='float16',
+        )
 
-    print(f'Model: {model}')
+    print(f'Model: {config.model}')
     print(f'Device: NPU')
 
-    llm = LLM(
-        model=model,
-        max_num_seqs=4,
-        max_model_len=128,
-        enforce_eager=True,
-        trust_remote_code=True,
-        device_memory_utilization=0.8,
-        dtype='float16',
-    )
+    llm = LLM(config)
 
     prompts = [
         'Hello, who are you?',
@@ -233,21 +230,7 @@ def demo_llm_inference(model_path: Optional[str] = None):
     print()
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description='NPU Flash Attention Example',
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument('--model', type=str, default=None,
-                        help='Model path or HuggingFace model ID')
-    parser.add_argument('--skip-low-level', action='store_true',
-                        help='Skip low-level attention demos')
-    return parser.parse_args()
-
-
 def main():
-    args = parse_args()
-
     print('mini-vLLM NPU Flash Attention Example\n')
 
     if not check_npu_environment():
@@ -259,7 +242,10 @@ def main():
 
     torch.npu.set_device(0)
 
-    if not args.skip_low_level:
+    # Optional: skip low-level demos via --skip-low-level
+    skip_low_level = '--skip-low-level' in sys.argv
+
+    if not skip_low_level:
         try:
             demo_attention_layer()
         except Exception as e:
@@ -270,9 +256,17 @@ def main():
         except Exception as e:
             print(f'Backend demo failed: {e}')
 
-    if args.model:
+    # Optional: run LLM demo via --model <path>
+    model_path = None
+    args = sys.argv[1:]
+    for i, arg in enumerate(args):
+        if arg == '--model' and i + 1 < len(args):
+            model_path = args[i + 1]
+            break
+
+    if model_path:
         try:
-            demo_llm_inference(args.model)
+            demo_llm_inference(model_path)
         except Exception as e:
             print(f'LLM inference demo failed: {e}')
 
