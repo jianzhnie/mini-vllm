@@ -231,7 +231,7 @@ class Sequence:
         self.num_tokens += 1
 
     def __getstate__(
-            self) -> Tuple[int, int, int, List[int], Union[List[int], int]]:
+            self) -> Tuple[int, int, int, List[int], Union[List[int], int], float, float, int, float, int, bool]:
         """Prepare sequence state for serialization/pickling.
 
         This method optimizes serialization by only storing complete
@@ -246,6 +246,12 @@ class Sequence:
             - block_table: Physical block table for cache mapping
             - token_ids or last_token: Full prompt or just the last
               generated token (for memory efficiency)
+            - temperature: Sampling temperature
+            - top_p: Top-p sampling threshold
+            - top_k: Top-k sampling value
+            - min_p: Minimum probability threshold
+            - max_tokens: Maximum tokens to generate
+            - ignore_eos: Whether to ignore end-of-sequence token
         """
         return (
             self.num_tokens,

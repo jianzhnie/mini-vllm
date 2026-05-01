@@ -1,6 +1,7 @@
 """Shared utilities for mini-vLLM example scripts."""
 
 import os
+from typing import List
 
 from minivllm.utils.logger_utils import get_logger
 
@@ -12,8 +13,8 @@ DEFAULT_MODEL = os.environ.get(
 
 def format_prompts_with_chat_template(
     tokenizer: object,
-    prompts: list[str],
-) -> list[str]:
+    prompts: List[str],
+) -> List[str]:
     """Format prompts using the tokenizer's chat template if available.
 
     Args:
@@ -33,7 +34,7 @@ def format_prompts_with_chat_template(
         return prompts
 
     logger.info('Applying chat template to prompts...')
-    formatted_prompts: list[str] = []
+    formatted_prompts: List[str] = []
     try:
         for prompt in prompts:
             messages = [{'role': 'user', 'content': prompt}]

@@ -2,6 +2,8 @@
 Unified Sampler class replacing the previous fragmented implementations.
 """
 
+from typing import Optional
+
 import torch
 from torch import Tensor, nn
 
@@ -20,23 +22,23 @@ class Sampler(nn.Module):
     functional usage (passing parameters at call time).
     """
 
-    def __init__(self, config: SamplingConfig | None = None):
+    def __init__(self, config: Optional[SamplingConfig] = None):
         super().__init__()
         self.config = config or SamplingConfig()
 
     def forward(
         self,
         logits: Tensor,
-        config: SamplingConfig | None = None,
+        config: Optional[SamplingConfig] = None,
         # Optional overrides for batch processing
-        temperatures: Tensor | None = None,
-        top_ks: Tensor | None = None,
-        top_ps: Tensor | None = None,
-        min_ps: Tensor | None = None,
-        typical_ps: Tensor | None = None,
-        avoid_top_ks: Tensor | None = None,
-        prev_tokens: Tensor | None = None,
-        generator: torch.Generator | None = None,
+        temperatures: Optional[Tensor] = None,
+        top_ks: Optional[Tensor] = None,
+        top_ps: Optional[Tensor] = None,
+        min_ps: Optional[Tensor] = None,
+        typical_ps: Optional[Tensor] = None,
+        avoid_top_ks: Optional[Tensor] = None,
+        prev_tokens: Optional[Tensor] = None,
+        generator: Optional[torch.Generator] = None,
     ) -> Tensor:
         """
         Sample tokens from logits.

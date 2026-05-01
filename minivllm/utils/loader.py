@@ -12,7 +12,7 @@ Example:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Optional, Tuple, Union
 
 import torch
 from safetensors import safe_open
@@ -23,7 +23,7 @@ from minivllm.utils.logger_utils import get_logger
 logger = get_logger(__name__)
 
 # Type aliases
-PackedModulesMapping = dict[str, Tuple[str, Any]]
+PackedModulesMapping = Dict[str, Tuple[str, Any]]
 WeightLoader = Callable[..., None]
 
 

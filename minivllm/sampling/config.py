@@ -1,6 +1,7 @@
 """Internal sampling configuration used by the Sampler."""
 
 from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass
@@ -20,7 +21,7 @@ class SamplingConfig:
     frequency_penalty: float = 0.0
     presence_penalty: float = 0.0
     avoid_top_k: int = 0
-    seed: int | None = None
+    seed: Optional[int] = None
 
     def __post_init__(self) -> None:
         if self.temperature < 0:
