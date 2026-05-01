@@ -95,7 +95,7 @@ class TestBlockManagement:
 
     def test_single_block_sequence(self) -> None:
         """Test sequence that fits in single block."""
-        token_ids = [i for i in range(200)]
+        token_ids = [i for i in range(50)]
         seq = Sequence(token_ids)
 
         assert seq.num_blocks == 1
@@ -103,28 +103,28 @@ class TestBlockManagement:
 
     def test_multi_block_sequence(self) -> None:
         """Test sequence spanning multiple blocks."""
-        # Create a sequence with 600 tokens (> 2 blocks of 256)
-        token_ids = [i for i in range(600)]
+        # Create a sequence with 200 tokens (> 3 blocks of 64)
+        token_ids = [i for i in range(200)]
         seq = Sequence(token_ids)
 
-        assert seq.num_blocks == 3
-        assert seq.last_block_num_tokens == 88  # 600 - 2*256
+        assert seq.num_blocks == 4
+        assert seq.last_block_num_tokens == 8  # 200 - 3*64
 
     def test_block_allocation_tracking(self) -> None:
         """Test tracking of block allocation."""
-        seq = Sequence([1] * 256)
+        seq = Sequence([1] * 64)
 
         # Initially no cached tokens
         assert seq.num_cached_tokens == 0
         assert seq.num_cached_blocks == 0
 
         # Simulate caching tokens (would be done by block_manager)
-        seq.num_cached_tokens = 256
+        seq.num_cached_tokens = 64
         assert seq.num_cached_blocks == 1
 
     def test_block_table_management(self) -> None:
         """Test block table tracking."""
-        seq = Sequence([1] * 512)
+        seq = Sequence([1] * 128)
 
         # Block table starts empty
         assert seq.block_table == []

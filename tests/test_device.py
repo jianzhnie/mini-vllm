@@ -64,7 +64,8 @@ def test_tensor_movement():
     # Test moving to current device
     current_device = get_current_device()
     tensor_on_device = move_tensor_to_device(tensor, current_device)
-    assert tensor_on_device.device == current_device
+    # Compare device types (MPS may or may not include index)
+    assert tensor_on_device.device.type == current_device.type
 
     # Test moving back to CPU
     tensor_on_cpu = move_tensor_to_device(tensor_on_device,

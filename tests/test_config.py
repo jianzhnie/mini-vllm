@@ -89,7 +89,7 @@ class TestConfigDefaults:
         assert config.device_memory_utilization == 0.9
         assert config.tensor_parallel_size == 1
         assert config.enforce_eager is False
-        assert config.kvcache_block_size == 256
+        assert config.kvcache_block_size == 64
 
 
 class TestConfigInvalidPaths:

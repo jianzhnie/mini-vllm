@@ -131,7 +131,7 @@ class TestSequenceProperties:
 
     def test_num_blocks_calculation(self) -> None:
         """Test num_blocks calculation."""
-        seq = Sequence([1] * 256)  # Exactly one block
+        seq = Sequence([1] * 64)  # Exactly one block
         assert seq.num_blocks == 1
 
         seq.append_token(2)
@@ -140,20 +140,20 @@ class TestSequenceProperties:
 
     def test_block_retrieval(self) -> None:
         """Test block() method for retrieving token blocks."""
-        token_ids = [i for i in range(512)]  # 2 blocks
+        token_ids = [i for i in range(128)]  # 2 blocks
         seq = Sequence(token_ids)
 
         block_0 = seq.block(0)
-        assert len(block_0) == 256
-        assert block_0 == list(range(256))
+        assert len(block_0) == 64
+        assert block_0 == list(range(64))
 
         block_1 = seq.block(1)
-        assert len(block_1) == 256
-        assert block_1 == list(range(256, 512))
+        assert len(block_1) == 64
+        assert block_1 == list(range(64, 128))
 
     def test_block_retrieval_out_of_range(self) -> None:
         """Test that accessing invalid block raises IndexError."""
-        seq = Sequence([1] * 256)
+        seq = Sequence([1] * 64)
 
         with pytest.raises(IndexError, match='Block index'):
             seq.block(1)

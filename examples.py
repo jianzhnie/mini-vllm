@@ -53,7 +53,7 @@ class ExampleConfig:
         max_num_seqs: Maximum number of sequences to process in parallel.
         max_model_len: Maximum sequence length for the model.
         device_memory_utilization: Fraction of device memory to use (0.1-1.0).
-        kvcache_block_size: Size of KV cache blocks in tokens (must be divisible by 256).
+        kvcache_block_size: Size of KV cache blocks in tokens (must be divisible by 64).
         dtype: Data type for model weights ('auto', 'float16', 'float32', 'bfloat16').
         enforce_eager: Force eager execution mode (disables CUDA Graph).
         temperature: Sampling temperature (> 1e-10, higher = more random).
@@ -62,11 +62,12 @@ class ExampleConfig:
         max_tokens: Maximum tokens to generate per prompt.
         prompts: List of prompts to generate from.
     """
-    model_name_or_path: str = '/Users/jianzhengnie/hfhub/models/facebook/opt-125m'
+    model_name_or_path: str = os.environ.get(
+        'MINIVLLM_MODEL', 'facebook/opt-125m')
     max_num_seqs: int = 8
     max_model_len: int = 64
     device_memory_utilization: float = 0.4
-    kvcache_block_size: int = 256
+    kvcache_block_size: int = 64
     dtype: str = 'float32'
     enforce_eager: bool = True
     temperature: float = 0.6
@@ -105,7 +106,7 @@ def parse_args() -> ExampleConfig:
         type=str,
         default=os.environ.get(
             'MINIVLLM_MODEL',
-            '/Users/jianzhengnie/hfhub/models/facebook/opt-125m',
+            'facebook/opt-125m',
         ),
         help=
         'Path to the model (HuggingFace format). Can also be set via MINIVLLM_MODEL env var.',
@@ -211,7 +212,8 @@ def validate_config(config: ExampleConfig) -> None:
     Raises:
         ValueError: If any parameter is invalid.
     """
-    if not Path(config.model_name_or_path).exists():
+    # Validate model: accept either a local directory or a HuggingFace model ID
+    if not Path(config.model_name_or_path).is_dir() and '/' in config.model_name_or_path:
         raise ValueError(
             f'Model path does not exist: {config.model_name_or_path}\n'
             f'Set the model path via --model argument or MINIVLLM_MODEL environment variable.'
@@ -231,6 +233,15 @@ def validate_config(config: ExampleConfig) -> None:
         )
 
     if config.kvcache_block_size % 64 != 0:
+        raise ValueError(
+            f'kvcache_block_size must be divisible by 64, got {config.kvcache_block_size}'
+        )
+
+    if not Path(config.model_name_or_path).exists():
+        # Could be a HuggingFace model ID, only validate local paths
+        if os.path.isdir(config.model_name_or_path) or '/' not in config.model_name_or_path:
+            pass  # OK: either a HF hub ID or existing directory
+        else:
         raise ValueError(
             f'kvcache_block_size must be divisible by 64, got {config.kvcache_block_size}'
         )
