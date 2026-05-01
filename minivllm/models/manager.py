@@ -12,9 +12,7 @@ from typing import Any, Dict
 from transformers import AutoConfig, AutoTokenizer
 
 from minivllm.config import Config
-from minivllm.models.opt import OPTForCausalLM
-from minivllm.models.qwen2 import Qwen2ForCausalLM
-from minivllm.models.qwen3 import Qwen3ForCausalLM
+from minivllm.models.registry import create_model
 from minivllm.utils.device import (
     empty_cache,
     get_current_device,
@@ -129,34 +127,17 @@ class ModelManager:
     def _load_model(self) -> None:
         """Load the model based on configuration."""
         try:
-            # Determine model type from config or auto-detect
-            self.model_type = self._detect_model_type()
-
-            # Ensure HF config is loaded (Config usually does this)
             if not self.config.hf_config:
-                # Fallback: load it manually if missing (should not happen)
                 logger.warning('HF config missing in Config, loading manually')
                 self.config.hf_config = AutoConfig.from_pretrained(
                     self.config.model, trust_remote_code=True)
 
-            hf_config = self.config.hf_config
+            self.model = create_model(self.config.hf_config)
+            self.model_type = type(self.model).__name__.replace(
+                'ForCausalLM', '').lower()
 
-            # Instantiate model class
-            if self.model_type == 'qwen2':
-                self.model = Qwen2ForCausalLM(hf_config)
-            elif self.model_type == 'qwen3':
-                self.model = Qwen3ForCausalLM(hf_config)
-            elif self.model_type == 'opt':
-                self.model = OPTForCausalLM(hf_config)
-            else:
-                raise ValueError(f'Unsupported model type: {self.model_type}')
-
-            # Load weights into the model
-            # tensor_parallel_size and dtype are handled by model components
-            # or Config validation, and load_model just copies weights.
             load_model(self.model, self.config.model)
 
-            # Move model to device
             if self.device:
                 self.model.to(self.device)
 
@@ -167,87 +148,24 @@ class ModelManager:
             logger.exception('Failed to load model')
             raise RuntimeError(f'Failed to load model: {e}')
 
-    def _detect_model_type(self) -> str:
-        """Detect model type based on model name or configuration."""
-        # Try to use loaded HF config first
-        if self.config.hf_config and hasattr(self.config.hf_config,
-                                             'model_type'):
-            model_type = self.config.hf_config.model_type.lower()
-            if model_type == 'qwen2':
-                return 'qwen2'
-            if model_type == 'qwen3':
-                return 'qwen3'
-            if model_type == 'opt':
-                return 'opt'
-
-        # Also check architectures list from HF config
-        if self.config.hf_config:
-            architectures = getattr(self.config.hf_config, 'architectures', [])
-            if 'Qwen2ForCausalLM' in architectures:
-                return 'qwen2'
-            if 'Qwen3ForCausalLM' in architectures:
-                return 'qwen3'
-            if 'OPTForCausalLM' in architectures:
-                return 'opt'
-
-        # Fallback to path string matching
-        model_path_lower = self.config.model.lower()
-
-        if 'qwen2' in model_path_lower:
-            return 'qwen2'
-        elif 'qwen3' in model_path_lower:
-            return 'qwen3'
-        elif 'qwen' in model_path_lower:
-            return 'qwen3'
-        elif 'opt' in model_path_lower:
-            return 'opt'
-        else:
-            # Try to auto-detect by loading config if not already present
-            try:
-                config = AutoConfig.from_pretrained(self.config.model,
-                                                    trust_remote_code=True)
-                model_type = getattr(config, 'model_type', '').lower()
-
-                if model_type == 'qwen2':
-                    return 'qwen2'
-                elif model_type == 'qwen3':
-                    return 'qwen3'
-                elif model_type == 'opt':
-                    return 'opt'
-
-                architectures = getattr(config, 'architectures', [])
-                if 'Qwen2ForCausalLM' in architectures:
-                    return 'qwen2'
-                if 'Qwen3ForCausalLM' in architectures:
-                    return 'qwen3'
-                if 'OPTForCausalLM' in architectures:
-                    return 'opt'
-
-                logger.warning(
-                    f'Could not auto-detect model type (model_type={model_type}), '
-                    f'defaulting to qwen3')
-                return 'qwen3'
-            except Exception:
-                logger.warning('Auto-detection failed, defaulting to qwen3')
-                return 'qwen3'
-
     def _validate_model_compatibility(self) -> None:
         """Validate model compatibility with current configuration."""
         if not self.model or not self._model_config:
             raise RuntimeError('Model not loaded properly')
 
-        # Check if model supports the requested features
-        required_config = {
-            'vocab_size':
-            getattr(self._model_config, 'vocab_size', None),
-            'hidden_size':
-            getattr(self._model_config, 'hidden_size', None),
-            'num_attention_heads':
-            getattr(self._model_config, 'num_attention_heads', None),
-        }
+        vocab_size = getattr(self._model_config, 'vocab_size', 0)
+        hidden_size = getattr(self._model_config, 'hidden_size', 0)
+        num_heads = getattr(self._model_config, 'num_attention_heads', 0)
 
-        logger.debug(
-            f'Model compatibility validation passed: {required_config}')
+        if vocab_size <= 0:
+            raise ValueError(f'Invalid vocab_size: {vocab_size}')
+        if hidden_size <= 0:
+            raise ValueError(f'Invalid hidden_size: {hidden_size}')
+        if num_heads <= 0:
+            raise ValueError(f'Invalid num_attention_heads: {num_heads}')
+
+        logger.debug(f'Model compatibility validated: vocab={vocab_size}, '
+                     f'hidden={hidden_size}, heads={num_heads}')
 
     def get_model_info(self) -> Dict[str, Any]:
         """Get information about the loaded model.
