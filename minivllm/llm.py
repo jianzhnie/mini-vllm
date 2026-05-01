@@ -41,6 +41,9 @@ Performance Tips:
     - Adjust max_num_batched_tokens based on sequence lengths
 """
 
+from typing import Union
+
+from minivllm.config import Config
 from minivllm.engine.llm_engine import LLMEngine
 
 __all__ = ['LLM']
@@ -96,14 +99,15 @@ class LLM(LLMEngine):
         can extend this class to add custom behavior if needed.
     """
 
-    def __init__(self, model: str, **kwargs) -> None:
+    def __init__(self, model: Union[str, Config], **kwargs) -> None:
         """Initialize the LLM.
 
         Creates an LLMEngine instance with the given configuration.
         All arguments are passed through to LLMEngine.__init__.
 
         Args:
-            model: Path to the model directory (HuggingFace format).
+            model: Path to the model directory (HuggingFace format),
+                or a Config object to use directly.
             **kwargs: Additional configuration parameters. Common ones:
                 - max_num_seqs: Maximum sequences per batch (default: 512)
                 - max_num_batched_tokens: Max tokens per batch (default: 16384)

@@ -53,7 +53,7 @@ class LLMEngine:
         events: Synchronization events for distributed communication
     """
 
-    def __init__(self, model: str, **kwargs) -> None:
+    def __init__(self, model: Union[str, Config], **kwargs) -> None:
         """Initialize the LLM engine.
 
         This method:
@@ -64,7 +64,8 @@ class LLMEngine:
         5. Registers cleanup handler for graceful shutdown
 
         Args:
-            model: Path to the model directory (HuggingFace format).
+            model: Path to the model directory (HuggingFace format),
+                or a Config object to use directly.
             **kwargs: Additional configuration parameters (see Config class).
                 Common parameters include:
                 - max_num_seqs: Maximum sequences in a batch
@@ -76,13 +77,16 @@ class LLMEngine:
             ValueError: If model path is invalid or configuration is invalid.
             RuntimeError: If distributed initialization fails.
         """
-        # Filter kwargs to only include valid Config parameters
-        config_fields: Set[str] = {field.name for field in fields(Config)}
-        config_kwargs: Dict[str, Any] = {
-            k: v
-            for k, v in kwargs.items() if k in config_fields
-        }
-        config: Config = Config(model, **config_kwargs)
+        # Accept either a Config object or (model_path, **kwargs)
+        if isinstance(model, Config):
+            config = model
+        else:
+            config_fields: Set[str] = {field.name for field in fields(Config)}
+            config_kwargs: Dict[str, Any] = {
+                k: v
+                for k, v in kwargs.items() if k in config_fields
+            }
+            config = Config(model, **config_kwargs)
 
         # Initialize distributed processes for tensor parallelism
         self.ps: List[mp.Process] = []
