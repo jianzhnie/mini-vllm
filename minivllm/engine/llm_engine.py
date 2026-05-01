@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple, TypeAlias, Union
 
 import torch.multiprocessing as mp
 from tqdm.auto import tqdm
-from transformers import AutoTokenizer, PreTrainedTokenizer
+from transformers import PreTrainedTokenizer
 
 from minivllm.config import Config
 from minivllm.engine.model_runner import ModelRunner
@@ -115,9 +115,9 @@ class LLMEngine:
         self.model_runner: ModelRunner = ModelRunner(config, 0, self.events)
         logger.info(f'Initialized LLM Engine with model: {config.model}')
 
-        # Load tokenizer and set EOS token
-        self.tokenizer: PreTrainedTokenizer = AutoTokenizer.from_pretrained(
-            config.model, use_fast=True)
+        # Reuse tokenizer already loaded by ModelManager (avoids duplicate loading)
+        self.tokenizer: PreTrainedTokenizer = (
+            self.model_runner.model_manager.tokenizer)
         config.eos = self.tokenizer.eos_token_id
 
         # Initialize scheduler for sequence management

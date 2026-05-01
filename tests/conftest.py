@@ -283,6 +283,10 @@ def mock_model_manager() -> Generator[MagicMock, None, None]:
         mock_instance = MagicMock()
         mock_instance.initialize = MagicMock()
         mock_instance.model = MagicMock()
+        mock_instance.tokenizer = MagicMock()
+        mock_instance.tokenizer.eos_token_id = 2
+        mock_instance.tokenizer.encode.return_value = [1, 2, 3, 4, 5]
+        mock_instance.tokenizer.decode.return_value = 'Generated text'
         mock.return_value = mock_instance
         yield mock
 
