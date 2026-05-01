@@ -30,28 +30,17 @@ from torch import nn
 
 from minivllm.utils.context import get_context
 
+from minivllm.models.layers.linear import (
+    get_tensor_parallel_rank,
+    get_tensor_parallel_world_size,
+)
+
 __all__ = [
     'get_tensor_parallel_rank',
     'get_tensor_parallel_world_size',
     'VocabParallelEmbedding',
     'ParallelLMHead',
 ]
-
-
-def get_tensor_parallel_rank() -> int:
-    """Get current tensor-parallel rank (0 if not distributed)."""
-    try:
-        return dist.get_rank() if dist.is_initialized() else 0
-    except Exception:
-        return 0
-
-
-def get_tensor_parallel_world_size() -> int:
-    """Get tensor-parallel world size (1 if not distributed)."""
-    try:
-        return dist.get_world_size() if dist.is_initialized() else 1
-    except Exception:
-        return 1
 
 
 class VocabParallelEmbedding(nn.Module):

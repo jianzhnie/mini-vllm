@@ -325,25 +325,16 @@ class OPTForCausalLM(nn.Module):
         hidden_states = self.model(input_ids, positions)
         return hidden_states
 
-    def set_kv_cache(self,
-                     kv_cache: List[Tuple[torch.Tensor, torch.Tensor]],
-                     block_size: int = 256) -> None:
-        """Set KV cache for all attention layers.
-
-        Args:
-            kv_cache: List of (k_cache, v_cache) tuples, one for each layer.
-            block_size: Block size for KV cache.
-        """
+    def set_kv_cache(
+            self,
+            kv_cache: list[tuple[torch.Tensor, torch.Tensor]]) -> None:
+        """Set KV cache for all attention layers."""
         for layer_idx, layer in enumerate(self.model.decoder.layers):
             if layer_idx < len(kv_cache):
                 k_cache, v_cache = kv_cache[layer_idx]
-                # OPT uses OPTAttention which wraps Attention
-                # layer.self_attn is OPTAttention
-                # layer.self_attn.attn is Attention
                 if hasattr(layer.self_attn, 'attn'):
                     layer.self_attn.attn.k_cache = k_cache
                     layer.self_attn.attn.v_cache = v_cache
-                    layer.self_attn.attn._cache_initialized = True
 
     def compute_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
         """Compute logits from hidden states."""

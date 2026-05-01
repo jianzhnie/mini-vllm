@@ -305,44 +305,6 @@ class DistributedManager:
         except Exception as e:
             raise RuntimeError(f'All-gather failed: {e}')
 
-    def wait_for_events(self) -> None:
-        """Wait for synchronization events (legacy compatibility)."""
-        if self.events is None:
-            return
-
-        if isinstance(self.events, Event):
-            self.events.wait()
-        elif isinstance(self.events, list):
-            for event in self.events:
-                if hasattr(event, 'wait'):
-                    event.wait()
-        logger.debug(f'Rank {self.rank}: Synchronization events completed')
-
-    def set_events(self) -> None:
-        """Set synchronization events to signal completion (legacy compatibility)."""
-        if self.events is None:
-            return
-
-        if isinstance(self.events, Event):
-            self.events.set()
-        elif isinstance(self.events, list):
-            for event in self.events:
-                if hasattr(event, 'set'):
-                    event.set()
-        logger.debug(f'Rank {self.rank}: Synchronization events set')
-
-    def clear_events(self) -> None:
-        """Clear synchronization events (legacy compatibility)."""
-        if self.events is None:
-            return
-
-        if isinstance(self.events, Event):
-            self.events.clear()
-        elif isinstance(self.events, list):
-            for event in self.events:
-                if hasattr(event, 'clear'):
-                    event.clear()
-
     def get_distributed_info(self) -> Dict[str, Any]:
         """Get distributed setup information.
 
@@ -363,12 +325,10 @@ class DistributedManager:
             return
 
         try:
-            # Synchronize before cleanup
             if self.is_distributed and dist.is_initialized():
                 dist.barrier()
 
-            # Only destroy process group once (from rank 0)
-            if dist.is_initialized() and self.rank == 0:
+            if dist.is_initialized():
                 dist.destroy_process_group()
 
             self._initialized = False
@@ -377,12 +337,3 @@ class DistributedManager:
         except Exception as e:
             logger.warning(
                 f'Rank {self.rank}: Error during distributed cleanup: {e}')
-
-    def __enter__(self):
-        """Context manager entry."""
-        self.initialize()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit."""
-        self.cleanup()

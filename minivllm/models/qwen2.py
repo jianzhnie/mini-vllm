@@ -393,6 +393,16 @@ class Qwen2ForCausalLM(nn.Module):
         """
         return self.model(input_ids, positions)
 
+    def set_kv_cache(
+            self,
+            kv_cache: list[tuple[torch.Tensor, torch.Tensor]]) -> None:
+        """Set KV cache for all attention layers."""
+        for layer_idx, layer in enumerate(self.model.layers):
+            if layer_idx < len(kv_cache):
+                k_cache, v_cache = kv_cache[layer_idx]
+                layer.self_attn.attn.k_cache = k_cache
+                layer.self_attn.attn.v_cache = v_cache
+
     def compute_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
         """Compute logits from hidden states.
 

@@ -41,12 +41,7 @@ def divide(numerator: int, denominator: int) -> int:
 
 
 def get_tensor_parallel_rank() -> int:
-    """Get the current tensor-parallel rank.
-
-    Returns:
-        The rank of the current process in the tensor-parallel group.
-        Returns 0 if distributed is not initialized.
-    """
+    """Get the current tensor-parallel rank (0 if not distributed)."""
     try:
         return dist.get_rank() if dist.is_initialized() else 0
     except Exception:
@@ -54,12 +49,7 @@ def get_tensor_parallel_rank() -> int:
 
 
 def get_tensor_parallel_world_size() -> int:
-    """Get the tensor-parallel world size.
-
-    Returns:
-        The total number of processes in the tensor-parallel group.
-        Returns 1 if distributed is not initialized.
-    """
+    """Get the tensor-parallel world size (1 if not distributed)."""
     try:
         return dist.get_world_size() if dist.is_initialized() else 1
     except Exception:
