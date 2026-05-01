@@ -71,7 +71,7 @@ python -c "import minivllm; print('Installation successful!')"
 ```python
 from minivllm import LLM, SamplingParams
 
-# 初始化模型
+# 初始化模型（支持 HuggingFace 模型 ID 或本地路径）
 llm = LLM(
     model="Qwen/Qwen2-7B-Instruct",
     max_num_seqs=256,
@@ -99,33 +99,48 @@ sampling_params = SamplingParams(
 outputs = llm.generate(prompts, sampling_params)
 
 # 打印结果
-for output in outputs:
-    print(f"Prompt: {output['prompt']}")
+for prompt, output in zip(prompts, outputs):
+    print(f"Prompt: {prompt}")
     print(f"Generated: {output['text']}")
+    print(f"Tokens: {len(output['token_ids'])}")
     print("-" * 50)
+```
+
+### 使用 Config 对象
+
+也可以通过 `Config` 对象初始化，便于参数复用：
+
+```python
+from minivllm import LLM, SamplingParams
+from minivllm.config import Config
+
+config = Config(
+    model="Qwen/Qwen2-7B-Instruct",
+    max_num_seqs=256,
+    max_model_len=4096,
+    device_memory_utilization=0.9,
+    enforce_eager=False,
+)
+
+llm = LLM(config)
+outputs = llm.generate(["Hello, world!"], SamplingParams(max_tokens=64))
 ```
 
 ### 运行示例脚本
 
 ```bash
-# 使用默认模型
+# 使用默认模型（facebook/opt-125m）
 python examples.py
 
-# 指定模型路径
-python examples.py --model /path/to/model
-
-# 或通过环境变量
+# 通过环境变量指定模型
 MINIVLLM_MODEL=/path/to/model python examples.py
-
-# 完整参数
-python examples.py \
-    --model /path/to/model \
-    --max-seqs 16 \
-    --max-tokens 64 \
-    --temperature 0.8 \
-    --top-p 0.95 \
-    --top-k 40
 ```
+
+更多示例请参考 [examples/](examples/) 目录：
+
+- `cpu_inference_opt.py` — CPU 推理示例
+- `npu_inference_example.py` — NPU 推理示例
+- `npu_flash_attention_example.py` — NPU Flash Attention 示例
 
 ### 高级配置
 
@@ -158,14 +173,14 @@ sampling_params = SamplingParams(
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `model` | str | 必需 | 模型路径（HuggingFace 格式） |
+| `model` | str | 必需 | 模型路径或 HuggingFace 模型 ID |
 | `max_num_seqs` | int | 512 | 每批次最大序列数 |
 | `max_num_batched_tokens` | int | 16384 | 每批次最大 token 数 |
 | `max_model_len` | int | 4096 | 模型最大上下文长度 |
 | `device_memory_utilization` | float | 0.9 | 设备内存利用率 (0.1-1.0) |
 | `tensor_parallel_size` | int | 1 | 张量并行度 (1-8) |
 | `enforce_eager` | bool | False | 强制使用 eager 模式（禁用 CUDA Graph） |
-| `kvcache_block_size` | int | 256 | KV 缓存块大小（必须被 256 整除） |
+| `kvcache_block_size` | int | 64 | KV 缓存块大小（必须能被 64 整除） |
 | `num_kvcache_blocks` | int | -1 | KV 缓存块数量（-1 表示自动） |
 | `trust_remote_code` | bool | False | 是否信任远程代码 |
 | `dtype` | str | 'auto' | 模型权重数据类型 |
@@ -203,9 +218,9 @@ python tests/run_tests.py --coverage -v
 
 ## 📚 支持的模型
 
-- **Qwen2/Qwen3** (推荐)
+- **Qwen2** — 推荐
+- **Qwen3** — 推荐
 - **OPT**
-- **LLaMA 系列**（通过 Qwen2 兼容）
 
 ## 📄 许可证
 

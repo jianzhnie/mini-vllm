@@ -71,7 +71,7 @@ python -c "import minivllm; print('Installation successful!')"
 ```python
 from minivllm import LLM, SamplingParams
 
-# Initialize the model
+# Initialize model (supports HuggingFace model ID or local path)
 llm = LLM(
     model="Qwen/Qwen2-7B-Instruct",
     max_num_seqs=256,
@@ -99,33 +99,48 @@ sampling_params = SamplingParams(
 outputs = llm.generate(prompts, sampling_params)
 
 # Print results
-for output in outputs:
-    print(f"Prompt: {output['prompt']}")
+for prompt, output in zip(prompts, outputs):
+    print(f"Prompt: {prompt}")
     print(f"Generated: {output['text']}")
+    print(f"Tokens: {len(output['token_ids'])}")
     print("-" * 50)
+```
+
+### Using a Config Object
+
+You can also initialize via a `Config` object for parameter reuse:
+
+```python
+from minivllm import LLM, SamplingParams
+from minivllm.config import Config
+
+config = Config(
+    model="Qwen/Qwen2-7B-Instruct",
+    max_num_seqs=256,
+    max_model_len=4096,
+    device_memory_utilization=0.9,
+    enforce_eager=False,
+)
+
+llm = LLM(config)
+outputs = llm.generate(["Hello, world!"], SamplingParams(max_tokens=64))
 ```
 
 ### Run Example Script
 
 ```bash
-# Use default model
+# Use default model (facebook/opt-125m)
 python examples.py
 
-# Specify model path
-python examples.py --model /path/to/model
-
-# Or via environment variable
+# Specify model via environment variable
 MINIVLLM_MODEL=/path/to/model python examples.py
-
-# Full parameters
-python examples.py \
-    --model /path/to/model \
-    --max-seqs 16 \
-    --max-tokens 64 \
-    --temperature 0.8 \
-    --top-p 0.95 \
-    --top-k 40
 ```
+
+See the [examples/](examples/) directory for more:
+
+- `cpu_inference_opt.py` — CPU inference example
+- `npu_inference_example.py` — NPU inference example
+- `npu_flash_attention_example.py` — NPU Flash Attention example
 
 ### Advanced Configuration
 
@@ -158,14 +173,14 @@ sampling_params = SamplingParams(
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `model` | str | Required | Model path (HuggingFace format) |
+| `model` | str | Required | Model path or HuggingFace model ID |
 | `max_num_seqs` | int | 512 | Maximum number of sequences per batch |
 | `max_num_batched_tokens` | int | 16384 | Maximum number of tokens per batch |
 | `max_model_len` | int | 4096 | Maximum context length of the model |
 | `device_memory_utilization` | float | 0.9 | Device memory utilization (0.1-1.0) |
 | `tensor_parallel_size` | int | 1 | Tensor parallelism degree (1-8) |
 | `enforce_eager` | bool | False | Force eager mode (disable CUDA Graph) |
-| `kvcache_block_size` | int | 256 | KV cache block size (must be divisible by 256) |
+| `kvcache_block_size` | int | 64 | KV cache block size (must be divisible by 64) |
 | `num_kvcache_blocks` | int | -1 | Number of KV cache blocks (-1 for auto) |
 | `trust_remote_code` | bool | False | Whether to trust remote code |
 | `dtype` | str | 'auto' | Model weight data type |
@@ -203,9 +218,9 @@ python tests/run_tests.py --coverage -v
 
 ## 📚 Supported Models
 
-- **Qwen2/Qwen3** (Recommended)
+- **Qwen2** — Recommended
+- **Qwen3** — Recommended
 - **OPT**
-- **LLaMA Series** (via Qwen2 compatibility)
 
 ## 📄 License
 
