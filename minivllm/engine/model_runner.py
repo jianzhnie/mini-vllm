@@ -307,7 +307,3 @@ class ModelRunner:
     def get_tokenizer(self):
         """Get the tokenizer instance."""
         return self.model_manager.tokenizer
-
-
-# Legacy compatibility alias
-ModelRunnerOpt = ModelRunner

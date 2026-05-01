@@ -38,7 +38,7 @@ class Sequence:
     Class Attributes:
         block_size: Size of each token block (in tokens). Used for
             organizing tokens into fixed-size blocks for efficient
-            cache management. Default: 256.
+            cache management. Default: 64.
         counter: Global counter for generating unique sequence IDs.
 
     Attributes:
@@ -55,7 +55,7 @@ class Sequence:
         ignore_eos: Whether to ignore end-of-sequence tokens.
     """
 
-    block_size: int = 256
+    block_size: int = 64
     counter: Iterator[int] = count()
 
     def __init__(
@@ -283,27 +283,29 @@ class Sequence:
         num_completion_tokens = self.num_tokens - self.num_prompt_tokens
 
         if num_completion_tokens == 0:
-            # If no completion tokens, restore full token list
             if isinstance(token_data, list):
                 self.token_ids = token_data
             else:
-                # Fallback: single token as list
                 self.token_ids = [token_data]
             self.last_token = self.token_ids[-1]
         else:
-            # If has completions, only last token was serialized
             if isinstance(token_data, int):
-                # Reconstruct prompt tokens (zeros as placeholder) and last token
-                # Note: This is an optimization for worker processes which primarily
-                # need the last token and KV cache. The full history is preserved
-                # on the scheduler/driver side.
+                # Worker optimization: only last token is needed for decode
                 self.token_ids = [0] * (self.num_tokens - 1) + [token_data]
                 self.last_token = token_data
             else:
-                # Unexpected: list provided but should be int for sequences with completions
-                # This might happen if serialization format changed - restore what we can
                 self.token_ids = token_data
                 self.last_token = self.token_ids[-1] if self.token_ids else 0
 
         self.status = (SequenceStatus.RUNNING if num_completion_tokens > 0 else
                        SequenceStatus.WAITING)
+
+        # Restore sampling parameters from defaults
+        # (full params are kept on the scheduler/driver side)
+        self.sampling_params = SamplingParams()
+        self.temperature = self.sampling_params.temperature
+        self.top_p = self.sampling_params.top_p
+        self.top_k = self.sampling_params.top_k
+        self.min_p = self.sampling_params.min_p
+        self.max_tokens = self.sampling_params.max_tokens
+        self.ignore_eos = self.sampling_params.ignore_eos

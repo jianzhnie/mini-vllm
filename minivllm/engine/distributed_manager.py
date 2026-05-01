@@ -367,8 +367,8 @@ class DistributedManager:
             if self.is_distributed and dist.is_initialized():
                 dist.barrier()
 
-            # Destroy process group
-            if dist.is_initialized():
+            # Only destroy process group once (from rank 0)
+            if dist.is_initialized() and self.rank == 0:
                 dist.destroy_process_group()
 
             self._initialized = False

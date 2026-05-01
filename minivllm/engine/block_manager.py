@@ -13,7 +13,8 @@ from __future__ import annotations
 from collections import deque
 from typing import Deque, Dict, List, Optional, Set
 
-import numpy as np
+import struct
+
 import xxhash
 
 from minivllm.engine.sequence import Sequence
@@ -131,9 +132,7 @@ class BlockManager:
     def compute_hash(cls, token_ids: List[int], prefix: int = -1) -> int:
         """Compute hash of token sequence for prefix caching.
 
-        Uses xxhash for fast hashing. If a prefix hash is provided, it's
-        included in the computation to support chained hashing where each
-        block's hash depends on previous blocks' hashes.
+        Uses xxhash for fast hashing with chained prefix support.
 
         Args:
             token_ids: List of token IDs to hash. Must not be empty.
@@ -141,28 +140,19 @@ class BlockManager:
                 Default -1 means no prefix.
 
         Returns:
-            Integer hash value of the token sequence (including prefix if
-            provided).
+            Integer hash value of the token sequence.
 
         Raises:
             ValueError: If token_ids is empty.
-
-        Note:
-            The same token_ids with the same prefix will always produce
-            the same hash, enabling prefix cache matching.
         """
         if not token_ids:
             raise ValueError('token_ids cannot be empty for hash computation')
 
-        hash_prev: xxhash.xxh64 = xxhash.xxh64()
+        h = xxhash.xxh64()
         if prefix != -1:
-            hash_prev.update(prefix.to_bytes(8, 'little'))
-        if isinstance(token_ids, list):
-            token_array = np.array(token_ids, dtype=np.int32)
-        else:
-            token_array = token_ids
-        hash_prev.update(token_array.tobytes())
-        return hash_prev.intdigest()
+            h.update(prefix.to_bytes(8, 'little'))
+        h.update(struct.pack(f'<{len(token_ids)}i', *token_ids))
+        return h.intdigest()
 
     def _allocate_block(self, block_id: int, reset: bool = True) -> Block:
         """Allocate a block from the free pool.

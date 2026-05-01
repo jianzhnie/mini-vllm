@@ -639,7 +639,11 @@ class InferenceExecutor:
                 and supports_cuda_graph() and batch_size in self.graphs):
             return self._execute_with_cuda_graph(input_ids, positions)
 
-        # Standard eager execution
+        return self._execute_eager(input_ids, positions)
+
+    def _execute_eager(self, input_ids: torch.Tensor,
+                       positions: torch.Tensor) -> torch.Tensor:
+        """Execute model in eager mode."""
         with torch.inference_mode():
             output = self.model(input_ids=input_ids, positions=positions)
             if isinstance(output, tuple):
@@ -663,9 +667,7 @@ class InferenceExecutor:
         graph_bs = next((bs for bs in self.graph_bs if bs >= batch_size), None)
         if graph_bs is None or graph_bs not in self.graphs:
             # Fallback to eager execution
-            with torch.inference_mode():
-                output = self.model(input_ids=input_ids, positions=positions)
-                return self.model.compute_logits(output)
+            return self._execute_eager(input_ids, positions)
 
         graph = self.graphs[graph_bs]
         vars_dict = self.graph_vars
