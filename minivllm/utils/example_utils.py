@@ -10,6 +10,14 @@ logger = get_logger(__name__)
 DEFAULT_MODEL = os.environ.get(
     'MINIVLLM_MODEL', 'facebook/opt-125m')
 
+DEFAULT_PROMPTS = [
+    'Hello, who are you?',
+    'What is your name?',
+    'Where are you from?',
+    'Where is the capital of France?',
+    'Tell me a joke.',
+]
+
 
 def format_prompts_with_chat_template(
     tokenizer: object,

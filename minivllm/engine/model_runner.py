@@ -87,11 +87,8 @@ class ModelRunner:
 
         # Setup IPC for distributed inference and enter worker loop if needed
         if self.world_size > 1:
-            if rank == 0:
-                self.distributed_manager.synchronize()
-            else:
-                # Worker process: synchronize then enter command loop
-                self.distributed_manager.synchronize()
+            self.distributed_manager.synchronize()
+            if rank != 0:
                 self._worker_loop()
 
     def _initialize(self) -> None:

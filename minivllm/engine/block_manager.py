@@ -332,7 +332,7 @@ class BlockManager:
         total = self.stats['cache_hits'] + self.stats['cache_misses']
         if total > 0:
             hit_rate = self.stats['cache_hits'] / total * 100
-            logger.info(f'Prefix cache hit rate: {hit_rate:.1f}%')
+            logger.debug(f'Prefix cache hit rate: {hit_rate:.1f}%')
 
     def deallocate(self, sequence: Sequence) -> None:
         """Deallocate blocks for a sequence.

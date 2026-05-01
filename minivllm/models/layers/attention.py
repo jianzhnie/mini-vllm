@@ -47,19 +47,12 @@ Dependencies:
 """
 
 import logging
+import math
 import os
 from typing import Any, Tuple
 
 import torch
 from torch import nn
-
-try:
-    from transformers.utils import is_torch_npu_available
-except ImportError:
-
-    def is_torch_npu_available() -> bool:
-        return False
-
 
 from minivllm.models.layers.attention_backend import (
     AttentionBackend,
@@ -68,6 +61,7 @@ from minivllm.models.layers.attention_backend import (
     StandardAttentionBackend,
 )
 from minivllm.utils.context import get_context
+from minivllm.utils.device import is_torch_npu_available
 from minivllm.utils.logger_utils import get_logger
 
 logger = get_logger(__name__)
@@ -155,7 +149,7 @@ class Attention(nn.Module):
         super().__init__()
         self.num_heads: int = num_heads
         self.head_dim: int = head_dim
-        self.scale: float = float(scale) or 1.0 / math.sqrt(head_dim)
+        self.scale: float = float(scale) if scale else 1.0 / math.sqrt(head_dim)
         self.num_kv_heads: int = num_kv_heads
 
         # Initialize appropriate backend
@@ -245,28 +239,15 @@ class Attention(nn.Module):
                               context.context_lens is not None else q.shape[0])
 
                 # Prepare tensors for NPU format
-                if context.is_prefill:
-                    # Use current K/V for prefill
-                    npu_k_cache, npu_v_cache = self.backend.prepare_npu_cache(
-                        k,
-                        v,
-                        k_cache,
-                        v_cache,
-                        context,
-                        self.num_kv_heads,
-                        self.head_dim,
-                    )
-                else:
-                    # Use cached K/V for decode
-                    npu_k_cache, npu_v_cache = self.backend.prepare_npu_cache(
-                        k,
-                        v,
-                        k_cache,
-                        v_cache,
-                        context,
-                        self.num_kv_heads,
-                        self.head_dim,
-                    )
+                npu_k_cache, npu_v_cache = self.backend.prepare_npu_cache(
+                    k,
+                    v,
+                    k_cache,
+                    v_cache,
+                    context,
+                    self.num_kv_heads,
+                    self.head_dim,
+                )
 
                 attn_out = self.backend.unified_inference(
                     q,

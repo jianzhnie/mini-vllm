@@ -291,9 +291,7 @@ class InferenceExecutor:
         if hasattr(self.model, 'gradient_checkpointing_disable'):
             self.model.gradient_checkpointing_disable()
 
-        # Enable inference mode optimizations
-        if hasattr(torch, 'inference_mode'):
-            logger.debug('Model optimizations applied')
+        logger.debug('Model optimizations applied')
 
     def _warmup_model(self, max_num_batched_tokens: int,
                       max_num_seqs: int) -> None:
@@ -856,40 +854,6 @@ class InferenceExecutor:
             logger.warning(
                 f'Failed to capture graph for batch size {batch_size}: {e}')
             reset_context()
-
-    def get_performance_metrics(self) -> Dict[str, float]:
-        """Get performance metrics.
-
-        Returns:
-            Dictionary with performance metrics.
-        """
-        metrics = {
-            'total_tokens_generated': self.total_tokens_generated,
-            'total_prefill_tokens': self.total_prefill_tokens,
-            'total_decode_tokens': self.total_decode_tokens,
-            'inference_count': self.inference_count,
-        }
-
-        # Add memory statistics
-        stats = memory_stats(self.device)
-        metrics.update({
-            'memory_allocated_mb':
-            stats.get('allocated', 0) / 1024**2,
-            'memory_reserved_mb':
-            stats.get('reserved', 0) / 1024**2,
-            'memory_max_allocated_mb':
-            stats.get('max_allocated', 0) / 1024**2,
-        })
-
-        return metrics
-
-    def reset_metrics(self) -> None:
-        """Reset performance metrics."""
-        self.total_tokens_generated = 0
-        self.total_prefill_tokens = 0
-        self.total_decode_tokens = 0
-        self.inference_count = 0
-        reset_peak_memory_stats(self.device)
 
     def cleanup(self) -> None:
         """Clean up resources."""

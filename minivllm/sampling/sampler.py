@@ -134,9 +134,3 @@ class GreedySampler(Sampler):
             Long tensor of shape [batch_size] with selected token IDs
         """
         return torch.argmax(logits, dim=-1)
-
-
-class RandomSampler(Sampler):
-
-    def __init__(self):
-        super().__init__(SamplingConfig(temperature=1.0))

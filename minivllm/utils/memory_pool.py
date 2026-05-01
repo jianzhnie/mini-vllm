@@ -4,36 +4,41 @@ This module provides a memory pool implementation for managing
 device memory allocations efficiently.
 """
 
+import logging
 from typing import Dict, Tuple
 
 import torch
 
+logger = logging.getLogger(__name__)
+
 
 class MemoryPool:
-    """Simple memory pool implementation."""
+    """Simple memory pool implementation with usage tracking."""
 
-    def __init__(self, device: torch.device, max_pool_size_mb: float,
-                 block_size_mb: float) -> None:
+    def __init__(self, device: torch.device,
+                 max_pool_size_mb: float) -> None:
         self.device = device
         self.max_pool_size_bytes = int(max_pool_size_mb * 1024 * 1024)
         self.current_usage_bytes = 0
         self.allocations: Dict[int, int] = {}
 
-    def allocate(self,
-                 shape: Tuple[int, ...],
-                 dtype: torch.dtype,
-                 pool_id: str = 'default') -> torch.Tensor:
-        """Allocate a tensor from the pool.
-
-        Note: This is a simplified implementation that currently just
-        allocates new tensors but tracks usage. A full implementation
-        would reuse pre-allocated memory blocks.
-        """
+    def allocate(
+        self,
+        shape: Tuple[int, ...],
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        """Allocate a tensor from the pool."""
         tensor = torch.zeros(shape, dtype=dtype, device=self.device)
         size = tensor.element_size() * tensor.numel()
 
         self.current_usage_bytes += size
         self.allocations[id(tensor)] = size
+
+        if self.current_usage_bytes > self.max_pool_size_bytes:
+            logger.warning(
+                'Memory pool exceeded limit: %.1fMB > %.1fMB',
+                self.current_usage_bytes / 1024**2,
+                self.max_pool_size_bytes / 1024**2)
 
         return tensor
 
@@ -52,11 +57,11 @@ class MemoryPool:
         """Get memory usage information."""
         return {
             'current_usage_mb': self.current_usage_bytes / (1024 * 1024),
-            'max_pool_size_mb': self.max_pool_size_bytes / (1024 * 1024)
+            'max_pool_size_mb': self.max_pool_size_bytes / (1024 * 1024),
         }
 
 
-def get_memory_pool(device: torch.device, max_pool_size_mb: float,
-                    block_size_mb: float) -> MemoryPool:
+def get_memory_pool(device: torch.device,
+                    max_pool_size_mb: float) -> MemoryPool:
     """Factory function to get a memory pool instance."""
-    return MemoryPool(device, max_pool_size_mb, block_size_mb)
+    return MemoryPool(device, max_pool_size_mb)
