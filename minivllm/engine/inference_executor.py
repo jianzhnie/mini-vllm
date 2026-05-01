@@ -10,7 +10,7 @@ This module provides the InferenceExecutor class which handles:
 """
 
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import torch
 
@@ -65,18 +65,22 @@ class InferenceExecutor:
         self.config = config
         self.model = model
         self.device = get_current_device()
-        self.sampler: Optional[Sampler] = None
-        self.kv_cache: Optional[torch.Tensor] = None
+        self.sampler: Sampler | None = None
+        self.kv_cache: torch.Tensor | None = None
         self.block_size = config.kvcache_block_size
 
         # Extract model config
         hf_config = config.hf_config
         self.num_kv_heads = getattr(
-            hf_config, 'num_key_value_heads',
-            getattr(hf_config, 'num_attention_heads', 1))
+            hf_config,
+            'num_key_value_heads',
+            getattr(hf_config, 'num_attention_heads', 1),
+        )
         self.head_dim = getattr(
-            hf_config, 'head_dim',
-            hf_config.hidden_size // hf_config.num_attention_heads)
+            hf_config,
+            'head_dim',
+            hf_config.hidden_size // hf_config.num_attention_heads,
+        )
         self.num_layers = hf_config.num_hidden_layers
 
         # Use model's actual dtype if model is available, otherwise resolve from config
@@ -127,10 +131,10 @@ class InferenceExecutor:
     def _init_attributes(self) -> None:
         """Initialize remaining attributes after dtype is resolved."""
         self.enforce_eager = self.config.enforce_eager
-        self.graphs: Dict[int, Any] = {}
-        self.graph_vars: Dict[str, torch.Tensor] = {}
-        self.graph_bs: List[int] = []
-        self.graph_pool: Optional[Any] = None
+        self.graphs: dict[int, Any] = {}
+        self.graph_vars: dict[str, torch.Tensor] = {}
+        self.graph_bs: list[int] = []
+        self.graph_pool: Any | None = None
 
         # Performance metrics
         self.total_tokens_generated = 0
@@ -138,7 +142,7 @@ class InferenceExecutor:
         self.total_decode_tokens = 0
         self.inference_count = 0
 
-        logger.debug(f'InferenceExecutor initialized on device {self.device}')
+        logger.debug(f"InferenceExecutor initialized on device {self.device}")
 
     def initialize(self, max_num_batched_tokens: int,
                    max_num_seqs: int) -> None:
@@ -166,8 +170,14 @@ class InferenceExecutor:
                 self.config.num_kvcache_blocks = num_blocks
 
             # Calculate KV cache shape: (2, num_layers, num_blocks, block_size, num_kv_heads, head_dim)
-            kv_cache_shape = (2, self.num_layers, num_blocks, self.block_size,
-                              self.num_kv_heads, self.head_dim)
+            kv_cache_shape = (
+                2,
+                self.num_layers,
+                num_blocks,
+                self.block_size,
+                self.num_kv_heads,
+                self.head_dim,
+            )
 
             # Allocate contiguous KV cache tensor
             self.kv_cache = torch.empty(kv_cache_shape,
@@ -177,18 +187,18 @@ class InferenceExecutor:
             # Assign cache slices to model layers
             self._assign_kv_cache_to_layers()
 
-            cache_size_gb = self.kv_cache.numel() * self.kv_cache.element_size(
-            ) / (1024**3)
-            logger.info(f'Allocated KV cache: {cache_size_gb:.2f} GB '
-                        f'({num_blocks} blocks x {self.block_size} tokens)')
+            cache_size_gb = (self.kv_cache.numel() *
+                             self.kv_cache.element_size() / (1024**3))
+            logger.info(f"Allocated KV cache: {cache_size_gb:.2f} GB "
+                        f"({num_blocks} blocks x {self.block_size} tokens)")
 
         except torch.cuda.OutOfMemoryError as e:
             raise RuntimeError(
-                f'OOM during KV cache allocation. '
-                f'Try reducing device_memory_utilization (current: {self.config.device_memory_utilization}) '
-                f'or max_num_seqs. Error: {e}') from e
+                f"OOM during KV cache allocation. "
+                f"Try reducing device_memory_utilization (current: {self.config.device_memory_utilization}) "
+                f"or max_num_seqs. Error: {e}") from e
         except Exception as e:
-            raise RuntimeError(f'Failed to allocate KV cache: {e}') from e
+            raise RuntimeError(f"Failed to allocate KV cache: {e}") from e
 
     def _calculate_num_kv_blocks(self) -> int:
         """Calculate number of KV cache blocks based on available memory.
@@ -202,7 +212,7 @@ class InferenceExecutor:
         try:
             free, total = mem_get_info(self.device)
         except Exception as e:
-            logger.warning(f'Failed to get memory info: {e}, using defaults')
+            logger.warning(f"Failed to get memory info: {e}, using defaults")
             free, total = 4 * 1024**3, 8 * 1024**3  # Default 4GB free, 8GB total
 
         used = total - free
@@ -224,13 +234,13 @@ class InferenceExecutor:
 
         if available_memory <= 0:
             raise RuntimeError(
-                f'Insufficient memory for KV cache allocation. '
-                f'Device: {self.device.type}, Available: {available_memory} bytes, '
-                f'Block size: {block_bytes} bytes')
+                f"Insufficient memory for KV cache allocation. "
+                f"Device: {self.device.type}, Available: {available_memory} bytes, "
+                f"Block size: {block_bytes} bytes")
 
         # Calculate max blocks per sequence and total
-        max_blocks_per_seq = ((config.max_model_len + self.block_size - 1) //
-                              self.block_size)
+        max_blocks_per_seq = (config.max_model_len + self.block_size -
+                              1) // self.block_size
         max_total_blocks = int(config.max_num_seqs * max_blocks_per_seq)
 
         # Calculate number of blocks from available memory
@@ -242,13 +252,13 @@ class InferenceExecutor:
 
         if num_blocks <= 0:
             raise ValueError(
-                f'Calculated KV cache blocks ({num_blocks}) must be > 0. '
-                f'Available memory: {available_memory} bytes, '
-                f'Block size: {block_bytes} bytes')
+                f"Calculated KV cache blocks ({num_blocks}) must be > 0. "
+                f"Available memory: {available_memory} bytes, "
+                f"Block size: {block_bytes} bytes")
 
-        logger.debug(f'Calculated KV cache blocks: {num_blocks} '
-                     f'({available_memory / 1024**3:.2f} GB available, '
-                     f'{block_bytes} bytes/block)')
+        logger.debug(f"Calculated KV cache blocks: {num_blocks} "
+                     f"({available_memory / 1024**3:.2f} GB available, "
+                     f"{block_bytes} bytes/block)")
 
         return num_blocks
 
@@ -270,7 +280,7 @@ class InferenceExecutor:
                 'No attention layers found with k_cache/v_cache attributes. '
                 'KV cache may not be properly used.')
         else:
-            logger.debug(f'Assigned KV cache to {layer_id} attention layers')
+            logger.debug(f"Assigned KV cache to {layer_id} attention layers")
 
     def _initialize_sampler(self) -> None:
         """Initialize the token sampler."""
@@ -326,11 +336,11 @@ class InferenceExecutor:
             self.execute_batch(dummy_sequences, prefill=False)
 
         empty_cache()
-        logger.debug(f'Model warmup completed with {num_seqs} sequences')
+        logger.debug(f"Model warmup completed with {num_seqs} sequences")
 
     def execute_batch(self,
-                      sequences: List[Sequence],
-                      prefill: bool = True) -> Tuple[torch.Tensor, List[int]]:
+                      sequences: list[Sequence],
+                      prefill: bool = True) -> tuple[torch.Tensor, list[int]]:
         """Execute inference for a batch of sequences.
 
         Args:
@@ -364,8 +374,9 @@ class InferenceExecutor:
             if prefill and logits.size(0) > len(sequences):
                 # Get logits for last token of each sequence
                 seq_lengths = [len(seq) for seq in sequences]
-                last_indices = torch.cumsum(
-                    torch.tensor(seq_lengths, device=logits.device), dim=0) - 1
+                last_indices = (torch.cumsum(
+                    torch.tensor(seq_lengths, device=logits.device), dim=0) -
+                                1)
                 logits = logits[last_indices]
 
             next_tokens = self._sample_tokens(logits, sequences)
@@ -380,14 +391,14 @@ class InferenceExecutor:
             return logits, next_tokens
 
         except Exception as e:
-            logger.error(f'Batch execution failed: {e}')
+            logger.error(f"Batch execution failed: {e}")
             raise
         finally:
             reset_context()
 
     def _prepare_batch_input(
-            self, sequences: List[Sequence],
-            prefill: bool) -> Tuple[torch.Tensor, torch.Tensor]:
+            self, sequences: list[Sequence],
+            prefill: bool) -> tuple[torch.Tensor, torch.Tensor]:
         """Prepare input tensors for the batch.
 
         Args:
@@ -404,7 +415,7 @@ class InferenceExecutor:
 
     def _prepare_prefill_input(
             self,
-            sequences: List[Sequence]) -> Tuple[torch.Tensor, torch.Tensor]:
+            sequences: list[Sequence]) -> tuple[torch.Tensor, torch.Tensor]:
         """Prepare input tensors for prefill phase.
 
         Args:
@@ -413,13 +424,13 @@ class InferenceExecutor:
         Returns:
             Tuple of (input_ids, positions) tensors.
         """
-        input_ids: List[int] = []
-        positions: List[int] = []
-        cum_seqlens_q: List[int] = [0]
-        cum_seqlens_k: List[int] = [0]
+        input_ids: list[int] = []
+        positions: list[int] = []
+        cum_seqlens_q: list[int] = [0]
+        cum_seqlens_k: list[int] = [0]
         max_seqlen_q: int = 0
         max_seqlen_k: int = 0
-        slot_mapping: List[int] = []
+        slot_mapping: list[int] = []
 
         for seq in sequences:
             seqlen = len(seq)
@@ -508,7 +519,7 @@ class InferenceExecutor:
 
     def _prepare_decode_input(
             self,
-            sequences: List[Sequence]) -> Tuple[torch.Tensor, torch.Tensor]:
+            sequences: list[Sequence]) -> tuple[torch.Tensor, torch.Tensor]:
         """Prepare input tensors for decode phase.
 
         Args:
@@ -587,7 +598,7 @@ class InferenceExecutor:
 
         return input_ids_tensor, positions_tensor
 
-    def _prepare_block_tables(self, sequences: List[Sequence]) -> torch.Tensor:
+    def _prepare_block_tables(self, sequences: list[Sequence]) -> torch.Tensor:
         """Prepare block tables for sequences.
 
         Args:
@@ -698,7 +709,7 @@ class InferenceExecutor:
         return self.model.compute_logits(vars_dict['outputs'][:batch_size])
 
     def _sample_tokens(self, logits: torch.Tensor,
-                       sequences: List[Sequence]) -> List[int]:
+                       sequences: list[Sequence]) -> list[int]:
         """Sample next tokens from logits.
 
         Args:
@@ -727,15 +738,17 @@ class InferenceExecutor:
                               dtype=torch.float32)
 
         # Sample tokens
-        next_tokens = self.sampler(logits,
-                                   temperatures=temperatures,
-                                   top_ps=top_ps,
-                                   top_ks=top_ks,
-                                   min_ps=min_ps)
+        next_tokens = self.sampler(
+            logits,
+            temperatures=temperatures,
+            top_ps=top_ps,
+            top_ks=top_ks,
+            min_ps=min_ps,
+        )
 
         return next_tokens.tolist()
 
-    def _update_metrics(self, sequences: List[Sequence],
+    def _update_metrics(self, sequences: list[Sequence],
                         prefill: bool) -> None:
         """Update performance metrics.
 
@@ -803,11 +816,11 @@ class InferenceExecutor:
                 self._capture_graph_for_batch_size(bs)
 
             logger.info(
-                f'Captured {len(self.graphs)} device graphs for batch sizes: '
-                f'{self.graph_bs[:4]}...{self.graph_bs[-1]}')
+                f"Captured {len(self.graphs)} device graphs for batch sizes: "
+                f"{self.graph_bs[:4]}...{self.graph_bs[-1]}")
 
         except Exception as e:
-            logger.warning(f'Failed to capture device graphs: {e}')
+            logger.warning(f"Failed to capture device graphs: {e}")
             self.graphs.clear()
             self.graph_vars.clear()
 
@@ -827,10 +840,12 @@ class InferenceExecutor:
             outputs = self.graph_vars['outputs'][:batch_size]
 
             # Set context for graph capture
-            set_context(is_prefill=False,
-                        slot_mapping=slot_mapping,
-                        context_lens=context_lens,
-                        block_tables=block_tables)
+            set_context(
+                is_prefill=False,
+                slot_mapping=slot_mapping,
+                context_lens=context_lens,
+                block_tables=block_tables,
+            )
 
             # Warmup
             outputs.copy_(
@@ -852,7 +867,7 @@ class InferenceExecutor:
 
         except Exception as e:
             logger.warning(
-                f'Failed to capture graph for batch size {batch_size}: {e}')
+                f"Failed to capture graph for batch size {batch_size}: {e}")
             reset_context()
 
     def cleanup(self) -> None:

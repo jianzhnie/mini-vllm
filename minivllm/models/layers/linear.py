@@ -4,8 +4,6 @@ This module provides various linear layer implementations optimized for distribu
 including replicated, column-parallel, row-parallel, and specialized QKV linear layers.
 """
 
-from typing import List, Optional
-
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
@@ -36,7 +34,7 @@ def divide(numerator: int, denominator: int) -> int:
         ValueError: If numerator is not divisible by denominator.
     """
     if numerator % denominator != 0:
-        raise ValueError(f'{numerator} is not divisible by {denominator}')
+        raise ValueError(f"{numerator} is not divisible by {denominator}")
     return numerator // denominator
 
 
@@ -77,12 +75,12 @@ class LinearBase(nn.Module):
         input_size: int,
         output_size: int,
         bias: bool = False,
-        tp_dim: Optional[int] = None,
+        tp_dim: int | None = None,
     ) -> None:
         super().__init__()
         self.input_size = input_size
         self.output_size = output_size
-        self.tp_dim: Optional[int] = tp_dim
+        self.tp_dim: int | None = tp_dim
         # Use common helper functions for TP rank/size
         self.tp_rank: int = get_tensor_parallel_rank()
         self.tp_size: int = get_tensor_parallel_world_size()
@@ -92,14 +90,14 @@ class LinearBase(nn.Module):
         self.weight.weight_loader = self.weight_loader  # type: ignore
 
         if bias:
-            self.bias: Optional[nn.Parameter] = nn.Parameter(
+            self.bias: nn.Parameter | None = nn.Parameter(
                 torch.empty(output_size))
             self.bias.weight_loader = self.weight_loader  # type: ignore
         else:
             self.register_parameter('bias', None)
 
     def extra_repr(self) -> str:
-        return f'input_size={self.input_size}, output_size={self.output_size}, bias={self.bias is not None}, tp_dim={self.tp_dim}, tp_size={self.tp_size}'
+        return f"input_size={self.input_size}, output_size={self.output_size}, bias={self.bias is not None}, tp_dim={self.tp_dim}, tp_size={self.tp_size}"
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass - to be implemented by subclasses."""
@@ -173,10 +171,10 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
     def __init__(
         self,
         input_size: int,
-        output_sizes: List[int],
+        output_sizes: list[int],
         bias: bool = False,
     ) -> None:
-        self.output_sizes: List[int] = output_sizes
+        self.output_sizes: list[int] = output_sizes
         super().__init__(input_size, sum(output_sizes), bias)
 
     def weight_loader(
@@ -217,7 +215,7 @@ class QKVParallelLinear(ColumnParallelLinear):
         hidden_size: int,
         head_size: int,
         total_num_heads: int,
-        total_num_kv_heads: Optional[int] = None,
+        total_num_kv_heads: int | None = None,
         bias: bool = False,
     ) -> None:
         tp_size = get_tensor_parallel_world_size()
@@ -233,7 +231,7 @@ class QKVParallelLinear(ColumnParallelLinear):
         self,
         param: nn.Parameter,
         loaded_weight: torch.Tensor,
-        loaded_shard_id: Optional[str] = None,
+        loaded_shard_id: str | None = None,
         *args,
         **kwargs,
     ) -> None:
@@ -249,8 +247,11 @@ class QKVParallelLinear(ColumnParallelLinear):
                 'loaded_shard_id must be provided for QKVParallelLinear')
 
         param_data = param.data
-        assert loaded_shard_id in ['q', 'k',
-                                   'v'], f'Invalid shard_id: {loaded_shard_id}'
+        assert loaded_shard_id in [
+            'q',
+            'k',
+            'v',
+        ], f"Invalid shard_id: {loaded_shard_id}"
 
         if loaded_shard_id == 'q':
             shard_size = self.num_heads * self.head_size
@@ -260,7 +261,8 @@ class QKVParallelLinear(ColumnParallelLinear):
             shard_offset = self.num_heads * self.head_size
         else:  # 'v'
             shard_size = self.num_kv_heads * self.head_size
-            shard_offset = self.num_heads * self.head_size + self.num_kv_heads * self.head_size
+            shard_offset = (self.num_heads * self.head_size +
+                            self.num_kv_heads * self.head_size)
 
         assert self.tp_dim is not None, 'tp_dim must be set for column-parallel layers'
         param_data = param_data.narrow(self.tp_dim, shard_offset, shard_size)
@@ -270,9 +272,9 @@ class QKVParallelLinear(ColumnParallelLinear):
 
     def extra_repr(self) -> str:
         return (
-            f'hidden_size={self.input_size}, head_size={self.head_size}, '
-            f'num_heads={self.num_heads}, num_kv_heads={self.num_kv_heads}, '
-            f'bias={self.bias is not None}, tp_size={self.tp_size}')
+            f"hidden_size={self.input_size}, head_size={self.head_size}, "
+            f"num_heads={self.num_heads}, num_kv_heads={self.num_kv_heads}, "
+            f"bias={self.bias is not None}, tp_size={self.tp_size}")
 
 
 class RowParallelLinear(LinearBase):

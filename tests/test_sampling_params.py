@@ -17,15 +17,18 @@ class TestSamplingParamsValidation:
         assert params.temperature == 0.8
         assert params.max_tokens == 50
 
-    def test_temperature_too_low(self) -> None:
-        """Test that temperature <= 1e-10 is rejected."""
+    def test_temperature_negative_rejected(self) -> None:
+        """Test that negative temperature is rejected."""
         with pytest.raises(ValueError, match='temperature'):
-            SamplingParams(temperature=0)
+            SamplingParams(temperature=-0.1)
 
-    def test_temperature_zero(self) -> None:
-        """Test that temperature=0 (greedy sampling) is rejected."""
-        with pytest.raises(ValueError, match='temperature'):
-            SamplingParams(temperature=0.0)
+    def test_temperature_zero_greedy(self) -> None:
+        """Test that temperature=0 (greedy sampling) is accepted."""
+        params = SamplingParams(temperature=0)
+        assert params.temperature == 0
+
+        params = SamplingParams(temperature=0.0)
+        assert params.temperature == 0.0
 
     def test_max_tokens_positive(self) -> None:
         """Test that max_tokens must be positive."""
@@ -55,9 +58,9 @@ class TestSamplingParamsValidation:
 class TestSamplingParamsEdgeCases:
     """Test edge cases for SamplingParams."""
 
-    def test_temperature_minimum_valid(self) -> None:
-        """Test the minimum valid temperature."""
-        params = SamplingParams(temperature=1e-9)  # Just above threshold
+    def test_temperature_very_low(self) -> None:
+        """Test very low positive temperature."""
+        params = SamplingParams(temperature=1e-9)
         assert params.temperature == 1e-9
 
     def test_temperature_very_high(self) -> None:

@@ -11,8 +11,9 @@ Example:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Tuple, Union
+from typing import Any
 
 import torch
 from safetensors import safe_open
@@ -23,7 +24,7 @@ from minivllm.utils.logger_utils import get_logger
 logger = get_logger(__name__)
 
 # Type aliases
-PackedModulesMapping = Dict[str, Tuple[str, Any]]
+PackedModulesMapping = dict[str, tuple[str, Any]]
 WeightLoader = Callable[..., None]
 
 
@@ -43,7 +44,7 @@ def get_default_weight_loader() -> WeightLoader:
     return default_loader
 
 
-def find_parameter(model: nn.Module, name: str) -> Optional[nn.Parameter]:
+def find_parameter(model: nn.Module, name: str) -> nn.Parameter | None:
     """Find parameter by name with fallback mechanisms."""
     # Try custom get_parameter method first
     if hasattr(model, 'get_parameter') and callable(model.get_parameter):
@@ -74,7 +75,8 @@ def apply_weight_loader(
         else:
             weight_loader(param, tensor)
 
-        log_details = f' (shard_id: {shard_id})' if is_packed and shard_id is not None else ''
+        log_details = (f" (shard_id: {shard_id})"
+                       if is_packed and shard_id is not None else '')
         logger.debug(
             f"Loaded {'packed ' if is_packed else ''}weight '{weight_name}'{log_details}"
         )
@@ -114,13 +116,13 @@ def load_weight(
     # Direct loading
     param = find_parameter(model, weight_name)
     if param is None:
-        logger.warning(f"Parameter '{weight_name}' not found; skipping weight")
+        logger.warning(f"Parameter '{weight_name}' not found, skipping weight")
         return False
 
     return apply_weight_loader(param, tensor, weight_name)
 
 
-def load_model(model: nn.Module, model_path: Union[str, Path]) -> None:
+def load_model(model: nn.Module, model_path: str | Path) -> None:
     """Load model weights from safetensors files in the specified directory.
 
     Args:
@@ -136,35 +138,34 @@ def load_model(model: nn.Module, model_path: Union[str, Path]) -> None:
 
             repo_id = str(model_path)
             base_path = Path(snapshot_download(repo_id=repo_id))
-            logger.info(f'Resolved HuggingFace model ID to: {base_path}')
+            logger.info(f"Resolved HuggingFace model ID to: {base_path}")
         except Exception as e:
             raise FileNotFoundError(
-                f'Could not resolve model path: {model_path}. '
-                f'Provide a local directory or valid HuggingFace model ID. '
-                f'Error: {e}'
-            )
+                f"Could not resolve model path: {model_path}. "
+                f"Provide a local directory or valid HuggingFace model ID. "
+                f"Error: {e}")
 
     # Validate resolved path
     if not base_path.is_dir():
         raise FileNotFoundError(
-            f'Model weight directory not found: {base_path}')
+            f"Model weight directory not found: {base_path}")
 
     # Find safetensors files
     safetensor_files = list(base_path.glob('*.safetensors'))
     bin_files = list(base_path.glob('*.bin'))
 
     if not safetensor_files and not bin_files:
-        raise ValueError(f'No .safetensors or .bin files found in {base_path}')
+        raise ValueError(f"No .safetensors or .bin files found in {base_path}")
 
     logger.info(
-        f'Found {len(safetensor_files)} safetensors file(s) and {len(bin_files)} bin file(s) in {base_path}'
+        f"Found {len(safetensor_files)} safetensors file(s) and {len(bin_files)} bin file(s) in {base_path}"
     )
 
     # Get packed modules mapping
     packed_modules_mapping = getattr(model, 'packed_modules_mapping', {})
     if packed_modules_mapping:
         logger.info(
-            f'Using packed modules mapping with {len(packed_modules_mapping)} pattern(s)'
+            f"Using packed modules mapping with {len(packed_modules_mapping)} pattern(s)"
         )
 
     # Load weights and track statistics
@@ -192,8 +193,9 @@ def load_model(model: nn.Module, model_path: Union[str, Path]) -> None:
         logger.info(f'Loading weights from "{file_path.name}"')
 
         try:
-            state_dict = torch.load(
-                str(file_path), map_location='cpu', weights_only=True)
+            state_dict = torch.load(str(file_path),
+                                    map_location='cpu',
+                                    weights_only=True)
             for weight_name, tensor in state_dict.items():
                 total_weights += 1
 
@@ -215,11 +217,11 @@ def load_model(model: nn.Module, model_path: Union[str, Path]) -> None:
 
     if missing_params > 0:
         logger.warning(
-            f'Weight loading completed with {missing_params} missing parameter(s) out of {total_weights} total weights'
+            f"Weight loading completed with {missing_params} missing parameter(s) out of {total_weights} total weights"
         )
     else:
         logger.info('All weights loaded successfully')
 
     logger.info(
-        f'Loaded {loaded_weights}/{total_weights} weights from {len(safetensor_files)} file(s) (success rate: {success_rate:.1%})'
+        f"Loaded {loaded_weights}/{total_weights} weights from {len(safetensor_files)} file(s) (success rate: {success_rate:.1%})"
     )

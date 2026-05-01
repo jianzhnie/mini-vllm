@@ -39,8 +39,7 @@ def create_model(hf_config):
     if arch_name is None and model_type in TYPE_TO_ARCH:
         arch_name = TYPE_TO_ARCH[model_type]
     if arch_name is None:
-        raise ValueError(
-            f'Unsupported model: model_type={model_type!r}, '
-            f'architectures={architectures}')
+        raise ValueError(f"Unsupported model: model_type={model_type!r}, "
+                         f"architectures={architectures}")
 
     return SUPPORTED_MODELS[arch_name](hf_config)

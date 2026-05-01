@@ -10,7 +10,7 @@ This module provides the DistributedManager class which handles:
 
 import pickle
 from multiprocessing.synchronize import Event
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import torch
 import torch.distributed as dist
@@ -44,7 +44,7 @@ class DistributedManager:
         self,
         config: Config,
         rank: int,
-        events: Union[Event, List[Event], None] = None,
+        events: Event | list[Event] | None = None,
     ) -> None:
         """Initialize the distributed manager.
 
@@ -56,13 +56,13 @@ class DistributedManager:
         self.config = config
         self.rank = rank
         self.world_size = config.tensor_parallel_size
-        self.backend: Optional[str] = None
+        self.backend: str | None = None
         self.events = events
         self.is_distributed = self.world_size > 1
         self._initialized = False
 
-        logger.debug(f'DistributedManager created with rank {rank}, '
-                     f'world_size {self.world_size}')
+        logger.debug(f"DistributedManager created with rank {rank}, "
+                     f"world_size {self.world_size}")
 
     def initialize(self) -> None:
         """Initialize distributed communication if needed."""
@@ -78,9 +78,9 @@ class DistributedManager:
         self._validate_setup()
 
         self._initialized = True
-        logger.info(f'Distributed manager initialized. '
-                    f'Rank: {self.rank}, World size: {self.world_size}, '
-                    f'Backend: {self.backend}')
+        logger.info(f"Distributed manager initialized. "
+                    f"Rank: {self.rank}, World size: {self.world_size}, "
+                    f"Backend: {self.backend}")
 
     def _setup_distributed_backend(self) -> None:
         """Setup the distributed communication backend."""
@@ -90,9 +90,9 @@ class DistributedManager:
                 dist.init_process_group(backend=self.backend,
                                         rank=self.rank,
                                         world_size=self.world_size)
-            logger.debug(f'Distributed backend setup: {self.backend}')
+            logger.debug(f"Distributed backend setup: {self.backend}")
         except Exception as e:
-            raise RuntimeError(f'Failed to setup distributed backend: {e}')
+            raise RuntimeError(f"Failed to setup distributed backend: {e}")
 
     def _validate_setup(self) -> None:
         """Validate distributed setup is working correctly."""
@@ -114,12 +114,12 @@ class DistributedManager:
 
             if abs(tensor.item() - expected) > 1e-6:
                 raise RuntimeError(
-                    f'Distributed test failed: got {tensor.item()}, '
-                    f'expected {expected}')
+                    f"Distributed test failed: got {tensor.item()}, "
+                    f"expected {expected}")
 
             logger.debug('Distributed communication test passed')
         except Exception as e:
-            raise RuntimeError(f'Distributed validation failed: {e}')
+            raise RuntimeError(f"Distributed validation failed: {e}")
 
     def _move_to_device(self, tensor: torch.Tensor) -> torch.Tensor:
         """Move tensor to appropriate device based on backend.
@@ -142,7 +142,7 @@ class DistributedManager:
         """Synchronize all processes."""
         if self.is_distributed and dist.is_initialized():
             dist.barrier()
-            logger.debug(f'Rank {self.rank}: Distributed barrier completed')
+            logger.debug(f"Rank {self.rank}: Distributed barrier completed")
 
     def broadcast_data(self, data: Any, src: int = 0) -> Any:
         """Broadcast data from source to all processes.
@@ -177,7 +177,8 @@ class DistributedManager:
                 data_bytes_len = int(data_size.item())
                 data_tensor = torch.empty(data_bytes_len, dtype=torch.uint8)
             else:
-                data_tensor = torch.frombuffer(data_bytes, dtype=torch.uint8).clone()
+                data_tensor = torch.frombuffer(data_bytes,
+                                               dtype=torch.uint8).clone()
 
             # Move to device and broadcast data
             data_tensor = self._move_to_device(data_tensor)
@@ -189,7 +190,7 @@ class DistributedManager:
 
             return data
         except Exception as e:
-            raise RuntimeError(f'Broadcast failed: {e}') from e
+            raise RuntimeError(f"Broadcast failed: {e}") from e
 
     def cleanup(self) -> None:
         """Clean up distributed resources."""
@@ -205,7 +206,7 @@ class DistributedManager:
 
             self._initialized = False
             logger.debug(
-                f'Rank {self.rank}: Distributed manager cleanup completed')
+                f"Rank {self.rank}: Distributed manager cleanup completed")
         except Exception as e:
             logger.warning(
-                f'Rank {self.rank}: Error during distributed cleanup: {e}')
+                f"Rank {self.rank}: Error during distributed cleanup: {e}")

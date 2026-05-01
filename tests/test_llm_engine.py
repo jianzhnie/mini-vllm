@@ -298,7 +298,7 @@ class TestLLMEngineErrorHandling:
     def test_sampling_params_validation(self) -> None:
         """Test that invalid sampling parameters are caught."""
         with pytest.raises(ValueError, match='temperature'):
-            SamplingParams(temperature=0.0)  # Too low
+            SamplingParams(temperature=-1.0)  # Negative
 
         with pytest.raises(ValueError, match='max_tokens'):
             SamplingParams(max_tokens=0)  # Must be positive

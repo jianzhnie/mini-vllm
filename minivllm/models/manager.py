@@ -7,7 +7,7 @@ This module provides the ModelManager class which is responsible for:
 - Resource allocation and cleanup
 """
 
-from typing import Any, Dict
+from typing import Any
 
 from transformers import AutoConfig, AutoTokenizer
 
@@ -55,7 +55,7 @@ class ModelManager:
         self.model_type = None
         self._model_config = None
 
-        logger.debug(f'ModelManager initialized for model: {config.model}')
+        logger.debug(f"ModelManager initialized for model: {config.model}")
 
     def initialize(self) -> None:
         """Initialize model manager and load the model.
@@ -70,8 +70,8 @@ class ModelManager:
         self._load_model()
         self._validate_model_compatibility()
 
-        logger.info(f'Model manager initialized successfully. '
-                    f'Model: {self.model_type}, Device: {self.device}')
+        logger.info(f"Model manager initialized successfully. "
+                    f"Model: {self.model_type}, Device: {self.device}")
 
     def _setup_device(self) -> None:
         """Setup and validate the target device."""
@@ -83,16 +83,16 @@ class ModelManager:
             # Get current device (handles LOCAL_RANK etc.)
             self.device = get_current_device()
             validate_device(self.device)
-            logger.debug(f'Device setup successful: {self.device}')
+            logger.debug(f"Device setup successful: {self.device}")
         except Exception as e:
-            raise RuntimeError(f'Failed to setup device: {e}')
+            raise RuntimeError(f"Failed to setup device: {e}")
 
     def _validate_model_path(self) -> None:
         """Validate the model path and configuration."""
         if not self.config.model:
             raise ValueError('Model path cannot be empty')
         # Additional validation can be added here
-        logger.debug(f'Model path validation passed: {self.config.model}')
+        logger.debug(f"Model path validation passed: {self.config.model}")
 
     def _load_tokenizer(self) -> None:
         """Load the tokenizer for the model."""
@@ -108,8 +108,8 @@ class ModelManager:
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
 
-            logger.debug(f'Tokenizer loaded successfully: '
-                         f'{type(self.tokenizer).__name__}')
+            logger.debug(f"Tokenizer loaded successfully: "
+                         f"{type(self.tokenizer).__name__}")
         except OSError:
             # Fall back to online mode if not cached locally
             self.tokenizer = AutoTokenizer.from_pretrained(
@@ -119,10 +119,10 @@ class ModelManager:
             )
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
-            logger.debug(f'Tokenizer loaded successfully (online): '
-                         f'{type(self.tokenizer).__name__}')
+            logger.debug(f"Tokenizer loaded successfully (online): "
+                         f"{type(self.tokenizer).__name__}")
         except Exception as e:
-            raise RuntimeError(f'Failed to load tokenizer: {e}')
+            raise RuntimeError(f"Failed to load tokenizer: {e}")
 
     def _load_model(self) -> None:
         """Load the model based on configuration."""
@@ -133,8 +133,8 @@ class ModelManager:
                     self.config.model, trust_remote_code=True)
 
             self.model = create_model(self.config.hf_config)
-            self.model_type = type(self.model).__name__.replace(
-                'ForCausalLM', '').lower()
+            self.model_type = (type(self.model).__name__.replace(
+                'ForCausalLM', '').lower())
 
             load_model(self.model, self.config.model)
 
@@ -142,11 +142,11 @@ class ModelManager:
                 self.model.to(self.device)
 
             self._model_config = self.model.config
-            logger.info(f'Model loaded successfully: {self.model_type}')
+            logger.info(f"Model loaded successfully: {self.model_type}")
 
         except Exception as e:
             logger.exception('Failed to load model')
-            raise RuntimeError(f'Failed to load model: {e}')
+            raise RuntimeError(f"Failed to load model: {e}")
 
     def _validate_model_compatibility(self) -> None:
         """Validate model compatibility with current configuration."""
@@ -158,16 +158,16 @@ class ModelManager:
         num_heads = getattr(self._model_config, 'num_attention_heads', 0)
 
         if vocab_size <= 0:
-            raise ValueError(f'Invalid vocab_size: {vocab_size}')
+            raise ValueError(f"Invalid vocab_size: {vocab_size}")
         if hidden_size <= 0:
-            raise ValueError(f'Invalid hidden_size: {hidden_size}')
+            raise ValueError(f"Invalid hidden_size: {hidden_size}")
         if num_heads <= 0:
-            raise ValueError(f'Invalid num_attention_heads: {num_heads}')
+            raise ValueError(f"Invalid num_attention_heads: {num_heads}")
 
-        logger.debug(f'Model compatibility validated: vocab={vocab_size}, '
-                     f'hidden={hidden_size}, heads={num_heads}')
+        logger.debug(f"Model compatibility validated: vocab={vocab_size}, "
+                     f"hidden={hidden_size}, heads={num_heads}")
 
-    def get_model_info(self) -> Dict[str, Any]:
+    def get_model_info(self) -> dict[str, Any]:
         """Get information about the loaded model.
 
         Returns:

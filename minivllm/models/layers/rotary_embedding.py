@@ -1,7 +1,7 @@
 """Rotary positional embedding helpers."""
 import os
 from functools import lru_cache
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import torch
 from torch import nn
@@ -137,7 +137,7 @@ class RotaryEmbedding(nn.Module):
         rotary_dim: int,
         max_position_embeddings: int,
         base: float,
-        rope_scaling: Optional[Dict[str, Any]] = None,
+        rope_scaling: dict[str, Any] | None = None,
     ) -> None:
         """Initialize rotary embedding with precomputed cos/sin values.
 
@@ -196,7 +196,7 @@ class RotaryEmbedding(nn.Module):
         self.register_buffer('sin_cache', sin, persistent=False)
 
     def forward(self, positions: torch.Tensor, query: torch.Tensor,
-                key: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+                key: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Apply rotary embedding to query and key tensors.
 
         Args:
@@ -229,7 +229,7 @@ def get_rope(
     rotary_dim: int,
     max_position: int,
     base: float,
-    rope_scaling: Optional[Dict[str, Any]] = None,
+    rope_scaling: dict[str, Any] | None = None,
 ) -> RotaryEmbedding:
     """Get a cached RotaryEmbedding instance with the specified parameters.
 

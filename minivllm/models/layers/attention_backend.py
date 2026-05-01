@@ -6,7 +6,7 @@ It also implements efficient KV-cache storage kernels.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Optional, Tuple
+from typing import Any
 
 import torch
 import torch.nn.functional as F
@@ -88,7 +88,7 @@ class AttentionBackend(ABC):
         query: Tensor,
         key: Tensor,
         value: Tensor,
-        attention_mask: Optional[Tensor] = None,
+        attention_mask: Tensor | None = None,
         is_causal: bool = True,
     ) -> Tensor:
         """Forward pass for attention computation.
@@ -141,7 +141,7 @@ class StandardAttentionBackend(AttentionBackend):
         query: Tensor,
         key: Tensor,
         value: Tensor,
-        attention_mask: Optional[Tensor] = None,
+        attention_mask: Tensor | None = None,
         is_causal: bool = True,
     ) -> Tensor:
         """Standard attention computation using PyTorch operations.
@@ -212,7 +212,7 @@ class StandardAttentionBackend(AttentionBackend):
         # Validate inputs
         if slot_mapping.numel() != batch_size:
             raise ValueError(
-                f'slot_mapping size {slot_mapping.numel()} != batch_size {batch_size}'
+                f"slot_mapping size {slot_mapping.numel()} != batch_size {batch_size}"
             )
 
         if _TRITON_AVAILABLE and key.is_cuda:
@@ -300,7 +300,7 @@ class FlashAttentionBackend(AttentionBackend):
         query: Tensor,
         key: Tensor,
         value: Tensor,
-        attention_mask: Optional[Tensor] = None,
+        attention_mask: Tensor | None = None,
         is_causal: bool = True,
     ) -> Tensor:
         """Forward pass using Flash Attention."""
@@ -330,7 +330,7 @@ class FlashAttentionBackend(AttentionBackend):
 
         except Exception as e:
             logger.warning(
-                f'Flash Attention failed with error: {e}, falling back to standard attention'
+                f"Flash Attention failed with error: {e}, falling back to standard attention"
             )
             return self._fallback_backend.forward(query, key, value,
                                                   attention_mask, is_causal)
@@ -385,7 +385,7 @@ class NPUAttentionBackend(AttentionBackend):
         query: Tensor,
         key: Tensor,
         value: Tensor,
-        attention_mask: Optional[Tensor] = None,
+        attention_mask: Tensor | None = None,
         is_causal: bool = True,
     ) -> Tensor:
         """Forward pass using NPU optimizations."""
@@ -423,7 +423,7 @@ class NPUAttentionBackend(AttentionBackend):
 
         except Exception as e:
             logger.error(
-                f'NPU attention failed: {e}, falling back to standard attention'
+                f"NPU attention failed: {e}, falling back to standard attention"
             )
             return self._fallback_backend.forward(query, key, value,
                                                   attention_mask, is_causal)
@@ -436,7 +436,7 @@ class NPUAttentionBackend(AttentionBackend):
         seq_len: int,
         num_kv_heads: int,
         scale: float,
-        context_lens: Optional[Tensor] = None,
+        context_lens: Tensor | None = None,
         is_prefill: bool = False,
     ) -> Tensor:
         """
@@ -468,12 +468,14 @@ class NPUAttentionBackend(AttentionBackend):
                 head_dim = query.shape[2]
 
                 # Create padded tensors in BNSD layout
-                padded_q = torch.zeros(batch_size,
-                                       num_heads,
-                                       max_seq_len,
-                                       head_dim,
-                                       dtype=query.dtype,
-                                       device=query.device)
+                padded_q = torch.zeros(
+                    batch_size,
+                    num_heads,
+                    max_seq_len,
+                    head_dim,
+                    dtype=query.dtype,
+                    device=query.device,
+                )
 
                 # Check if key/value are already in BNSD layout (4D) or need padding (3D)
                 if key_cache.dim() == 4:
@@ -482,18 +484,22 @@ class NPUAttentionBackend(AttentionBackend):
                     padded_v = value_cache
                 else:
                     # Flattened 3D, need padding
-                    padded_k = torch.zeros(batch_size,
-                                           num_kv_heads,
-                                           max_seq_len,
-                                           head_dim,
-                                           dtype=key_cache.dtype,
-                                           device=key_cache.device)
-                    padded_v = torch.zeros(batch_size,
-                                           num_kv_heads,
-                                           max_seq_len,
-                                           head_dim,
-                                           dtype=value_cache.dtype,
-                                           device=value_cache.device)
+                    padded_k = torch.zeros(
+                        batch_size,
+                        num_kv_heads,
+                        max_seq_len,
+                        head_dim,
+                        dtype=key_cache.dtype,
+                        device=key_cache.device,
+                    )
+                    padded_v = torch.zeros(
+                        batch_size,
+                        num_kv_heads,
+                        max_seq_len,
+                        head_dim,
+                        dtype=value_cache.dtype,
+                        device=value_cache.device,
+                    )
 
                 start = 0
                 for i, s_len in enumerate(kv_seq_lens):
@@ -551,11 +557,13 @@ class NPUAttentionBackend(AttentionBackend):
             if q_len > 1:
                 # Causal mask for prefill: 1 for mask, 0 for keep (BOOL)
                 # Use upper triangle as mask (standard for NPU FlashAttention)
-                atten_mask = torch.triu(torch.ones(q_len,
-                                                   q_len,
-                                                   device=query.device,
-                                                   dtype=torch.bool),
-                                        diagonal=1)
+                atten_mask = torch.triu(
+                    torch.ones(q_len,
+                               q_len,
+                               device=query.device,
+                               dtype=torch.bool),
+                    diagonal=1,
+                )
                 atten_mask = atten_mask.view(1, 1, q_len, q_len)
 
             try:
@@ -602,11 +610,13 @@ class NPUAttentionBackend(AttentionBackend):
             if is_prefill and context_lens is not None:
                 # Flatten back to (TotalTokens, NumHeads, HeadDim)
                 # out is BNSD: (batch, num_heads, max_seq_len, head_dim)
-                out_flat = torch.empty(sum(kv_seq_lens),
-                                       out.shape[1],
-                                       out.shape[3],
-                                       dtype=out.dtype,
-                                       device=out.device)
+                out_flat = torch.empty(
+                    sum(kv_seq_lens),
+                    out.shape[1],
+                    out.shape[3],
+                    dtype=out.dtype,
+                    device=out.device,
+                )
                 start = 0
                 for i, s_len in enumerate(kv_seq_lens):
                     end = start + s_len
@@ -682,7 +692,7 @@ class NPUAttentionBackend(AttentionBackend):
         context: Any,
         num_kv_heads: int,
         head_dim: int,
-    ) -> Tuple[Tensor, Tensor]:
+    ) -> tuple[Tensor, Tensor]:
         """Prepare KV cache in optimal format for NPU unified inference.
 
         Args:
@@ -786,8 +796,10 @@ class NPUAttentionBackend(AttentionBackend):
             v_npu[mask] = gathered_v
 
             # Transpose to BNSD format as required by unified_inference
-            return k_npu.transpose(1, 2).contiguous(), v_npu.transpose(
-                1, 2).contiguous()
+            return (
+                k_npu.transpose(1, 2).contiguous(),
+                v_npu.transpose(1, 2).contiguous(),
+            )
 
         else:
             # Prefill phase or direct access: use tensors as-is
@@ -850,7 +862,7 @@ class NPUAttentionBackend(AttentionBackend):
                 v_cache_reshaped.index_put_((valid_slots, ), valid_value)
         except RuntimeError as e:
             # Fallback
-            logger.warning(f'KV Cache update failed: {e}')
+            logger.warning(f"KV Cache update failed: {e}")
             # Try CPU fallback if desperate? No, that would be too slow.
             # Just raise for now.
             raise e

@@ -34,13 +34,12 @@ import os
 import sys
 from logging import Formatter, LogRecord
 from pathlib import Path
-from typing import Dict, Optional, Union
 
 import torch.distributed as dist
 from colorama import Fore, Style
 
 # Track which loggers have already been initialized to avoid duplicate handlers
-logger_initialized: Dict[str, bool] = {}
+logger_initialized: dict[str, bool] = {}
 
 
 class ColorfulFormatter(Formatter):
@@ -104,7 +103,7 @@ class ColorfulFormatter(Formatter):
 
 def get_logger(
     name: str,
-    log_file: Optional[Union[str, Path]] = None,
+    log_file: str | Path | None = None,
     log_level: int = logging.INFO,
     file_mode: str = 'w',
     force_main_process: bool = False,
@@ -175,7 +174,9 @@ def get_logger(
         if is_main_process:
             fmt = '%(asctime)s - [Rank %(rank)d] - %(name)s.%(funcName)s:%(lineno)d - %(levelname)s - %(message)s'
         else:
-            fmt = '%(asctime)s - [Rank %(rank)d] - %(name)s - %(levelname)s - %(message)s'
+            fmt = (
+                '%(asctime)s - [Rank %(rank)d] - %(name)s - %(levelname)s - %(message)s'
+            )
 
         formatter = ColorfulFormatter(fmt=fmt, datefmt='%Y-%m-%d %H:%M:%S')
 
@@ -244,7 +245,7 @@ def get_outdir(path: str, *paths, inc: bool = False) -> str:
         return outdir
     elif inc:
         for count in range(1, 100):
-            outdir_inc = f'{outdir}-{count}'
+            outdir_inc = f"{outdir}-{count}"
             if not os.path.exists(outdir_inc):
                 os.makedirs(outdir_inc)
                 return outdir_inc

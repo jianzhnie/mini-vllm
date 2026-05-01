@@ -41,7 +41,6 @@ Performance Considerations:
 from __future__ import annotations
 
 from collections import deque
-from typing import Deque, List, Tuple
 
 from minivllm.config import Config
 from minivllm.engine.block_manager import BlockManager
@@ -89,8 +88,8 @@ class Scheduler:
         self.eos: int = config.eos
         self.block_manager: BlockManager = BlockManager(
             config.num_kvcache_blocks, config.kvcache_block_size)
-        self.waiting: Deque[Sequence] = deque()
-        self.running: Deque[Sequence] = deque()
+        self.waiting: deque[Sequence] = deque()
+        self.running: deque[Sequence] = deque()
 
     def is_finished(self) -> bool:
         """Check if all sequences have finished generation.
@@ -108,7 +107,7 @@ class Scheduler:
         """
         self.waiting.append(sequence)
 
-    def schedule(self) -> Tuple[List[Sequence], bool]:
+    def schedule(self) -> tuple[list[Sequence], bool]:
         """Schedule sequences for the current inference step.
 
         This method implements the two-phase scheduling policy:
@@ -150,26 +149,26 @@ class Scheduler:
             # Provide detailed debugging information
             error_msg = (
                 'No sequences scheduled, but scheduler is not finished. '
-                f'State: waiting={len(self.waiting)}, running={len(self.running)}, '
-                f'max_num_seqs={self.max_num_seqs}, max_num_batched_tokens={self.max_num_batched_tokens}'
+                f"State: waiting={len(self.waiting)}, running={len(self.running)}, "
+                f"max_num_seqs={self.max_num_seqs}, max_num_batched_tokens={self.max_num_batched_tokens}"
             )
             if self.waiting:
                 first_waiting = self.waiting[0]
-                error_msg += f', first_waiting_seq_len={len(first_waiting)}'
+                error_msg += f", first_waiting_seq_len={len(first_waiting)}"
             if self.running:
                 error_msg += (
-                    f', running_seq_lens={[len(s) for s in list(self.running)[:5]]}'
+                    f", running_seq_lens={[len(s) for s in list(self.running)[:5]]}"
                 )
             raise RuntimeError(error_msg)
 
         return [], False
 
-    def _schedule_prefill(self) -> Tuple[List[Sequence], bool]:
+    def _schedule_prefill(self) -> tuple[list[Sequence], bool]:
         """Schedule waiting sequences for prefill."""
         # Phase 1: Prefill phase for waiting sequences
         # Process new sequences with their full prompt to compute initial KV cache
 
-        scheduled_sequences: List[Sequence] = []
+        scheduled_sequences: list[Sequence] = []
         num_seqs: int = 0
         num_batched_tokens: int = 0
 
@@ -184,10 +183,10 @@ class Scheduler:
             ) > self.max_num_batched_tokens or not self.block_manager.can_allocate(
                     sequence):
                 logger.debug(
-                    f'Cannot schedule sequence {sequence.seq_id} (prefill): '
-                    f'len={len(sequence)}, '
-                    f'tokens={num_batched_tokens + len(sequence)}/{self.max_num_batched_tokens}, '
-                    f'free_blocks={self.block_manager.get_num_free_blocks()}')
+                    f"Cannot schedule sequence {sequence.seq_id} (prefill): "
+                    f"len={len(sequence)}, "
+                    f"tokens={num_batched_tokens + len(sequence)}/{self.max_num_batched_tokens}, "
+                    f"free_blocks={self.block_manager.get_num_free_blocks()}")
                 break
 
             num_seqs += 1
@@ -204,11 +203,11 @@ class Scheduler:
 
         return scheduled_sequences, bool(scheduled_sequences)
 
-    def _schedule_decode(self) -> Tuple[List[Sequence], bool]:
+    def _schedule_decode(self) -> tuple[list[Sequence], bool]:
         """Schedule running sequences for decode."""
         # Phase 2: Decode phase for running sequences
         # Generate one token per sequence while managing cache constraints
-        scheduled_sequences: List[Sequence] = []
+        scheduled_sequences: list[Sequence] = []
         num_seqs: int = 0
 
         while self.running and num_seqs < self.max_num_seqs:
@@ -257,14 +256,14 @@ class Scheduler:
             sequence: Sequence to preempt.
         """
         logger.info(
-            f'Preempting sequence {sequence.seq_id} due to memory constraints.'
+            f"Preempting sequence {sequence.seq_id} due to memory constraints."
         )
         sequence.status = SequenceStatus.WAITING
         self.block_manager.deallocate(sequence)
         self.waiting.appendleft(sequence)
 
-    def postprocess(self, sequences: List[Sequence],
-                    token_ids: List[int]) -> None:
+    def postprocess(self, sequences: list[Sequence],
+                    token_ids: list[int]) -> None:
         """Update sequences with newly generated tokens and handle completion.
 
         This method:

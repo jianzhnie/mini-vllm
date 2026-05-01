@@ -6,7 +6,7 @@ parameters for initializing and running the LLM engine.
 
 import os
 from dataclasses import dataclass
-from typing import ClassVar, Optional
+from typing import ClassVar
 
 from transformers import AutoConfig, PretrainedConfig
 
@@ -64,13 +64,13 @@ class Config:
     device_memory_utilization: float = 0.9
     tensor_parallel_size: int = 1
     enforce_eager: bool = False
-    hf_config: Optional[PretrainedConfig] = None
+    hf_config: PretrainedConfig | None = None
     eos: int = -1
     kvcache_block_size: int = 64
     num_kvcache_blocks: int = -1
     trust_remote_code: bool = False
     dtype: str = 'auto'
-    seed: Optional[int] = None
+    seed: int | None = None
 
     # Backward compatibility alias for gpu_memory_utilization
     @property
@@ -136,69 +136,68 @@ class Config:
             return
         raise ValueError(
             f"Model path '{self.model}' is not a valid directory. "
-            f'Please ensure the model is properly downloaded and accessible.'
-        )
+            f"Please ensure the model is properly downloaded and accessible.")
 
     def _validate_dtype(self) -> None:
         """Validate dtype is a recognized value."""
         valid = ('auto', 'float16', 'bfloat16', 'float32')
         if self.dtype not in valid:
             raise ValueError(
-                f'dtype must be one of {valid}, got {self.dtype!r}')
+                f"dtype must be one of {valid}, got {self.dtype!r}")
 
     def _validate_eos(self) -> None:
         """Validate eos token ID."""
         if self.eos < -1:
             raise ValueError(
-                f'eos must be -1 (auto-detect) or a non-negative token ID, '
-                f'got {self.eos}')
+                f"eos must be -1 (auto-detect) or a non-negative token ID, "
+                f"got {self.eos}")
 
     def _validate_num_kvcache_blocks(self) -> None:
         """Validate KV cache block count."""
         if self.num_kvcache_blocks < -1 or self.num_kvcache_blocks == 0:
             raise ValueError(
-                f'num_kvcache_blocks must be -1 (auto) or a positive integer, '
-                f'got {self.num_kvcache_blocks}')
+                f"num_kvcache_blocks must be -1 (auto) or a positive integer, "
+                f"got {self.num_kvcache_blocks}")
 
     def _validate_device_memory_utilization(self) -> None:
         """Validate device memory utilization is in reasonable range."""
         if not (self.MIN_DEVICE_MEMORY_UTIL <= self.device_memory_utilization
                 <= self.MAX_DEVICE_MEMORY_UTIL):
             raise ValueError(
-                f'device_memory_utilization must be between {self.MIN_DEVICE_MEMORY_UTIL} '
-                f'and {self.MAX_DEVICE_MEMORY_UTIL}, got {self.device_memory_utilization}. '
-                f'Values outside this range may cause OOM errors or underutilization.'
+                f"device_memory_utilization must be between {self.MIN_DEVICE_MEMORY_UTIL} "
+                f"and {self.MAX_DEVICE_MEMORY_UTIL}, got {self.device_memory_utilization}. "
+                f"Values outside this range may cause OOM errors or underutilization."
             )
 
     def _validate_kvcache_block_size(self) -> None:
         """Validate KV cache block size for optimal performance."""
         if self.kvcache_block_size % self.BLOCK_SIZE_DIVISOR != 0:
             raise ValueError(
-                f'kvcache_block_size must be divisible by {self.BLOCK_SIZE_DIVISOR} '
-                f'for optimal performance, got {self.kvcache_block_size}. '
-                f'Common values: 64, 128, 256.')
+                f"kvcache_block_size must be divisible by {self.BLOCK_SIZE_DIVISOR} "
+                f"for optimal performance, got {self.kvcache_block_size}. "
+                f"Common values: 64, 128, 256.")
 
     def _validate_tensor_parallel_size(self) -> None:
         """Validate tensor parallel size for system compatibility."""
         if not (self.MIN_TENSOR_PARALLEL_SIZE <= self.tensor_parallel_size <=
                 self.MAX_TENSOR_PARALLEL_SIZE):
             raise ValueError(
-                f'tensor_parallel_size must be between {self.MIN_TENSOR_PARALLEL_SIZE} '
-                f'and {self.MAX_TENSOR_PARALLEL_SIZE}, got {self.tensor_parallel_size}. '
-                f'Higher values may not provide additional benefits and consume more memory.'
+                f"tensor_parallel_size must be between {self.MIN_TENSOR_PARALLEL_SIZE} "
+                f"and {self.MAX_TENSOR_PARALLEL_SIZE}, got {self.tensor_parallel_size}. "
+                f"Higher values may not provide additional benefits and consume more memory."
             )
 
     def _validate_batch_sizes(self) -> None:
         """Validate batch size parameters are positive."""
         if self.max_num_batched_tokens <= 0:
-            raise ValueError(f'max_num_batched_tokens must be positive, '
-                             f'got {self.max_num_batched_tokens}')
+            raise ValueError(f"max_num_batched_tokens must be positive, "
+                             f"got {self.max_num_batched_tokens}")
         if self.max_num_seqs <= 0:
             raise ValueError(
-                f'max_num_seqs must be positive, got {self.max_num_seqs}')
+                f"max_num_seqs must be positive, got {self.max_num_seqs}")
         if self.max_model_len <= 0:
             raise ValueError(
-                f'max_model_len must be positive, got {self.max_model_len}')
+                f"max_model_len must be positive, got {self.max_model_len}")
 
     def _load_hf_config(self) -> None:
         """Load HuggingFace model configuration."""
@@ -216,8 +215,8 @@ class Config:
             )
         except Exception as e:
             raise ValueError(
-                f'Failed to load HuggingFace model configuration from {self.model}: {e}. '
-                f'Please ensure the model is a valid HuggingFace model or local directory.'
+                f"Failed to load HuggingFace model configuration from {self.model}: {e}. "
+                f"Please ensure the model is a valid HuggingFace model or local directory."
             ) from e
 
     def _adjust_max_model_len(self) -> None:
@@ -233,19 +232,20 @@ class Config:
 
             new_max_model_len = min(model_max_len, self.max_num_batched_tokens)
             warnings.warn(
-                f'auto-adjusting max_model_len from {self.max_model_len} '
-                f'to {new_max_model_len} (model/batch constraints).',
+                f"auto-adjusting max_model_len from {self.max_model_len} "
+                f"to {new_max_model_len} (model/batch constraints).",
                 UserWarning,
-                stacklevel=2)
+                stacklevel=2,
+            )
             self.max_model_len = new_max_model_len
 
     def _validate_batch_token_constraints(self) -> None:
         """Verify batch size is sufficient for model length requirements."""
         if self.max_num_batched_tokens < self.max_model_len:
             raise ValueError(
-                f'max_num_batched_tokens ({self.max_num_batched_tokens}) '
-                f'must be >= max_model_len ({self.max_model_len}) '
-                f'to accommodate the full context length in a single batch.')
+                f"max_num_batched_tokens ({self.max_num_batched_tokens}) "
+                f"must be >= max_model_len ({self.max_model_len}) "
+                f"to accommodate the full context length in a single batch.")
 
     def __repr__(self) -> str:
         """Return a detailed string representation of the configuration.
@@ -255,11 +255,17 @@ class Config:
         """
         config_items = []
         for field_name in [
-                'model', 'max_num_batched_tokens', 'max_num_seqs',
-                'max_model_len', 'device_memory_utilization',
-                'tensor_parallel_size', 'enforce_eager', 'kvcache_block_size',
-                'num_kvcache_blocks', 'eos'
+                'model',
+                'max_num_batched_tokens',
+                'max_num_seqs',
+                'max_model_len',
+                'device_memory_utilization',
+                'tensor_parallel_size',
+                'enforce_eager',
+                'kvcache_block_size',
+                'num_kvcache_blocks',
+                'eos',
         ]:
             value = getattr(self, field_name, None)
-            config_items.append(f'{field_name}={value!r}')
-        return f'Config({", ".join(config_items)})'
+            config_items.append(f"{field_name}={value!r}")
+        return f"Config({', '.join(config_items)})"

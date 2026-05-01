@@ -3,8 +3,6 @@
 This module implements the OPT architecture using the mini-vLLM building blocks.
 """
 
-from typing import List, Optional, Tuple
-
 import torch
 from torch import nn
 from transformers import OPTConfig
@@ -59,8 +57,8 @@ class OPTAttention(nn.Module):
 
         if self.head_dim * num_heads != self.embed_dim:
             raise ValueError(
-                f'embed_dim must be divisible by num_heads (got `embed_dim`: {self.embed_dim}'
-                f' and `num_heads`: {num_heads}).')
+                f"embed_dim must be divisible by num_heads (got 'embed_dim': {self.embed_dim}"
+                f" and 'num_heads': {num_heads}).")
 
         self.qkv_proj = QKVParallelLinear(
             embed_dim,
@@ -177,9 +175,8 @@ class OPTDecoderLayer(nn.Module):
         self,
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
-        residual: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-
+        residual: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         # OPT can be Pre-LN or Post-LN depending on config, but standard OPT is Pre-LN
         # config.do_layer_norm_before defaults to True for OPT
 
@@ -326,8 +323,7 @@ class OPTForCausalLM(nn.Module):
         return hidden_states
 
     def set_kv_cache(
-            self,
-            kv_cache: list[tuple[torch.Tensor, torch.Tensor]]) -> None:
+            self, kv_cache: list[tuple[torch.Tensor, torch.Tensor]]) -> None:
         """Set KV cache for all attention layers."""
         for layer_idx, layer in enumerate(self.model.decoder.layers):
             if layer_idx < len(kv_cache):

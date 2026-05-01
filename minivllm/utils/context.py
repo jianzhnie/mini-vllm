@@ -23,7 +23,6 @@ Typical usage:
 
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Optional
 
 import torch
 
@@ -55,11 +54,11 @@ class Context:
     is_prefill: bool = False
     max_seqlen_q: int = 0
     max_seqlen_k: int = 0
-    cum_seqlens_q: Optional[torch.Tensor] = None
-    cum_seqlens_k: Optional[torch.Tensor] = None
-    slot_mapping: Optional[torch.Tensor] = None
-    context_lens: Optional[torch.Tensor] = None
-    block_tables: Optional[torch.Tensor] = None
+    cum_seqlens_q: torch.Tensor | None = None
+    cum_seqlens_k: torch.Tensor | None = None
+    slot_mapping: torch.Tensor | None = None
+    context_lens: torch.Tensor | None = None
+    block_tables: torch.Tensor | None = None
 
 
 # Thread-safe context variable
@@ -88,11 +87,11 @@ def set_context(
     is_prefill: bool,
     max_seqlen_q: int = 0,
     max_seqlen_k: int = 0,
-    cum_seqlens_q: Optional[torch.Tensor] = None,
-    cum_seqlens_k: Optional[torch.Tensor] = None,
-    slot_mapping: Optional[torch.Tensor] = None,
-    context_lens: Optional[torch.Tensor] = None,
-    block_tables: Optional[torch.Tensor] = None,
+    cum_seqlens_q: torch.Tensor | None = None,
+    cum_seqlens_k: torch.Tensor | None = None,
+    slot_mapping: torch.Tensor | None = None,
+    context_lens: torch.Tensor | None = None,
+    block_tables: torch.Tensor | None = None,
 ) -> None:
     """Set the thread-local inference context.
 

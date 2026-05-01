@@ -18,7 +18,7 @@ Example:
 """
 
 import os
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import torch
 from transformers.utils import (
@@ -82,7 +82,7 @@ DEVICE_TYPE_MUSA: str = 'musa'
 DEVICE_TYPE_CPU: str = 'cpu'
 
 # Tuple of all supported device types for convenience
-SUPPORTED_DEVICE_TYPES: Tuple[str, ...] = (
+SUPPORTED_DEVICE_TYPES: tuple[str, ...] = (
     DEVICE_TYPE_CUDA,
     DEVICE_TYPE_NPU,
     DEVICE_TYPE_XPU,
@@ -117,7 +117,7 @@ def get_visible_devices_keyword() -> str:
         return ''
 
 
-def get_dist_info() -> Tuple[int, int, int]:
+def get_dist_info() -> tuple[int, int, int]:
     """Get distributed training information.
 
     Returns:
@@ -187,23 +187,23 @@ def get_current_device(use_cpu: bool = False) -> torch.device:
     if env_device:
         if env_device == 'cpu':
             return torch.device('cpu')
-        return torch.device(f'{env_device}:{local_rank}')
+        return torch.device(f"{env_device}:{local_rank}")
 
     if use_cpu:
         device = 'cpu'
     elif is_torch_cuda_available():
-        device = 'cuda:{}'.format(local_rank)
+        device = f"cuda:{local_rank}"
     elif is_torch_npu_available():
-        device = 'npu:{}'.format(local_rank)
+        device = f"npu:{local_rank}"
     elif is_torch_xpu_available():
-        device = 'xpu:{}'.format(local_rank)
+        device = f"xpu:{local_rank}"
     elif is_torch_mps_available():
         # MPS only supports a single device, always use index 0
         device = 'mps'
     elif is_torch_mlu_available():
-        device = 'mlu:{}'.format(local_rank)
+        device = f"mlu:{local_rank}"
     elif is_torch_musa_available():
-        device = 'musa:{}'.format(local_rank)
+        device = f"musa:{local_rank}"
     else:
         device = 'cpu'
     return torch.device(device)
@@ -261,8 +261,8 @@ def set_device(device: torch.device) -> None:
         # and are handled automatically by PyTorch
     except Exception as e:
         logger.warning(
-            f'Failed to set device {device}: {e}. '
-            f'This may be normal for device types that don\'t support set_device.'
+            f"Failed to set device {device}: {e}. "
+            f"This may be normal for device types that don't support set_device."
         )
 
 
@@ -323,7 +323,7 @@ def empty_cache() -> None:
     # or don't need explicit cache clearing
 
 
-def synchronize(device: Optional[torch.device] = None) -> None:
+def synchronize(device: torch.device | None = None) -> None:
     """Synchronize operations on the given device.
 
     This ensures all pending operations on the device are completed.
@@ -342,7 +342,7 @@ def synchronize(device: Optional[torch.device] = None) -> None:
     # or don't need explicit synchronization
 
 
-def reset_peak_memory_stats(device: Optional[torch.device] = None) -> None:
+def reset_peak_memory_stats(device: torch.device | None = None) -> None:
     """Reset peak memory statistics for the given device.
 
     Args:
@@ -368,7 +368,7 @@ def reset_peak_memory_stats(device: Optional[torch.device] = None) -> None:
     # Other devices may not support this
 
 
-def mem_get_info(device: Optional[torch.device] = None) -> Tuple[int, int]:
+def mem_get_info(device: torch.device | None = None) -> tuple[int, int]:
     """Get memory information (free, total) for the given device.
 
     Args:
@@ -394,7 +394,7 @@ def mem_get_info(device: Optional[torch.device] = None) -> Tuple[int, int]:
         except (AttributeError, RuntimeError) as e:
             # Fallback: return a large value if API not available
             logger.warning(
-                f'mem_get_info not available for NPU: {e}, returning default values'
+                f"mem_get_info not available for NPU: {e}, returning default values"
             )
             return (10**12, 10**12)  # 1TB default
     elif device_type == 'xpu':
@@ -402,7 +402,7 @@ def mem_get_info(device: Optional[torch.device] = None) -> Tuple[int, int]:
             return torch.xpu.mem_get_info(device)
         except (AttributeError, RuntimeError) as e:
             logger.warning(
-                f'mem_get_info not available for XPU: {e}, returning default values'
+                f"mem_get_info not available for XPU: {e}, returning default values"
             )
             return (10**12, 10**12)
     elif device_type == 'mps':
@@ -424,6 +424,7 @@ def mem_get_info(device: Optional[torch.device] = None) -> Tuple[int, int]:
         # For CPU and other devices, return system memory
         try:
             import psutil
+
             return (psutil.virtual_memory().available,
                     psutil.virtual_memory().total)
         except ImportError:
@@ -433,7 +434,7 @@ def mem_get_info(device: Optional[torch.device] = None) -> Tuple[int, int]:
             return (10**12, 10**12)  # 1TB default
 
 
-def memory_stats(device: Optional[torch.device] = None) -> Dict[str, Any]:
+def memory_stats(device: torch.device | None = None) -> dict[str, Any]:
     """Get memory statistics for the given device.
 
     Args:
@@ -454,13 +455,13 @@ def memory_stats(device: Optional[torch.device] = None) -> Dict[str, Any]:
         try:
             return torch.npu.memory_stats(device)
         except (AttributeError, RuntimeError) as e:
-            logger.debug(f'memory_stats not available for NPU: {e}')
+            logger.debug(f"memory_stats not available for NPU: {e}")
             return {}
     elif device_type == 'xpu':
         try:
             return torch.xpu.memory_stats(device)
         except (AttributeError, RuntimeError) as e:
-            logger.debug(f'memory_stats not available for XPU: {e}')
+            logger.debug(f"memory_stats not available for XPU: {e}")
             return {}
     elif device_type == 'mps':
         # MPS doesn't provide detailed memory statistics
@@ -493,7 +494,7 @@ def supports_cuda_graph() -> bool:
 
 
 def get_device_capabilities(
-        device: Optional[torch.device] = None) -> Dict[str, Any]:
+        device: torch.device | None = None) -> dict[str, Any]:
     """Get capabilities and features supported by the device.
 
     This function returns a dictionary describing what features are available
@@ -526,7 +527,7 @@ def get_device_capabilities(
     return capabilities
 
 
-def should_use_pin_memory(device: Optional[torch.device] = None) -> bool:
+def should_use_pin_memory(device: torch.device | None = None) -> bool:
     """Check if pin_memory should be used for the given device.
 
     pin_memory is primarily beneficial for CUDA devices to enable faster
@@ -572,10 +573,10 @@ def move_tensor_to_device(tensor: torch.Tensor,
     try:
         return tensor.to(device, non_blocking=non_blocking)
     except RuntimeError as e:
-        logger.error(f'Failed to move tensor to device {device}: {e}')
+        logger.error(f"Failed to move tensor to device {device}: {e}")
         raise RuntimeError(
-            f'Cannot move tensor to device {device}. '
-            f'Please ensure the device is available and accessible.') from e
+            f"Cannot move tensor to device {device}. "
+            f"Please ensure the device is available and accessible.") from e
 
 
 def is_device_available(device: torch.device) -> bool:
@@ -590,9 +591,8 @@ def is_device_available(device: torch.device) -> bool:
     device_type = device.type
     try:
         if device_type == 'cuda':
-            return torch.cuda.is_available(
-            ) and device.index is not None and device.index < torch.cuda.device_count(
-            )
+            return (torch.cuda.is_available() and device.index is not None
+                    and device.index < torch.cuda.device_count())
         elif device_type == 'npu':
             return is_torch_npu_available() and (
                 device.index is None
@@ -613,10 +613,10 @@ def is_device_available(device: torch.device) -> bool:
         elif device_type == 'cpu':
             return True
         else:
-            logger.warning(f'Unknown device type: {device_type}')
+            logger.warning(f"Unknown device type: {device_type}")
             return False
     except Exception as e:
-        logger.warning(f'Error checking device availability for {device}: {e}')
+        logger.warning(f"Error checking device availability for {device}: {e}")
         return False
 
 
@@ -631,12 +631,12 @@ def validate_device(device: torch.device) -> None:
     """
     if not is_device_available(device):
         raise RuntimeError(
-            f'Device {device} is not available. '
-            f'Please check that the device is properly installed and accessible.'
+            f"Device {device} is not available. "
+            f"Please check that the device is properly installed and accessible."
         )
 
 
-def get_npu_device_stats(device: torch.device) -> Dict[str, float]:
+def get_npu_device_stats(device: torch.device) -> dict[str, float]:
     """Get detailed NPU device statistics.
 
     Args:
@@ -682,12 +682,12 @@ def get_npu_device_stats(device: torch.device) -> Dict[str, float]:
             'inactive_bytes': memory_stats.get('inactive_bytes.all.current',
                                                0),
         }
-        logger.info(f'NPU Device Stats for {device}:')
+        logger.info(f"NPU Device Stats for {device}:")
         for key, value in npu_device_stats.items():
-            logger.info(f'{key}: {value}')
+            logger.info(f"{key}: {value}")
 
         return npu_device_stats
 
     except Exception as e:
-        logger.warning(f'Failed to get NPU memory stats for {device}: {e}')
+        logger.warning(f"Failed to get NPU memory stats for {device}: {e}")
         return {}

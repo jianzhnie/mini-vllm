@@ -17,10 +17,8 @@ try:
     compile_ops = True
 
     # Disable compile on NPU to avoid backend errors
-    if hasattr(torch, 'npu') and torch.npu.is_available():
-        compile_ops = False
-    # Only compile when CUDA is available
-    elif not torch.cuda.is_available():
+    if hasattr(torch, 'npu') and torch.npu.is_available(
+    ) or not torch.cuda.is_available():
         compile_ops = False
 except ImportError:
     compile_ops = False
@@ -51,7 +49,7 @@ def apply_temperature(logits: Tensor, temperature: Tensor) -> Tensor:
     """
     if logits.dim() != 2:
         raise ValueError(
-            f'logits must be 2D [batch_size, vocab_size], got {logits.shape}')
+            f"logits must be 2D [batch_size, vocab_size], got {logits.shape}")
     if isinstance(temperature, float):
         if temperature == 1.0:
             return logits
@@ -89,7 +87,7 @@ def apply_top_k(logits: Tensor,
     """
     if logits.dim() != 2:
         raise ValueError(
-            f'logits must be 2D [batch_size, vocab_size], got {logits.shape}')
+            f"logits must be 2D [batch_size, vocab_size], got {logits.shape}")
 
     vocab_size = logits.size(-1)
 
@@ -155,7 +153,7 @@ def apply_top_p(logits: Tensor,
     """
     if logits.dim() != 2:
         raise ValueError(
-            f'logits must be 2D [batch_size, vocab_size], got {logits.shape}')
+            f"logits must be 2D [batch_size, vocab_size], got {logits.shape}")
 
     # Handle scalar p
     if isinstance(top_p, float):
@@ -211,7 +209,7 @@ def apply_min_p(logits: Tensor,
     """
     if logits.dim() != 2:
         raise ValueError(
-            f'logits must be 2D [batch_size, vocab_size], got {logits.shape}')
+            f"logits must be 2D [batch_size, vocab_size], got {logits.shape}")
 
     # Handle scalar min_p
     if isinstance(min_p, float):

@@ -5,9 +5,9 @@ individual sequences/requests in the LLM engine, including token tracking,
 cache management, and state serialization.
 """
 
+from collections.abc import Iterator
 from enum import Enum, auto
 from itertools import count
-from typing import Iterator, List, Optional, Tuple, Union
 
 from minivllm.sampling_params import SamplingParams
 
@@ -22,6 +22,7 @@ class SequenceStatus(Enum):
         RUNNING: Sequence is currently being processed.
         FINISHED: Sequence generation is complete.
     """
+
     WAITING = auto()
     RUNNING = auto()
     FINISHED = auto()
@@ -59,8 +60,8 @@ class Sequence:
 
     def __init__(
         self,
-        token_ids: List[int],
-        sampling_params: Optional[SamplingParams] = None,
+        token_ids: list[int],
+        sampling_params: SamplingParams | None = None,
     ) -> None:
         """Initialize a new sequence.
 
@@ -77,12 +78,12 @@ class Sequence:
 
         self.seq_id: int = next(Sequence.counter)
         self.status: SequenceStatus = SequenceStatus.WAITING
-        self.token_ids: List[int] = list(token_ids)
+        self.token_ids: list[int] = list(token_ids)
         self.last_token: int = self.token_ids[-1]
         self.num_tokens: int = len(self.token_ids)
         self.num_prompt_tokens: int = len(self.token_ids)
         self.num_cached_tokens: int = 0
-        self.block_table: List[int] = []
+        self.block_table: list[int] = []
         self.sampling_params: SamplingParams = sampling_params
         self.temperature: float = sampling_params.temperature
         self.top_p: float = sampling_params.top_p
@@ -129,7 +130,7 @@ class Sequence:
         return self.num_tokens - self.num_prompt_tokens
 
     @property
-    def prompt_token_ids(self) -> List[int]:
+    def prompt_token_ids(self) -> list[int]:
         """Get the token IDs from the original prompt.
 
         Returns:
@@ -138,7 +139,7 @@ class Sequence:
         return self.token_ids[:self.num_prompt_tokens]
 
     @property
-    def completion_token_ids(self) -> List[int]:
+    def completion_token_ids(self) -> list[int]:
         """Get the generated completion token IDs.
 
         Returns:
@@ -177,7 +178,7 @@ class Sequence:
         """
         return self.num_tokens - (self.num_blocks - 1) * self.block_size
 
-    def block(self, i: int) -> List[int]:
+    def block(self, i: int) -> list[int]:
         """Get token IDs for a specific block.
 
         Args:
@@ -191,10 +192,10 @@ class Sequence:
         """
         if not (0 <= i < self.num_blocks):
             raise IndexError(
-                f'Block index {i} out of range [0, {self.num_blocks}). '
-                f'Sequence ID: {self.seq_id}, '
-                f'Total tokens: {self.num_tokens}, '
-                f'Block size: {self.block_size}')
+                f"Block index {i} out of range [0, {self.num_blocks}). "
+                f"Sequence ID: {self.seq_id}, "
+                f"Total tokens: {self.num_tokens}, "
+                f"Block size: {self.block_size}")
         return self.token_ids[i * self.block_size:(i + 1) * self.block_size]
 
     def append_token(self, token_id: int) -> None:
@@ -218,20 +219,22 @@ class Sequence:
             RuntimeError: If sequence is already finished.
         """
         if token_id < 0:
-            raise ValueError(f'Token ID must be non-negative, got {token_id}. '
-                             f'Sequence ID: {self.seq_id}')
+            raise ValueError(f"Token ID must be non-negative, got {token_id}. "
+                             f"Sequence ID: {self.seq_id}")
 
         if self.status == SequenceStatus.FINISHED:
             raise RuntimeError(
-                f'Cannot append token to finished sequence. '
-                f'Sequence ID: {self.seq_id}, Token ID: {token_id}')
+                f"Cannot append token to finished sequence. "
+                f"Sequence ID: {self.seq_id}, Token ID: {token_id}")
 
         self.token_ids.append(token_id)
         self.last_token = token_id
         self.num_tokens += 1
 
     def __getstate__(
-            self) -> Tuple[int, int, int, List[int], Union[List[int], int], float, float, int, float, int, bool]:
+        self,
+    ) -> tuple[int, int, int, list[int], list[int] | int, float, float, int,
+               float, int, bool, ]:
         """Prepare sequence state for serialization/pickling.
 
         This method optimizes serialization by only storing complete
@@ -269,9 +272,10 @@ class Sequence:
         )
 
     def __setstate__(
-            self, state: Tuple[int, int, int, List[int], Union[List[int],
-                                                               int], float,
-                               float, int, float, int, bool]) -> None:
+        self,
+        state: tuple[int, int, int, list[int], list[int] | int, float, float,
+                     int, float, int, bool, ],
+    ) -> None:
         """Restore sequence state from serialization/unpickling.
 
         This method reconstructs a sequence from its serialized state,

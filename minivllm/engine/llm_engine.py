@@ -9,7 +9,7 @@ import os
 import socket
 import warnings
 from time import perf_counter
-from typing import Any, Dict, List, Optional, Tuple, TypeAlias, Union
+from typing import Any, TypeAlias
 
 import torch.multiprocessing as mp
 from tqdm.auto import tqdm
@@ -27,9 +27,8 @@ logger = get_logger(__name__)
 __all__ = ['LLMEngine']
 
 # Type aliases for complex types
-SamplingParamsInput: TypeAlias = Union[SamplingParams, List[SamplingParams],
-                                       None]
-OutputDict: TypeAlias = Dict[str, Union[str, List[int]]]
+SamplingParamsInput: TypeAlias = SamplingParams | list[SamplingParams] | None
+OutputDict: TypeAlias = dict[str, str | list[int]]
 
 
 class LLMEngine:
@@ -71,18 +70,17 @@ class LLMEngine:
         """
         if not isinstance(config, Config):
             raise TypeError(
-                f'config must be a Config instance, got {type(config).__name__}')
-
+                f"config must be a Config instance, got {type(config).__name__}"
+            )
 
         # Initialize distributed processes for tensor parallelism
-        self.ps: List[mp.Process] = []
-        self.events: List[mp.Event] = []
+        self.ps: list[mp.Process] = []
+        self.events: list[mp.Event] = []
 
         if config.tensor_parallel_size > 1:
             os.environ.setdefault('MASTER_ADDR', '127.0.0.1')
             if 'MASTER_PORT' not in os.environ:
-                with socket.socket(socket.AF_INET,
-                                   socket.SOCK_STREAM) as sock:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                     sock.bind(('127.0.0.1', 0))
                     port = sock.getsockname()[1]
                 os.environ['MASTER_PORT'] = str(port)
@@ -98,11 +96,10 @@ class LLMEngine:
 
         # Initialize main model runner on rank 0
         self.model_runner: ModelRunner = ModelRunner(config, 0, self.events)
-        logger.info(f'Initialized LLM Engine with model: {config.model}')
+        logger.info(f"Initialized LLM Engine with model: {config.model}")
 
         # Reuse tokenizer already loaded by ModelManager (avoids duplicate loading)
-        self.tokenizer: PreTrainedTokenizer = (
-            self.model_runner.model_manager.tokenizer)
+        self.tokenizer: PreTrainedTokenizer = self.model_runner.model_manager.tokenizer
         config.eos = self.tokenizer.eos_token_id
 
         # Initialize scheduler for sequence management
@@ -125,7 +122,7 @@ class LLMEngine:
             This method attempts graceful shutdown with timeouts and
             forced termination as fallback. Errors are logged as warnings.
         """
-        errors: List[str] = []
+        errors: list[str] = []
 
         try:
             # Step 1: Signal model runner to exit
@@ -134,7 +131,7 @@ class LLMEngine:
                     self.model_runner.call('exit')
                     del self.model_runner
                 except Exception as e:
-                    errors.append(f'Failed to exit model runner: {e}')
+                    errors.append(f"Failed to exit model runner: {e}")
 
             # Step 2: Terminate worker processes
             if hasattr(self, 'ps'):
@@ -143,8 +140,8 @@ class LLMEngine:
                         p.join(timeout=5)
                         if p.is_alive():
                             warnings.warn(
-                                f'Worker process {i} did not terminate gracefully, '
-                                f'forcing termination',
+                                f"Worker process {i} did not terminate gracefully, "
+                                f"forcing termination",
                                 RuntimeWarning,
                             )
                             p.terminate()
@@ -152,10 +149,10 @@ class LLMEngine:
                             if p.is_alive():
                                 p.kill()
                     except Exception as e:
-                        errors.append(f'Failed to terminate worker {i}: {e}')
+                        errors.append(f"Failed to terminate worker {i}: {e}")
 
         except Exception as e:
-            errors.append(f'Unexpected error during engine cleanup: {e}')
+            errors.append(f"Unexpected error during engine cleanup: {e}")
 
         finally:
             if errors:
@@ -165,8 +162,8 @@ class LLMEngine:
 
     def add_request(
         self,
-        prompt: Union[str, List[int]],
-        sampling_params: Optional[SamplingParams] = None,
+        prompt: str | list[int],
+        sampling_params: SamplingParams | None = None,
     ) -> int:
         """Add a new generation request to the engine.
 
@@ -184,7 +181,7 @@ class LLMEngine:
 
         # Convert string prompts to token IDs
         if isinstance(prompt, str):
-            prompt_tokens: List[int] = self.tokenizer.encode(prompt)
+            prompt_tokens: list[int] = self.tokenizer.encode(prompt)
         else:
             prompt_tokens = prompt
 
@@ -193,7 +190,7 @@ class LLMEngine:
         self.scheduler.add(sequence)
         return sequence.seq_id
 
-    def step(self) -> Tuple[List[Tuple[int, List[int]]], int]:
+    def step(self) -> tuple[list[tuple[int, list[int]]], int]:
         """Execute one inference step.
 
         This method:
@@ -213,24 +210,24 @@ class LLMEngine:
         between prefill (compute-bound) and decode (memory-bound) phases.
         """
         # Get sequences to process this step
-        sequences: List[Sequence]
+        sequences: list[Sequence]
         is_prefill: bool
         sequences, is_prefill = self.scheduler.schedule()
 
         # Run model inference (may return None on worker processes)
-        token_ids_opt: Optional[List[int]] = self.model_runner.call(
+        token_ids_opt: list[int] | None = self.model_runner.call(
             'run', sequences, is_prefill)
 
         if token_ids_opt is None:
             raise RuntimeError('ModelRunner returned no tokens on rank 0')
 
-        token_ids: List[int] = token_ids_opt
+        token_ids: list[int] = token_ids_opt
 
         # Update sequences with new tokens
         self.scheduler.postprocess(sequences, token_ids)
 
         # Collect finished sequences
-        outputs: List[Tuple[int, List[int]]] = [
+        outputs: list[tuple[int, list[int]]] = [
             (seq.seq_id, seq.completion_token_ids) for seq in sequences
             if seq.is_finished
         ]
@@ -250,10 +247,10 @@ class LLMEngine:
 
     def generate(
         self,
-        prompts: Union[List[str], List[List[int]]],
+        prompts: list[str] | list[list[int]],
         sampling_params: SamplingParamsInput = None,
         use_tqdm: bool = True,
-    ) -> List[OutputDict]:
+    ) -> list[OutputDict]:
         """Generate text completions for multiple prompts.
 
         This is the main API for text generation. It handles:
@@ -288,7 +285,7 @@ class LLMEngine:
             >>> print(results[0]['text'])
         """
         # Setup progress bar if requested
-        pbar: Optional[Any] = None
+        pbar: Any | None = None
         if use_tqdm:
             pbar = tqdm(total=len(prompts),
                         desc='Generating',
@@ -296,7 +293,7 @@ class LLMEngine:
 
         # Normalize sampling parameters to list
         if sampling_params is None:
-            sampling_params_list: List[SamplingParams] = [
+            sampling_params_list: list[SamplingParams] = [
                 SamplingParams() for _ in prompts
             ]
         elif not isinstance(sampling_params, list):
@@ -312,7 +309,7 @@ class LLMEngine:
             self.add_request(prompt, sp)
 
         # Run inference loop
-        outputs: Dict[int, List[int]] = {}
+        outputs: dict[int, list[int]] = {}
         prefill_throughput: float = 0.0
         decode_throughput: float = 0.0
 
@@ -328,8 +325,8 @@ class LLMEngine:
                 else:
                     decode_throughput = -num_tokens / elapsed
                 pbar.set_postfix({
-                    'Prefill': f'{int(prefill_throughput)} token/s',
-                    'Decode': f'{int(decode_throughput)} token/s',
+                    'Prefill': f"{int(prefill_throughput)} token/s",
+                    'Decode': f"{int(decode_throughput)} token/s",
                 })
 
             # Collect outputs and update progress
@@ -342,7 +339,7 @@ class LLMEngine:
             pbar.close()
 
         # Sort outputs by sequence ID to match input order
-        sorted_outputs: List[List[int]] = [
+        sorted_outputs: list[list[int]] = [
             outputs[seq_id] for seq_id in sorted(outputs.keys())
         ]
 
@@ -350,7 +347,7 @@ class LLMEngine:
         texts = self.tokenizer.batch_decode(sorted_outputs,
                                             skip_special_tokens=True,
                                             clean_up_tokenization_spaces=True)
-        result_dicts: List[Dict[str, Union[str, List[int]]]] = [{
+        result_dicts: list[dict[str, str | list[int]]] = [{
             'text':
             text,
             'token_ids':

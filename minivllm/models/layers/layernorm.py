@@ -11,8 +11,6 @@ RMSNorm is a computationally efficient alternative to LayerNorm that:
 - Provides similar benefits to LayerNorm with reduced computational cost
 """
 
-from typing import Optional, Tuple
-
 import torch
 from torch import nn
 
@@ -111,7 +109,7 @@ class RMSNorm(nn.Module):
 
     def add_rms_forward(
             self, x: torch.Tensor,
-            residual: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+            residual: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Apply RMS normalization with residual addition.
 
         This method efficiently combines the residual connection with
@@ -152,8 +150,8 @@ class RMSNorm(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        residual: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        residual: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         """Forward pass with optional residual connection.
 
         Args:

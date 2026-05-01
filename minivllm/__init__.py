@@ -55,8 +55,9 @@ try:
     ]
 except ImportError as e:
     import warnings
-    warnings.warn(f'Failed to import some modules from minivllm: {e}. '
-                  f'Make sure all required dependencies are installed: '
-                  f'torch, transformers, flash-attn, triton, xxhash. '
-                  f'Some functionality may be unavailable.')
+
+    warnings.warn(f"Failed to import some modules from minivllm: {e}. "
+                  f"Make sure all required dependencies are installed: "
+                  f"torch, transformers, flash-attn, triton, xxhash. "
+                  f"Some functionality may be unavailable.")
     __all__ = []

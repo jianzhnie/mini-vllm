@@ -1,6 +1,6 @@
 import math
 import os
-from typing import Any, Dict, Optional
+from typing import Any
 
 import torch
 from torch import Tensor
@@ -22,13 +22,14 @@ SPARSE_MODE = int(
     os.getenv('NPU_FA2_SPARSE_MODE',
               default=str(DOWN_RIGHT_ALIGNED_CAUSAL_MASK_MODE)))
 if SPARSE_MODE not in [
-        TOP_LEFT_ALIGNED_CAUSAL_MASK_MODE, DOWN_RIGHT_ALIGNED_CAUSAL_MASK_MODE
+        TOP_LEFT_ALIGNED_CAUSAL_MASK_MODE,
+        DOWN_RIGHT_ALIGNED_CAUSAL_MASK_MODE,
 ]:
     raise ValueError(
         'Environment variable `NPU_FA2_SPARSE_MODE` can only be set as 2 (top-left aligned causal mask) '
         'or 3 (down-right aligned causal mask).')
 
-ATTN_MASK_NPU_CACHE: Dict[torch.device, Tensor] = {}
+ATTN_MASK_NPU_CACHE: dict[torch.device, Tensor] = {}
 
 
 def get_attn_mask_npu(device: torch.device, size: int = 2048) -> Tensor:
@@ -78,7 +79,7 @@ def npu_flash_attn_func(
     k: Tensor,
     v: Tensor,
     dropout_p: float = 0.0,
-    softmax_scale: Optional[float] = None,
+    softmax_scale: float | None = None,
     causal: bool = False,
     input_layout: str = 'BSND',
     **kwargs: Any,
@@ -136,4 +137,3 @@ def npu_flash_attn_func(
         )[0]
 
     return output
-

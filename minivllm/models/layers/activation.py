@@ -88,7 +88,7 @@ class SiluAndMul(nn.Module):
 
         if x.size(-1) % 2 != 0:
             raise ValueError(
-                f'Input last dimension must be even for SiluAndMul, got {x.size(-1)}'
+                f"Input last dimension must be even for SiluAndMul, got {x.size(-1)}"
             )
 
         # Split input into two halves along the last dimension

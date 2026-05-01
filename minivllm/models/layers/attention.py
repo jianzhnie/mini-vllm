@@ -49,7 +49,7 @@ Dependencies:
 import logging
 import math
 import os
-from typing import Any, Tuple
+from typing import Any
 
 import torch
 from torch import nn
@@ -149,13 +149,17 @@ class Attention(nn.Module):
         super().__init__()
         self.num_heads: int = num_heads
         self.head_dim: int = head_dim
-        self.scale: float = float(scale) if scale else 1.0 / math.sqrt(head_dim)
+        self.scale: float = float(
+            scale) if scale else 1.0 / math.sqrt(head_dim)
         self.num_kv_heads: int = num_kv_heads
 
         # Initialize appropriate backend
         self.backend: AttentionBackend
-        use_npu_fa = os.getenv('MINIVLLM_USE_NPU_FA',
-                               '0').lower() in {'1', 'true', 'yes'}
+        use_npu_fa = os.getenv('MINIVLLM_USE_NPU_FA', '0').lower() in {
+            '1',
+            'true',
+            'yes',
+        }
         if _NPU_FLASH_ATTN_AVAILABLE and use_npu_fa:
             self.backend = NPUAttentionBackend()
             logger.info('NPU Flash Attention backend initialized')
@@ -172,9 +176,9 @@ class Attention(nn.Module):
         self._cache_initialized: bool = False
 
     def extra_repr(self) -> str:
-        return (f'num_heads={self.num_heads}, head_dim={self.head_dim}, '
-                f'num_kv_heads={self.num_kv_heads}, scale={self.scale}, '
-                f'backend={self.backend.__class__.__name__}')
+        return (f"num_heads={self.num_heads}, head_dim={self.head_dim}, "
+                f"num_kv_heads={self.num_kv_heads}, scale={self.scale}, "
+                f"backend={self.backend.__class__.__name__}")
 
     def forward(self, q: torch.Tensor, k: torch.Tensor,
                 v: torch.Tensor) -> torch.Tensor:
@@ -272,7 +276,7 @@ class Attention(nn.Module):
 
             except Exception as e:
                 logger.warning(
-                    f'NPU Flash Attention failed: {e}, falling back to CUDA/PyTorch implementation'
+                    f"NPU Flash Attention failed: {e}, falling back to CUDA/PyTorch implementation"
                 )
 
         # Priority 2: CUDA FlashAttention
@@ -286,13 +290,13 @@ class Attention(nn.Module):
                 if flash_attn_varlen_func is not None:
                     # Flatten BNSD to (total_tokens, num_heads, head_dim) if needed
                     if q.dim() == 4:
-                        q = q.transpose(1, 2).contiguous().view(
-                            -1, self.num_heads, self.head_dim)
+                        q = (q.transpose(1, 2).contiguous().view(
+                            -1, self.num_heads, self.head_dim))
                         if k.dim() == 4:
-                            k = k.transpose(1, 2).contiguous().view(
-                                -1, self.num_kv_heads, self.head_dim)
-                            v = v.transpose(1, 2).contiguous().view(
-                                -1, self.num_kv_heads, self.head_dim)
+                            k = (k.transpose(1, 2).contiguous().view(
+                                -1, self.num_kv_heads, self.head_dim))
+                            v = (v.transpose(1, 2).contiguous().view(
+                                -1, self.num_kv_heads, self.head_dim))
 
                     attn_out: torch.Tensor = flash_attn_varlen_func(
                         q,
@@ -379,11 +383,13 @@ class Attention(nn.Module):
             Attention output tensor of shape (N, num_heads, head_dim)
         """
         import warnings
+
         warnings.warn(
             'FlashAttention not available. Using fallback implementation. '
             'Install flash-attn for optimal performance: pip install flash-attn',
             RuntimeWarning,
-            stacklevel=2)
+            stacklevel=2,
+        )
 
         if context.is_prefill:
             # For prefill, process complete sequences with causal masking
@@ -443,18 +449,22 @@ class Attention(nn.Module):
             # Use device and dtype from input tensors for consistency
             device = q.device
             dtype = q.dtype
-            cached_k = torch.zeros(batch_size,
-                                   max_seqlen,
-                                   self.num_kv_heads,
-                                   self.head_dim,
-                                   device=device,
-                                   dtype=dtype)
-            cached_v = torch.zeros(batch_size,
-                                   max_seqlen,
-                                   self.num_kv_heads,
-                                   self.head_dim,
-                                   device=device,
-                                   dtype=dtype)
+            cached_k = torch.zeros(
+                batch_size,
+                max_seqlen,
+                self.num_kv_heads,
+                self.head_dim,
+                device=device,
+                dtype=dtype,
+            )
+            cached_v = torch.zeros(
+                batch_size,
+                max_seqlen,
+                self.num_kv_heads,
+                self.head_dim,
+                device=device,
+                dtype=dtype,
+            )
 
             block_size = self.k_cache.size(1)  # Tokens per block
             # Optimize block gathering with vectorized operations where possible
@@ -480,16 +490,16 @@ class Attention(nn.Module):
                             logger.error(
                                 'Shape mismatch in _fallback_attention:')
                             logger.error(
-                                f'cached_k slice shape: {cached_k[i, token_idx:token_idx + tokens_in_block].shape}'
+                                f"cached_k slice shape: {cached_k[i, token_idx:token_idx + tokens_in_block].shape}"
                             )
                             logger.error(
-                                f'k_cache slice shape: {self.k_cache[block_id, :tokens_in_block].shape}'
+                                f"k_cache slice shape: {self.k_cache[block_id, :tokens_in_block].shape}"
                             )
                             logger.error(
-                                f'num_kv_heads: {self.num_kv_heads}, head_dim: {self.head_dim}'
+                                f"num_kv_heads: {self.num_kv_heads}, head_dim: {self.head_dim}"
                             )
                             logger.error(
-                                f'k_cache total shape: {self.k_cache.shape}')
+                                f"k_cache total shape: {self.k_cache.shape}")
                             raise e
                     token_idx += tokens_in_block
                     if token_idx >= seqlen:
@@ -502,11 +512,12 @@ class Attention(nn.Module):
             cached_v = cached_v.squeeze(0)
 
             # DEBUG: Check if cached_k contains valid data
-            if logger.isEnabledFor(logging.DEBUG) and cached_k.abs().sum() == 0:
+            if logger.isEnabledFor(
+                    logging.DEBUG) and cached_k.abs().sum() == 0:
                 logger.debug(
-                    f'Decode Step: cached_k is all zeros! Batch size: {batch_size}'
+                    f"Decode Step: cached_k is all zeros! Batch size: {batch_size}"
                 )
-                logger.debug(f'Context Lens: {context.context_lens}')
+                logger.debug(f"Context Lens: {context.context_lens}")
                 logger.debug(
                     f"Block Tables sample: {context.block_tables[0] if len(context.block_tables) > 0 else 'Empty'}"
                 )
@@ -514,7 +525,7 @@ class Attention(nn.Module):
                     f"Slot Mapping sample: {context.slot_mapping[:10] if context.slot_mapping is not None else 'None'}"
                 )
                 logger.debug(
-                    f'Global k_cache non-zero elements: {self.k_cache.count_nonzero()}'
+                    f"Global k_cache non-zero elements: {self.k_cache.count_nonzero()}"
                 )
 
             # Compute attention for single query token per sequence
@@ -524,9 +535,10 @@ class Attention(nn.Module):
             q_expanded = q.unsqueeze(2)
             # [batch, num_heads, 1, head_dim] @ [batch, num_heads, head_dim, seqlen]
             # -> [batch, num_heads, 1, seqlen]
-            attn_weights = torch.matmul(
-                q_expanded,
-                cached_k.transpose(1, 2).transpose(-2, -1)) * self.scale
+            attn_weights = (
+                torch.matmul(q_expanded,
+                             cached_k.transpose(1, 2).transpose(-2, -1)) *
+                self.scale)
 
             # Create attention mask based on actual sequence lengths
             seqlen_mask = self._create_seqlen_mask(max_seqlen, batch_size,
@@ -547,7 +559,7 @@ class Attention(nn.Module):
         self,
         k: torch.Tensor,
         v: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Repeat key/value heads to match query heads for GQA/MQA.
 
         Args:
@@ -588,19 +600,19 @@ class Attention(nn.Module):
         # Compute attention: [1, num_heads, seqlen_q, seqlen_k]
         # [1, num_heads, seqlen_q, head_dim] @ [1, num_heads, seqlen_k, head_dim]
         # -> [1, num_heads, seqlen_q, seqlen_k]
-        attn_weights = torch.matmul(q.transpose(1, 2),
-                                    k.transpose(1, 2).transpose(
-                                        -2, -1)) * self.scale
+        attn_weights = (torch.matmul(q.transpose(1, 2),
+                                     k.transpose(1, 2).transpose(-2, -1)) *
+                        self.scale)
         # Apply causal mask (lower triangular)
         seqlen_q = q.size(1)
         seqlen_k = k.size(1)
         if seqlen_q > 1:
             # Create causal mask: allow attending to all keys up to current position
-            causal_mask = torch.triu(torch.ones(seqlen_q,
-                                                seqlen_k,
-                                                device=device,
-                                                dtype=torch.bool),
-                                     diagonal=seqlen_k - seqlen_q + 1)
+            causal_mask = torch.triu(
+                torch.ones(seqlen_q, seqlen_k, device=device,
+                           dtype=torch.bool),
+                diagonal=seqlen_k - seqlen_q + 1,
+            )
             attn_weights = attn_weights.masked_fill(causal_mask, float('-inf'))
 
         # Softmax and weighted sum

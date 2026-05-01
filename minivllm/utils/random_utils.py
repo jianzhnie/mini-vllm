@@ -8,6 +8,7 @@ import random
 
 import numpy as np
 import torch
+
 try:
     from minivllm.utils.device import is_torch_npu_available
 except ImportError:

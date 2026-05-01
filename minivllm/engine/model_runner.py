@@ -14,7 +14,7 @@ functionality into three focused modules for better maintainability.
 
 import os
 from multiprocessing.synchronize import Event
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from minivllm.config import Config
 from minivllm.engine.distributed_manager import DistributedManager
@@ -43,7 +43,7 @@ class ModelRunner:
     """
 
     def __init__(self, config: Config, rank: int,
-                 event: Union[Event, List[Event]]) -> None:
+                 event: Event | list[Event]) -> None:
         """Initialize the model runner.
 
         This method:
@@ -73,14 +73,14 @@ class ModelRunner:
 
         self.config: Config = config
         self.rank: int = rank
-        self.events: Union[Event, List[Event]] = event
+        self.events: Event | list[Event] = event
         self.world_size: int = config.tensor_parallel_size
 
         # Initialize managers
         self.model_manager: ModelManager = ModelManager(config)
         self.distributed_manager: DistributedManager = DistributedManager(
             config, rank, event)
-        self.inference_executor: Optional[InferenceExecutor] = None
+        self.inference_executor: InferenceExecutor | None = None
 
         # Initialize all components
         self._initialize()
@@ -94,7 +94,7 @@ class ModelRunner:
     def _initialize(self) -> None:
         """Initialize all components and prepare for inference."""
         try:
-            logger.info(f'Rank {self.rank}: Initializing ModelRunner...')
+            logger.info(f"Rank {self.rank}: Initializing ModelRunner...")
 
             # Initialize model management (loads model and tokenizer)
             self.model_manager.initialize()
@@ -114,11 +114,11 @@ class ModelRunner:
                     self.config.max_num_seqs)
 
             logger.info(
-                f'Rank {self.rank}: ModelRunner initialization completed')
+                f"Rank {self.rank}: ModelRunner initialization completed")
 
         except Exception as e:
             logger.error(
-                f'Rank {self.rank}: ModelRunner initialization failed: {e}')
+                f"Rank {self.rank}: ModelRunner initialization failed: {e}")
             self.exit()
             raise
 
@@ -129,7 +129,7 @@ class ModelRunner:
         via distributed communication, execute them, and continue until
         receiving 'exit'.
         """
-        logger.info(f'Rank {self.rank}: Starting worker loop')
+        logger.info(f"Rank {self.rank}: Starting worker loop")
 
         try:
             while True:
@@ -139,13 +139,13 @@ class ModelRunner:
                 # Validate command format
                 if not isinstance(cmd, (list, tuple)) or len(cmd) != 3:
                     logger.error(
-                        f'Rank {self.rank}: Invalid command format: {cmd}')
+                        f"Rank {self.rank}: Invalid command format: {cmd}")
                     continue
 
                 method_name, args, kwargs = cmd
 
                 if method_name == 'exit':
-                    logger.info(f'Rank {self.rank}: Received exit command')
+                    logger.info(f"Rank {self.rank}: Received exit command")
                     break
 
                 # Execute command locally
@@ -155,21 +155,21 @@ class ModelRunner:
                         method(*args, **kwargs)
                     except Exception as e:
                         logger.error(
-                            f'Rank {self.rank}: Error executing {method_name}: {e}'
+                            f"Rank {self.rank}: Error executing {method_name}: {e}"
                         )
                         # Continue processing next command instead of crashing
                 else:
                     logger.error(
-                        f'Rank {self.rank}: Unknown method received: {method_name}'
+                        f"Rank {self.rank}: Unknown method received: {method_name}"
                     )
                     # Notify rank 0 about the error if needed
 
         except KeyboardInterrupt:
-            logger.info(f'Rank {self.rank}: Worker interrupted')
+            logger.info(f"Rank {self.rank}: Worker interrupted")
         except Exception as e:
-            logger.error(f'Rank {self.rank}: Worker error: {e}', exc_info=True)
+            logger.error(f"Rank {self.rank}: Worker error: {e}", exc_info=True)
         finally:
-            logger.info(f'Rank {self.rank}: Worker exiting')
+            logger.info(f"Rank {self.rank}: Worker exiting")
             self.exit()
 
     def call(self, method_name: str, *args: Any, **kwargs: Any) -> Any:
@@ -199,8 +199,8 @@ class ModelRunner:
         method = getattr(self, method_name)
         return method(*args, **kwargs)
 
-    def run(self, sequences: List[Sequence],
-            is_prefill: bool) -> Optional[List[int]]:
+    def run(self, sequences: list[Sequence],
+            is_prefill: bool) -> list[int] | None:
         """Execute inference on a batch of sequences.
 
         Prepares input tensors, runs the model, samples tokens, and updates
@@ -235,16 +235,16 @@ class ModelRunner:
         2. Cleans up distributed manager
         3. Cleans up model manager
         """
-        logger.info(f'Rank {self.rank}: Cleaning up ModelRunner...')
+        logger.info(f"Rank {self.rank}: Cleaning up ModelRunner...")
 
-        errors: List[str] = []
+        errors: list[str] = []
 
         # Step 1: Cleanup inference executor
         if self.inference_executor is not None:
             try:
                 self.inference_executor.cleanup()
             except Exception as e:
-                errors.append(f'Failed to cleanup inference executor: {e}')
+                errors.append(f"Failed to cleanup inference executor: {e}")
             finally:
                 self.inference_executor = None
 
@@ -252,16 +252,16 @@ class ModelRunner:
         try:
             self.distributed_manager.cleanup()
         except Exception as e:
-            errors.append(f'Failed to cleanup distributed manager: {e}')
+            errors.append(f"Failed to cleanup distributed manager: {e}")
 
         # Step 3: Cleanup model manager
         try:
             self.model_manager.cleanup()
         except Exception as e:
-            errors.append(f'Failed to cleanup model manager: {e}')
+            errors.append(f"Failed to cleanup model manager: {e}")
 
         if errors:
             logger.warning(
-                f'Rank {self.rank}: Cleanup completed with errors: {errors}')
+                f"Rank {self.rank}: Cleanup completed with errors: {errors}")
         else:
-            logger.info(f'Rank {self.rank}: ModelRunner cleanup completed')
+            logger.info(f"Rank {self.rank}: ModelRunner cleanup completed")

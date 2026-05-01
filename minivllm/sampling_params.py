@@ -20,8 +20,9 @@ class SamplingParams:
     Attributes:
         temperature: Controls randomness in sampling. Higher
             values make output more random, lower values more
-            deterministic.
-            Must be > 1e-10. Default: 1.0.
+            deterministic. Set to 0 for greedy (deterministic)
+            sampling.
+            Must be >= 0. Default: 1.0.
         top_p: Float that controls the cumulative probability of the top tokens to
             consider. Must be in (0, 1]. Set to 1 to consider all tokens.
             Default: 1.0.
@@ -47,27 +48,22 @@ class SamplingParams:
     def __post_init__(self) -> None:
         """Validate sampling parameters after dataclass initialization.
 
-        This method ensures that temperature is set to a valid value
-        (greedy sampling with temperature=0 is not permitted).
-
         Raises:
-            ValueError: If temperature is <= 1e-10 (would enable greedy
-                sampling).
+            ValueError: If temperature is negative.
         """
-        if self.temperature <= 1e-10:
+        if self.temperature < 0:
             raise ValueError(
-                f'temperature must be > 1e-10, got {self.temperature}. '
-                f'Greedy sampling (temperature=0) is not permitted.')
+                f"temperature must be >= 0, got {self.temperature}")
 
         if not 0.0 < self.top_p <= 1.0:
-            raise ValueError(f'top_p must be in (0, 1], got {self.top_p}')
+            raise ValueError(f"top_p must be in (0, 1], got {self.top_p}")
 
         if self.top_k < -1 or self.top_k == 0:
             raise ValueError(
-                f'top_k must be -1 (disable) or > 0, got {self.top_k}.')
+                f"top_k must be -1 (disable) or > 0, got {self.top_k}.")
 
         if not 0.0 <= self.min_p <= 1.0:
-            raise ValueError(f'min_p must be in [0, 1], got {self.min_p}')
+            raise ValueError(f"min_p must be in [0, 1], got {self.min_p}")
 
         if self.max_tokens <= 0:
-            raise ValueError(f'max_tokens must be > 0, got {self.max_tokens}')
+            raise ValueError(f"max_tokens must be > 0, got {self.max_tokens}")

@@ -147,9 +147,12 @@ class TestSamplingParameters:
         assert params.max_tokens == 256
         assert params.ignore_eos is False
 
-        # Temperature boundary
+        # Temperature boundary: 0 is allowed (greedy), negative is not
+        greedy = SamplingParams(temperature=0)
+        assert greedy.temperature == 0
+
         with pytest.raises(ValueError):
-            SamplingParams(temperature=0)
+            SamplingParams(temperature=-0.1)
 
         # Max tokens boundary
         with pytest.raises(ValueError):

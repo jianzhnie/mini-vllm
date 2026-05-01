@@ -5,7 +5,6 @@ device memory allocations efficiently.
 """
 
 import logging
-from typing import Dict, Tuple
 
 import torch
 
@@ -15,16 +14,15 @@ logger = logging.getLogger(__name__)
 class MemoryPool:
     """Simple memory pool implementation with usage tracking."""
 
-    def __init__(self, device: torch.device,
-                 max_pool_size_mb: float) -> None:
+    def __init__(self, device: torch.device, max_pool_size_mb: float) -> None:
         self.device = device
         self.max_pool_size_bytes = int(max_pool_size_mb * 1024 * 1024)
         self.current_usage_bytes = 0
-        self.allocations: Dict[int, int] = {}
+        self.allocations: dict[int, int] = {}
 
     def allocate(
         self,
-        shape: Tuple[int, ...],
+        shape: tuple[int, ...],
         dtype: torch.dtype,
     ) -> torch.Tensor:
         """Allocate a tensor from the pool."""
@@ -38,7 +36,8 @@ class MemoryPool:
             logger.warning(
                 'Memory pool exceeded limit: %.1fMB > %.1fMB',
                 self.current_usage_bytes / 1024**2,
-                self.max_pool_size_bytes / 1024**2)
+                self.max_pool_size_bytes / 1024**2,
+            )
 
         return tensor
 
@@ -53,7 +52,7 @@ class MemoryPool:
         self.allocations.clear()
         self.current_usage_bytes = 0
 
-    def get_memory_info(self) -> Dict[str, float]:
+    def get_memory_info(self) -> dict[str, float]:
         """Get memory usage information."""
         return {
             'current_usage_mb': self.current_usage_bytes / (1024 * 1024),

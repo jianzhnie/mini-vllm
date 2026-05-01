@@ -20,10 +20,12 @@ class MirostatSampler(nn.Module):
     Maintains a target perplexity by dynamically adjusting temperature.
     """
 
-    def __init__(self,
-                 target_perplexity: float = 3.0,
-                 learning_rate: float = 1.0,
-                 max_temperature: float = 2.0):
+    def __init__(
+        self,
+        target_perplexity: float = 3.0,
+        learning_rate: float = 1.0,
+        max_temperature: float = 2.0,
+    ):
         """
         Args:
             target_perplexity: target perplexity (typically 2-7)
@@ -32,9 +34,8 @@ class MirostatSampler(nn.Module):
         """
         super().__init__()
         self.target_perplexity = target_perplexity
-        self.register_buffer(
-            'target_surprise',
-            torch.log(torch.tensor(target_perplexity)))
+        self.register_buffer('target_surprise',
+                             torch.log(torch.tensor(target_perplexity)))
         self.learning_rate = learning_rate
         self.max_temperature = max_temperature
         self.temperature = 1.0
@@ -88,10 +89,11 @@ class MirostatSampler(nn.Module):
 
         # Update temperature based on the difference between actual and target surprise
         error = surprise - self.target_surprise
-        self.temperature = torch.clamp(self.temperature +
-                                       self.learning_rate * error,
-                                       min=0.1,
-                                       max=self.max_temperature).item()
+        self.temperature = torch.clamp(
+            self.temperature + self.learning_rate * error,
+            min=0.1,
+            max=self.max_temperature,
+        ).item()
 
         return token_idx
 
@@ -107,10 +109,12 @@ class MirostatV2Sampler(nn.Module):
     An improved version of Mirostat with better stability.
     """
 
-    def __init__(self,
-                 target_perplexity: float = 3.0,
-                 learning_rate: float = 0.1,
-                 tau: float = 5.0):
+    def __init__(
+        self,
+        target_perplexity: float = 3.0,
+        learning_rate: float = 0.1,
+        tau: float = 5.0,
+    ):
         """
         Args:
             target_perplexity: target perplexity (typically 2-7)
@@ -119,9 +123,8 @@ class MirostatV2Sampler(nn.Module):
         """
         super().__init__()
         self.target_perplexity = target_perplexity
-        self.register_buffer(
-            'target_surprise',
-            torch.log(torch.tensor(target_perplexity)))
+        self.register_buffer('target_surprise',
+                             torch.log(torch.tensor(target_perplexity)))
         self.learning_rate = learning_rate
         self.tau = tau
         self.temperature = 1.0

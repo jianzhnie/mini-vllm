@@ -2,8 +2,6 @@
 Unified Sampler class replacing the previous fragmented implementations.
 """
 
-from typing import Optional
-
 import torch
 from torch import Tensor, nn
 
@@ -22,23 +20,23 @@ class Sampler(nn.Module):
     functional usage (passing parameters at call time).
     """
 
-    def __init__(self, config: Optional[SamplingConfig] = None):
+    def __init__(self, config: SamplingConfig | None = None):
         super().__init__()
         self.config = config or SamplingConfig()
 
     def forward(
         self,
         logits: Tensor,
-        config: Optional[SamplingConfig] = None,
+        config: SamplingConfig | None = None,
         # Optional overrides for batch processing
-        temperatures: Optional[Tensor] = None,
-        top_ks: Optional[Tensor] = None,
-        top_ps: Optional[Tensor] = None,
-        min_ps: Optional[Tensor] = None,
-        typical_ps: Optional[Tensor] = None,
-        avoid_top_ks: Optional[Tensor] = None,
-        prev_tokens: Optional[Tensor] = None,
-        generator: Optional[torch.Generator] = None,
+        temperatures: Tensor | None = None,
+        top_ks: Tensor | None = None,
+        top_ps: Tensor | None = None,
+        min_ps: Tensor | None = None,
+        typical_ps: Tensor | None = None,
+        avoid_top_ks: Tensor | None = None,
+        prev_tokens: Tensor | None = None,
+        generator: torch.Generator | None = None,
     ) -> Tensor:
         """
         Sample tokens from logits.
@@ -100,14 +98,9 @@ class Sampler(nn.Module):
         logits = F.apply_min_p(logits, mp)
 
         # 8. Sample
-        # If temperature is effectively 0, use greedy sampling (argmax)
-        # But we handle low temp in apply_temperature by clamping.
-        # However, many implementations treat temp=0 as strict greedy.
-        # Let's check if we should do strict greedy.
-
-        # If temperatures was a tensor, we can't easily check for 0 globally.
-        # But F.apply_temperature clamps min to 1e-8, so it effectively becomes very sharp.
-        # So multinomial sampling will act like greedy.
+        # Greedy: temperature=0 → argmax (deterministic, no randomization)
+        if isinstance(temp, (int, float)) and temp == 0:
+            return torch.argmax(logits, dim=-1)
 
         return F.sample_from_logits(logits, generator=generator)
 

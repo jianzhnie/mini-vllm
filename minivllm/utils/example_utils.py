@@ -1,14 +1,12 @@
 """Shared utilities for mini-vLLM example scripts."""
 
 import os
-from typing import List
 
 from minivllm.utils.logger_utils import get_logger
 
 logger = get_logger(__name__)
 
-DEFAULT_MODEL = os.environ.get(
-    'MINIVLLM_MODEL', 'facebook/opt-125m')
+DEFAULT_MODEL = os.environ.get('MINIVLLM_MODEL', 'facebook/opt-125m')
 
 DEFAULT_PROMPTS = [
     'Hello, who are you?',
@@ -21,8 +19,8 @@ DEFAULT_PROMPTS = [
 
 def format_prompts_with_chat_template(
     tokenizer: object,
-    prompts: List[str],
-) -> List[str]:
+    prompts: list[str],
+) -> list[str]:
     """Format prompts using the tokenizer's chat template if available.
 
     Args:
@@ -42,7 +40,7 @@ def format_prompts_with_chat_template(
         return prompts
 
     logger.info('Applying chat template to prompts...')
-    formatted_prompts: List[str] = []
+    formatted_prompts: list[str] = []
     try:
         for prompt in prompts:
             messages = [{'role': 'user', 'content': prompt}]
@@ -54,7 +52,7 @@ def format_prompts_with_chat_template(
             formatted_prompts.append(formatted)
     except Exception as e:
         logger.warning(
-            f'Failed to apply chat template ({e}), using raw prompts.')
+            f"Failed to apply chat template ({e}), using raw prompts.")
         return prompts
 
     return formatted_prompts
