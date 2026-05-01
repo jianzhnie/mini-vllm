@@ -47,7 +47,6 @@ Dependencies:
 """
 
 import logging
-import math
 import os
 from typing import Any, Tuple
 
@@ -586,19 +585,6 @@ class Attention(nn.Module):
             k = k.repeat_interleave(repeat_factor, dim=head_dim)
             v = v.repeat_interleave(repeat_factor, dim=head_dim)
         return k, v
-
-    def split_head(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Split the input tensor into multiple attention heads.
-
-        Args:
-            x (torch.Tensor): Input tensor of shape (batch_size, seq_len, hidden_size).
-
-        Returns:
-            torch.Tensor: Tensor of shape (batch_size, num_heads, seq_len, head_dim).
-        """
-        batch_size, seq_len, num_heads, head_dim = x.size()
-        return x.view(batch_size, seq_len, num_heads, head_dim).transpose(1, 2)
 
     def _compute_attention_weights(
         self,

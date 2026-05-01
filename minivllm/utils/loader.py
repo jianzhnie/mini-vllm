@@ -35,6 +35,10 @@ def get_default_weight_loader() -> WeightLoader:
                        shard_id: Any = None) -> None:
         if param.data.shape == tensor.shape:
             param.data.copy_(tensor)
+        else:
+            logger.warning(
+                f"Shape mismatch for parameter: expected {param.data.shape}, "
+                f"got {tensor.shape}. Skipping.")
 
     return default_loader
 
@@ -188,7 +192,8 @@ def load_model(model: nn.Module, model_path: Union[str, Path]) -> None:
         logger.info(f'Loading weights from "{file_path.name}"')
 
         try:
-            state_dict = torch.load(str(file_path), map_location='cpu')
+            state_dict = torch.load(
+                str(file_path), map_location='cpu', weights_only=True)
             for weight_name, tensor in state_dict.items():
                 total_weights += 1
 

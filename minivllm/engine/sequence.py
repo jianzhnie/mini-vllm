@@ -255,11 +255,18 @@ class Sequence:
             self.block_table,
             self.token_ids
             if self.num_completion_tokens == 0 else self.last_token,
+            self.temperature,
+            self.top_p,
+            self.top_k,
+            self.min_p,
+            self.max_tokens,
+            self.ignore_eos,
         )
 
     def __setstate__(
             self, state: Tuple[int, int, int, List[int], Union[List[int],
-                                                               int]]) -> None:
+                                                               int], float,
+                               float, int, float, int, bool]) -> None:
         """Restore sequence state from serialization/unpickling.
 
         This method reconstructs a sequence from its serialized state,
@@ -274,10 +281,14 @@ class Sequence:
             self.num_prompt_tokens,
             self.num_cached_tokens,
             self.block_table,
-        ) = state[:-1]
-
-        # Restore token data based on serialization format
-        token_data: Union[List[int], int] = state[-1]
+            token_data,
+            self.temperature,
+            self.top_p,
+            self.top_k,
+            self.min_p,
+            self.max_tokens,
+            self.ignore_eos,
+        ) = state
 
         # Calculate completion tokens count for logic check
         num_completion_tokens = self.num_tokens - self.num_prompt_tokens
@@ -300,12 +311,11 @@ class Sequence:
         self.status = (SequenceStatus.RUNNING if num_completion_tokens > 0 else
                        SequenceStatus.WAITING)
 
-        # Restore sampling parameters from defaults
-        # (full params are kept on the scheduler/driver side)
-        self.sampling_params = SamplingParams()
-        self.temperature = self.sampling_params.temperature
-        self.top_p = self.sampling_params.top_p
-        self.top_k = self.sampling_params.top_k
-        self.min_p = self.sampling_params.min_p
-        self.max_tokens = self.sampling_params.max_tokens
-        self.ignore_eos = self.sampling_params.ignore_eos
+        self.sampling_params = SamplingParams(
+            temperature=self.temperature,
+            top_p=self.top_p,
+            top_k=self.top_k,
+            min_p=self.min_p,
+            max_tokens=self.max_tokens,
+            ignore_eos=self.ignore_eos,
+        )

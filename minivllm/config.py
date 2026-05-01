@@ -92,7 +92,7 @@ class Config:
 
         Validation performed:
         1. Model path validation (must exist and be accessible)
-        2. KV cache block size validation (must be divisible by 256 for alignment)
+        2. KV cache block size validation (must be divisible by 64 for alignment)
         3. Tensor parallel size validation (1-8 range for efficiency and compatibility)
         4. Device memory utilization validation (0.1-1.0 range for safety)
         5. Batch size validation (must accommodate model length)

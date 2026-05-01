@@ -260,7 +260,6 @@ class OPTDecoder(nn.Module):
 
         if self.project_in is not None:
             hidden_states = self.project_in(hidden_states)
-            pos_embeds = self.project_in(pos_embeds)
 
         hidden_states = hidden_states + pos_embeds
 

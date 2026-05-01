@@ -177,7 +177,7 @@ class DistributedManager:
                 data_bytes_len = int(data_size.item())
                 data_tensor = torch.empty(data_bytes_len, dtype=torch.uint8)
             else:
-                data_tensor = torch.frombuffer(data_bytes, dtype=torch.uint8)
+                data_tensor = torch.frombuffer(data_bytes, dtype=torch.uint8).clone()
 
             # Move to device and broadcast data
             data_tensor = self._move_to_device(data_tensor)
@@ -222,7 +222,7 @@ class DistributedManager:
             dist.all_gather(size_list, data_size)
 
             # Create tensor for local data
-            data_tensor = torch.frombuffer(data_bytes, dtype=torch.uint8)
+            data_tensor = torch.frombuffer(data_bytes, dtype=torch.uint8).clone()
             data_tensor = self._move_to_device(data_tensor)
 
             # Gather actual data
@@ -276,7 +276,7 @@ class DistributedManager:
             dist.all_gather(size_list, data_size)
 
             # Create tensor for local data
-            data_tensor = torch.frombuffer(data_bytes, dtype=torch.uint8)
+            data_tensor = torch.frombuffer(data_bytes, dtype=torch.uint8).clone()
             data_tensor = self._move_to_device(data_tensor)
 
             # All-gather actual data

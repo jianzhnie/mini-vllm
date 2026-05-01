@@ -269,8 +269,8 @@ class BlockManager:
             After allocation, seq.block_table will contain the physical block
             IDs for each logical block in the sequence.
         """
-        assert not sequence.block_table, (
-            'Sequence already has allocated blocks')
+        if sequence.block_table:
+            raise ValueError('Sequence already has allocated blocks')
 
         if len(self.free_block_ids) < sequence.num_blocks:
             raise ValueError(
@@ -411,8 +411,9 @@ class BlockManager:
         if len(sequence) % self.block_size == 1:
             # Just started a new token in a new block (crossed boundary)
             # The previous block should already have its hash finalized
-            assert last_block.hash != -1, (
-                f'Previous block {last_block.block_id} hash not finalized')
+            if last_block.hash == -1:
+                raise RuntimeError(
+                    f'Previous block {last_block.block_id} hash not finalized')
 
             # Allocate a new block for this token
             if not self.free_block_ids:
@@ -427,8 +428,9 @@ class BlockManager:
         elif len(sequence) % self.block_size == 0:
             # Just filled a block (now has block_size tokens)
             # Finalize this block's hash for prefix caching
-            assert last_block.hash == -1, (
-                f'Block {last_block.block_id} hash already set')
+            if last_block.hash != -1:
+                raise RuntimeError(
+                    f'Block {last_block.block_id} hash already set')
 
             token_ids: List[int] = sequence.block(sequence.num_blocks - 1)
             prefix: int
@@ -444,5 +446,6 @@ class BlockManager:
         else:
             # In a partial block (between 1 and block_size-1 tokens)
             # Nothing to do until we reach a boundary
-            assert last_block.hash == -1, (
-                f'Partial block {last_block.block_id} should not have hash')
+            if last_block.hash != -1:
+                raise RuntimeError(
+                    f'Partial block {last_block.block_id} should not have hash')

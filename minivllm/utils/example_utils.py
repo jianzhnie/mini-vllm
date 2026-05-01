@@ -7,7 +7,7 @@ from minivllm.utils.logger_utils import get_logger
 logger = get_logger(__name__)
 
 DEFAULT_MODEL = os.environ.get(
-    'MINIVLLM_MODEL', '/Users/robin/hfhub/models/facebook/opt-125m')
+    'MINIVLLM_MODEL', 'facebook/opt-125m')
 
 
 def format_prompts_with_chat_template(
@@ -24,23 +24,28 @@ def format_prompts_with_chat_template(
         Formatted prompts with chat template applied, or original prompts
         if no chat template is available.
     """
-    if not hasattr(tokenizer, 'apply_chat_template'):
+    if not getattr(tokenizer, 'chat_template', None):
         logger.info('Chat template not available, using raw prompts.')
         return prompts
 
-    if getattr(tokenizer, 'chat_template', None) is None:
+    if not hasattr(tokenizer, 'apply_chat_template'):
         logger.info('Chat template not available, using raw prompts.')
         return prompts
 
     logger.info('Applying chat template to prompts...')
     formatted_prompts: list[str] = []
-    for prompt in prompts:
-        messages = [{'role': 'user', 'content': prompt}]
-        formatted = tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
-        )
-        formatted_prompts.append(formatted)
+    try:
+        for prompt in prompts:
+            messages = [{'role': 'user', 'content': prompt}]
+            formatted = tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+            formatted_prompts.append(formatted)
+    except Exception as e:
+        logger.warning(
+            f'Failed to apply chat template ({e}), using raw prompts.')
+        return prompts
 
     return formatted_prompts
