@@ -15,8 +15,10 @@ for text generation on pre-trained language models.
 
 Quick Start:
     >>> from minivllm import LLM, SamplingParams
+    >>> from minivllm.config import Config
     >>>
-    >>> llm = LLM("meta-llama/Llama-2-7b")
+    >>> config = Config(model="meta-llama/Llama-2-7b")
+    >>> llm = LLM(config)
     >>> outputs = llm.generate(
     ...     ["Once upon a time"],
     ...     SamplingParams(max_tokens=50)

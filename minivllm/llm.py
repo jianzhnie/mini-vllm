@@ -5,9 +5,10 @@ interface for interacting with the mini-vLLM engine.
 
 Quick Start:
     >>> from minivllm import LLM, SamplingParams
+    >>> from minivllm.config import Config
     >>>
-    >>> # Initialize LLM with default settings
-    >>> llm = LLM(model="path/to/model")
+    >>> config = Config(model="path/to/model")
+    >>> llm = LLM(config)
     >>>
     >>> # Generate text with custom parameters
     >>> prompts = ["Hello, world!", "Once upon a time"]
@@ -19,13 +20,13 @@ Quick Start:
     ...     print(output['text'])
 
 Advanced Usage:
-    >>> # Multi-GPU inference with tensor parallelism
-    >>> llm = LLM(
+    >>> config = Config(
     ...     model="path/to/large/model",
     ...     tensor_parallel_size=4,
     ...     max_num_seqs=256,
-    ...     gpu_memory_utilization=0.9
+    ...     device_memory_utilization=0.9,
     ... )
+    >>> llm = LLM(config)
     >>>
     >>> # Batch generation with different parameters
     >>> params_list = [
@@ -36,12 +37,10 @@ Advanced Usage:
 
 Performance Tips:
     - Use larger batch sizes for better throughput
-    - Increase gpu_memory_utilization if OOM doesn't occur
+    - Increase device_memory_utilization if OOM doesn't occur
     - Enable tensor parallelism for models > 13B parameters
     - Adjust max_num_batched_tokens based on sequence lengths
 """
-
-from typing import Union
 
 from minivllm.config import Config
 from minivllm.engine.llm_engine import LLMEngine
@@ -64,23 +63,19 @@ class LLM(LLMEngine):
 
     Example Usage:
         >>> from minivllm import LLM, SamplingParams
+        >>> from minivllm.config import Config
         >>>
-        >>> # Initialize the LLM
-        >>> llm = LLM(
-        ...     model="meta-llama/Llama-2-7b",
-        ...     max_num_seqs=256,
-        ...     max_num_batched_tokens=8192
-        ... )
+        >>> config = Config(model="meta-llama/Llama-2-7b",
+        ...                 max_num_seqs=256,
+        ...                 max_num_batched_tokens=8192)
+        >>> llm = LLM(config)
         >>>
         >>> # Generate text
         >>> prompts = [
         ...     "Once upon a time",
         ...     "The future of AI is"
         ... ]
-        >>> sampling_params = SamplingParams(
-        ...     temperature=0.7,
-        ...     max_tokens=128
-        ... )
+        >>> sampling_params = SamplingParams(temperature=0.7, max_tokens=128)
         >>> outputs = llm.generate(prompts, sampling_params)
         >>>
         >>> for output in outputs:
@@ -99,32 +94,13 @@ class LLM(LLMEngine):
         can extend this class to add custom behavior if needed.
     """
 
-    def __init__(self, model: Union[str, Config], **kwargs) -> None:
+    def __init__(self, config: Config) -> None:
         """Initialize the LLM.
 
-        Creates an LLMEngine instance with the given configuration.
-        All arguments are passed through to LLMEngine.__init__.
-
         Args:
-            model: Path to the model directory (HuggingFace format),
-                or a Config object to use directly.
-            **kwargs: Additional configuration parameters. Common ones:
-                - max_num_seqs: Maximum sequences per batch (default: 512)
-                - max_num_batched_tokens: Max tokens per batch (default: 16384)
-                - gpu_memory_utilization: GPU memory fraction (default: 0.9)
-                - tensor_parallel_size: Number of GPUs (default: 1)
-                - enforce_eager: Skip CUDA graph optimization (default: False)
-                - max_model_len: Maximum sequence length (default: 4096)
+            config: Engine configuration (see Config class).
 
         Raises:
-            ValueError: If configuration is invalid.
-            RuntimeError: If model loading fails.
-
-        Example:
-            >>> llm = LLM(
-            ...     "meta-llama/Llama-2-7b-hf",
-            ...     gpu_memory_utilization=0.8,
-            ...     tensor_parallel_size=2
-            ... )
+            TypeError: If config is not a Config instance.
         """
-        super().__init__(model, **kwargs)
+        super().__init__(config)

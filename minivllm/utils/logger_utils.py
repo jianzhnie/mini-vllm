@@ -192,6 +192,9 @@ def get_logger(
     else:
         logger.setLevel(log_level if is_main_process else logging.ERROR)
 
+    # Prevent messages from being handled by both this logger and parent loggers
+    logger.propagate = False
+
     # Mark logger as initialized
     logger_initialized[name] = True
 

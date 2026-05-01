@@ -204,7 +204,16 @@ class Config:
         """Load HuggingFace model configuration."""
         try:
             self.hf_config = AutoConfig.from_pretrained(
-                self.model, trust_remote_code=self.trust_remote_code)
+                self.model,
+                trust_remote_code=self.trust_remote_code,
+                local_files_only=True,
+            )
+        except OSError:
+            # Fall back to online mode if not cached locally
+            self.hf_config = AutoConfig.from_pretrained(
+                self.model,
+                trust_remote_code=self.trust_remote_code,
+            )
         except Exception as e:
             raise ValueError(
                 f'Failed to load HuggingFace model configuration from {self.model}: {e}. '

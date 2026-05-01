@@ -8,9 +8,8 @@ import atexit
 import os
 import socket
 import warnings
-from dataclasses import fields
 from time import perf_counter
-from typing import Any, Dict, List, Optional, Set, Tuple, TypeAlias, Union
+from typing import Any, Dict, List, Optional, Tuple, TypeAlias, Union
 
 import torch.multiprocessing as mp
 from tqdm.auto import tqdm
@@ -54,40 +53,26 @@ class LLMEngine:
         events: Synchronization events for distributed communication
     """
 
-    def __init__(self, model: Union[str, Config], **kwargs) -> None:
+    def __init__(self, config: Config) -> None:
         """Initialize the LLM engine.
 
         This method:
-        1. Creates engine configuration from model path and kwargs
-        2. Initializes worker processes for tensor parallelism
-        3. Loads the model and tokenizer
-        4. Sets up the scheduler for batch management
-        5. Registers cleanup handler for graceful shutdown
+        1. Initializes worker processes for tensor parallelism
+        2. Loads the model and tokenizer
+        3. Sets up the scheduler for batch management
+        4. Registers cleanup handler for graceful shutdown
 
         Args:
-            model: Path to the model directory (HuggingFace format),
-                or a Config object to use directly.
-            **kwargs: Additional configuration parameters (see Config class).
-                Common parameters include:
-                - max_num_seqs: Maximum sequences in a batch
-                - max_num_batched_tokens: Maximum tokens per batch
-                - gpu_memory_utilization: GPU memory fraction to use
-                - tensor_parallel_size: Number of GPUs for parallelism
+            config: Engine configuration (see Config class).
 
         Raises:
-            ValueError: If model path is invalid or configuration is invalid.
+            ValueError: If configuration is invalid.
             RuntimeError: If distributed initialization fails.
         """
-        # Accept either a Config object or (model_path, **kwargs)
-        if isinstance(model, Config):
-            config = model
-        else:
-            config_fields: Set[str] = {field.name for field in fields(Config)}
-            config_kwargs: Dict[str, Any] = {
-                k: v
-                for k, v in kwargs.items() if k in config_fields
-            }
-            config = Config(model, **config_kwargs)
+        if not isinstance(config, Config):
+            raise TypeError(
+                f'config must be a Config instance, got {type(config).__name__}')
+
 
         # Initialize distributed processes for tensor parallelism
         self.ps: List[mp.Process] = []
@@ -293,7 +278,9 @@ class LLMEngine:
             - 'token_ids': The list of generated token IDs
 
         Example:
-            >>> engine = LLMEngine("meta-llama/Llama-2-7b")
+            >>> from minivllm.config import Config
+            >>> config = Config(model="meta-llama/Llama-2-7b")
+            >>> engine = LLMEngine(config)
             >>> results = engine.generate(
             ...     ["Once upon a time", "Hello world"],
             ...     sampling_params=SamplingParams(max_tokens=50)

@@ -38,8 +38,8 @@ class TestLLMInitialization:
         fully_mocked_model_runner: None,
     ):
         """Test LLM initialization with default parameters."""
-        # Test initialization with num_kvcache_blocks
-        llm = LLM(str(temp_model_dir), num_kvcache_blocks=100)
+        config = Config(str(temp_model_dir), num_kvcache_blocks=100)
+        llm = LLM(config)
 
         assert llm is not None
         assert hasattr(llm, 'scheduler')
@@ -53,13 +53,14 @@ class TestLLMInitialization:
         fully_mocked_model_runner: None,
     ):
         """Test LLM initialization with custom parameters."""
-        llm = LLM(
+        config = Config(
             str(temp_model_dir),
             max_num_seqs=256,
             max_num_batched_tokens=8192,
             device_memory_utilization=0.8,
             num_kvcache_blocks=100,
         )
+        llm = LLM(config)
 
         assert llm is not None
         assert llm.scheduler.max_num_seqs == 256

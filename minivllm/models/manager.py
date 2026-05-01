@@ -100,13 +100,28 @@ class ModelManager:
         """Load the tokenizer for the model."""
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(
-                self.config.model, trust_remote_code=True, use_fast=True)
+                self.config.model,
+                trust_remote_code=True,
+                use_fast=True,
+                local_files_only=True,
+            )
 
             # Set padding token if not present
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
 
             logger.debug(f'Tokenizer loaded successfully: '
+                         f'{type(self.tokenizer).__name__}')
+        except OSError:
+            # Fall back to online mode if not cached locally
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.config.model,
+                trust_remote_code=True,
+                use_fast=True,
+            )
+            if self.tokenizer.pad_token is None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+            logger.debug(f'Tokenizer loaded successfully (online): '
                          f'{type(self.tokenizer).__name__}')
         except Exception as e:
             raise RuntimeError(f'Failed to load tokenizer: {e}')
