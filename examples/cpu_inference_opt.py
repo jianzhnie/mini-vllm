@@ -169,7 +169,7 @@ def run_inference() -> None:
     print('\n' + '=' * 80)
     print('              INFERENCE RESULTS (OPT-125M on CPU)')
     print('=' * 80)
-    print('Model:        facebook/opt-125m')
+    print(f'Model:        {config.model}')
     print('Device:       CPU')
     print(f'Prompts:      {len(prompts)}')
     print(f'Inference:    {inference_time:.2f}s')
@@ -179,20 +179,14 @@ def run_inference() -> None:
     print('=' * 80 + '\n')
 
     # Print detailed results
-    for prompt, output in zip(formatted_prompts, outputs):
-        prompt_idx = 0
-        for i, p in enumerate(prompts):
-            if p in prompt or prompt in p:
-                prompt_idx = i
-                break
-
+    for idx, (formatted_prompt, output) in enumerate(
+            zip(formatted_prompts, outputs)):
+        original_prompt = prompts[idx] if idx < len(prompts) else formatted_prompt
         output_text = deduplicate_text(output['text'])
         token_count = len(output['token_ids'])
-        original_prompt = prompts[prompt_idx]
 
-        print(
-            format_output_box(original_prompt, output_text, prompt_idx,
-                              token_count))
+        print(format_output_box(original_prompt, output_text, idx,
+                                 token_count))
         print()
 
     print('=' * 80)

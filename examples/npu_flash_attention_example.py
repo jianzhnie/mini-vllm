@@ -186,26 +186,15 @@ def demo_llm_inference(model_path=None):
     print('Demo: Full LLM Inference on NPU')
     print('=' * 60)
 
-    if model_path:
-        config = Config(
-            model=model_path,
-            max_num_seqs=4,
-            max_model_len=128,
-            enforce_eager=True,
-            trust_remote_code=True,
-            device_memory_utilization=0.8,
-            dtype='float16',
-        )
-    else:
-        config = Config(
-            model=DEFAULT_MODEL,
-            max_num_seqs=4,
-            max_model_len=128,
-            enforce_eager=True,
-            trust_remote_code=True,
-            device_memory_utilization=0.8,
-            dtype='float16',
-        )
+    config = Config(
+        model=model_path or DEFAULT_MODEL,
+        max_num_seqs=4,
+        max_model_len=128,
+        enforce_eager=True,
+        trust_remote_code=True,
+        device_memory_utilization=0.8,
+        dtype='float16',
+    )
 
     print(f'Model: {config.model}')
     print(f'Device: NPU')
@@ -257,16 +246,17 @@ def main():
             print(f'Backend demo failed: {e}')
 
     # Optional: run LLM demo via --model <path>
-    model_path = None
-    args = sys.argv[1:]
-    for i, arg in enumerate(args):
-        if arg == '--model' and i + 1 < len(args):
-            model_path = args[i + 1]
-            break
+    import argparse
+    parser = argparse.ArgumentParser(description='NPU Flash Attention Example')
+    parser.add_argument('--model', default=None,
+                        help='Model path or HuggingFace ID')
+    parser.add_argument('--skip-low-level', action='store_true',
+                        help='Skip low-level attention demos')
+    args = parser.parse_args()
 
-    if model_path:
+    if args.model:
         try:
-            demo_llm_inference(model_path)
+            demo_llm_inference(args.model)
         except Exception as e:
             print(f'LLM inference demo failed: {e}')
 
