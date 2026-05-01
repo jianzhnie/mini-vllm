@@ -214,7 +214,8 @@ class InferenceExecutor:
                        self.num_kv_heads * self.head_dim * self.dtype.itemsize)
 
         # Calculate available memory for KV cache
-        if self.device.type == 'cpu':
+        # MPS uses unified memory (system RAM), so use free memory like CPU
+        if self.device.type in ('cpu', 'mps'):
             available_memory = int(free * config.device_memory_utilization)
         else:
             available_memory = int(total * config.device_memory_utilization -

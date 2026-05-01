@@ -117,15 +117,33 @@ def load_weight(
 
 
 def load_model(model: nn.Module, model_path: Union[str, Path]) -> None:
-    """Load model weights from safetensors files in the specified directory."""
+    """Load model weights from safetensors files in the specified directory.
+
+    Args:
+        model: The model to load weights into.
+        model_path: Local directory path or HuggingFace model ID (e.g. "facebook/opt-125m").
+    """
     base_path = Path(model_path)
 
-    # Validate path
-    if not base_path.exists():
+    # If not a local directory, try resolving as HuggingFace model ID
+    if not base_path.is_dir():
+        try:
+            from huggingface_hub import snapshot_download
+
+            repo_id = str(model_path)
+            base_path = Path(snapshot_download(repo_id=repo_id))
+            logger.info(f'Resolved HuggingFace model ID to: {base_path}')
+        except Exception as e:
+            raise FileNotFoundError(
+                f'Could not resolve model path: {model_path}. '
+                f'Provide a local directory or valid HuggingFace model ID. '
+                f'Error: {e}'
+            )
+
+    # Validate resolved path
+    if not base_path.is_dir():
         raise FileNotFoundError(
             f'Model weight directory not found: {base_path}')
-    if not base_path.is_dir():
-        raise ValueError(f'Path must be a directory: {base_path}')
 
     # Find safetensors files
     safetensor_files = list(base_path.glob('*.safetensors'))

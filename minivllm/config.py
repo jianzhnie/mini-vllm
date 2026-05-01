@@ -122,12 +122,17 @@ class Config:
         self._validate_batch_token_constraints()
 
     def _validate_model_path(self) -> None:
-        """Validate that model path exists and is accessible."""
-        if not os.path.isdir(self.model):
-            raise ValueError(
-                f"Model path '{self.model}' is not a valid directory. "
-                f'Please ensure the model is properly downloaded and accessible.'
-            )
+        """Validate that model path exists or is a valid HuggingFace model ID."""
+        if os.path.isdir(self.model):
+            return
+        # Allow HuggingFace model IDs (e.g. "facebook/opt-125m", "Qwen/Qwen3-0.6B")
+        # These don't start with /, ./, ~ and are not absolute paths
+        if not self.model.startswith(('/', './', '../', '~')):
+            return
+        raise ValueError(
+            f"Model path '{self.model}' is not a valid directory. "
+            f'Please ensure the model is properly downloaded and accessible.'
+        )
 
     def _validate_device_memory_utilization(self) -> None:
         """Validate device memory utilization is in reasonable range."""

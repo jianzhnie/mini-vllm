@@ -170,6 +170,9 @@ def get_current_device(use_cpu: bool = False) -> torch.device:
     Uses the LOCAL_RANK environment variable to determine which device this
     process should use. Falls back to device 0 if LOCAL_RANK is not set.
 
+    The device can be overridden via the MINIVLLM_DEVICE environment variable.
+    Supported values: cpu, cuda, npu, xpu, mps, mlu, musa.
+
     Note:
         MPS devices typically only support a single device, so the index
         is always 0 regardless of LOCAL_RANK.
@@ -178,6 +181,13 @@ def get_current_device(use_cpu: bool = False) -> torch.device:
         torch.device: Current process's device
     """
     _, _, local_rank = get_dist_info()
+
+    # Allow device override via environment variable
+    env_device = os.environ.get('MINIVLLM_DEVICE', '').lower().strip()
+    if env_device:
+        if env_device == 'cpu':
+            return torch.device('cpu')
+        return torch.device(f'{env_device}:{local_rank}')
 
     if use_cpu:
         device = 'cpu'
