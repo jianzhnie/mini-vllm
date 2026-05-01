@@ -26,7 +26,12 @@ except ImportError:
 
 # Optional imports for NPU unified inference
 try:
-    from torch_npu import npu_fused_infer_attention_score
+    import torch_npu
+
+    if hasattr(torch_npu, 'npu_fused_infer_attention_score'):
+        npu_fused_infer_attention_score = torch_npu.npu_fused_infer_attention_score
+    else:
+        npu_fused_infer_attention_score = None
 except ImportError:
     npu_fused_infer_attention_score = None
 
@@ -373,13 +378,6 @@ class NPUAttentionBackend(AttentionBackend):
                 return is_torch_npu_available()
             except ImportError:
                 return False
-
-    def _choose_optimal_api(self) -> str:
-        """Choose the best NPU attention API based on hardware and version."""
-        if (hasattr(self, 'npu_fused_infer_attention_score')
-                and self.npu_fused_infer_attention_score is not None):
-            return 'unified_inference'
-        return 'legacy'
 
     def forward(
         self,

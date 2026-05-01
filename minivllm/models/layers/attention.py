@@ -80,10 +80,7 @@ _NPU_FLASH_ATTN_AVAILABLE = False
 # Global variables for optional functions
 flash_attn_varlen_func = None
 flash_attn_with_kvcache = None
-npu_fusion_attention = None
 npu_incre_flash_attention = None
-npu_fused_infer_attention_score = None
-npu_prompt_flash_attention = None
 
 # Try to import FlashAttention for CUDA devices
 try:
@@ -100,16 +97,7 @@ if is_torch_npu_available():
     try:
         import torch_npu
 
-        npu_fusion_attention = torch_npu.npu_fusion_attention
         npu_incre_flash_attention = torch_npu.npu_incre_flash_attention
-
-        # Check for newer unified inference API
-        if hasattr(torch_npu, 'npu_fused_infer_attention_score'):
-            npu_fused_infer_attention_score = torch_npu.npu_fused_infer_attention_score
-            logger.info('NPU unified inference API available')
-
-        if hasattr(torch_npu, 'npu_prompt_flash_attention'):
-            npu_prompt_flash_attention = torch_npu.npu_prompt_flash_attention
 
         _NPU_FLASH_ATTN_AVAILABLE = True
         logger.info('NPU Flash Attention available')
