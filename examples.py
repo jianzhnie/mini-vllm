@@ -22,9 +22,7 @@ import sys
 
 # On macOS, MPS has numerical instability with the fallback attention path.
 # Force CPU unless the user explicitly sets MINIVLLM_DEVICE.
-if (platform.system() == 'Darwin'
-        and not os.environ.get('MINIVLLM_DEVICE')
-        and not os.environ.get('CUDA_VISIBLE_DEVICES')):
+if platform.system() == 'Darwin' and not os.environ.get('MINIVLLM_DEVICE'):
     os.environ['MINIVLLM_DEVICE'] = 'cpu'
 
 import torch
@@ -87,6 +85,9 @@ def run_inference() -> None:
 
     if formatted_prompts:
         logger.info(f'First prompt: {formatted_prompts[0]!r}')
+    else:
+        logger.warning('No prompts to process.')
+        return
 
     # Run inference
     logger.info(
@@ -98,7 +99,7 @@ def run_inference() -> None:
     logger.info('RESULTS')
     logger.info('=' * 100)
 
-    for prompt, output in zip(formatted_prompts, outputs, strict=False):
+    for prompt, output in zip(formatted_prompts, outputs, strict=True):
         logger.info('-' * 100)
         logger.info(f'Prompt: {prompt!r}')
         logger.info(f"Completion: {output['text']!r}")
