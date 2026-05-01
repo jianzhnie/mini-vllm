@@ -1,217 +1,283 @@
 """
-NPU Flash Attention 使用示例
+NPU Flash Attention Example for mini-vLLM
 
-本示例展示了如何在mini-vllm中使用NPU Flash Attention功能，
-包括预填充和解码阶段的使用方法。
+This example demonstrates NPU Flash Attention on Huawei Ascend NPUs,
+showing both low-level attention layer usage and high-level LLM inference.
+
+Usage:
+    # On an NPU machine with Ascend CANN toolkit installed:
+    python examples/npu_flash_attention_example.py
+
+    # With a specific model:
+    python examples/npu_flash_attention_example.py --model /path/to/model
 """
+
+import argparse
+import os
+import sys
+import time
+from typing import Optional
 
 import torch
 
-from minivllm.models.layers.attention import Attention
-from minivllm.utils.context import InferenceContext
 
+def check_npu_environment() -> bool:
+    """Check NPU availability and print diagnostic information."""
+    print('=' * 60)
+    print('NPU Environment Check')
+    print('=' * 60)
 
-def example_prefill_phase():
-    """
-    预填充阶段使用NPU Flash Attention的示例
-    """
-    print('=== 预填充阶段 NPU Flash Attention 示例 ===')
-
-    # 初始化Attention层
-    num_heads = 32
-    head_dim = 128
-    num_kv_heads = 32
-    scale = 1.0 / (head_dim**0.5)
-
-    attention_layer = Attention(num_heads=num_heads,
-                                head_dim=head_dim,
-                                scale=scale,
-                                num_kv_heads=num_kv_heads)
-
-    # 创建模拟输入张量 (T, num_heads, head_dim)
-    batch_sizes = [2, 3]  # 两个序列，长度分别为2和3
-    total_tokens = sum(batch_sizes)
-
-    q = torch.randn(total_tokens, num_heads, head_dim, device='npu:0')
-    k = torch.randn(total_tokens, num_kv_heads, head_dim, device='npu:0')
-    v = torch.randn(total_tokens, num_kv_heads, head_dim, device='npu:0')
-
-    # 构建累积长度张量
-    cum_seqlens_q = torch.tensor([0, 2, 5], dtype=torch.int32,
-                                 device='npu:0')  # [0, 2, 5] 表示两个序列长度为2和3
-    cum_seqlens_k = torch.tensor([0, 2, 5], dtype=torch.int32, device='npu:0')
-
-    # 创建推理上下文
-    context = InferenceContext(is_prefill=True,
-                               max_seqlen_q=max(batch_sizes),
-                               max_seqlen_k=max(batch_sizes),
-                               cum_seqlens_q=cum_seqlens_q,
-                               cum_seqlens_k=cum_seqlens_k,
-                               slot_mapping=torch.arange(total_tokens,
-                                                         device='npu:0'),
-                               context_lens=None,
-                               block_tables=None)
-
-    # 设置上下文到全局环境
-    from minivllm.utils.context import set_context
-    set_context(context)
-
-    # 执行注意力计算
-    output = attention_layer(q, k, v)
-
-    print(f'输入形状: q={q.shape}, k={k.shape}, v={v.shape}')
-    print(f'输出形状: {output.shape}')
-    print(f'使用NPU设备: {output.device}')
-    print()
-
-
-def example_decode_phase():
-    """
-    解码阶段使用NPU Flash Attention的示例
-    """
-    print('=== 解码阶段 NPU Flash Attention 示例 ===')
-
-    # 初始化Attention层
-    num_heads = 32
-    head_dim = 128
-    num_kv_heads = 32
-    scale = 1.0 / (head_dim**0.5)
-
-    attention_layer = Attention(num_heads=num_heads,
-                                head_dim=head_dim,
-                                scale=scale,
-                                num_kv_heads=num_kv_heads)
-
-    # 创建模拟输入张量 (batch_size, num_heads, head_dim)
-    batch_size = 2
-    q = torch.randn(batch_size, num_heads, head_dim, device='npu:0')
-
-    # 创建KV缓存 (假设最大序列长度为10，块大小为4，总共3个块)
-    max_blocks = 3
-    block_size = 4
-    kv_cache_shape = (max_blocks, block_size, num_kv_heads, head_dim)
-
-    k_cache = torch.zeros(kv_cache_shape, device='npu:0')
-    v_cache = torch.zeros(kv_cache_shape, device='npu:0')
-
-    # 初始化KV缓存
-    attention_layer.k_cache = k_cache
-    attention_layer.v_cache = v_cache
-
-    # 模拟已有的序列长度
-    context_lens = torch.tensor([3, 5], dtype=torch.int32,
-                                device='npu:0')  # 两个序列分别有3和5个token
-
-    # 块映射表 (每个序列使用哪些块)
-    block_tables = torch.tensor(
-        [
-            [0, 1, -1, -1],  # 序列1使用块0和1
-            [1, 2, -1, -1]  # 序列2使用块1和2
-        ],
-        dtype=torch.int32,
-        device='npu:0')
-
-    # 创建虚拟的k和v（这些会在prefill阶段被存储到缓存中）
-    k = torch.randn(batch_size, num_kv_heads, head_dim, device='npu:0')
-    v = torch.randn(batch_size, num_kv_heads, head_dim, device='npu:0')
-
-    # 创建推理上下文
-    context = InferenceContext(
-        is_prefill=False,  # 解码阶段
-        max_seqlen_q=None,
-        max_seqlen_k=None,
-        cum_seqlens_q=None,
-        cum_seqlens_k=None,
-        slot_mapping=torch.arange(batch_size, device='npu:0'),  # 当前批次的槽位映射
-        context_lens=context_lens,
-        block_tables=block_tables)
-
-    # 设置上下文到全局环境
-    from minivllm.utils.context import set_context
-    set_context(context)
-
-    # 执行注意力计算（这将使用缓存的KV）
-    output = attention_layer(q, k, v)
-
-    print(f'查询形状: {q.shape}')
-    print(f'KV缓存形状: k_cache={k_cache.shape}, v_cache={v_cache.shape}')
-    print(f'输出形状: {output.shape}')
-    print(f'使用NPU设备: {output.device}')
-    print()
-
-
-def check_npu_availability():
-    """
-    检查NPU可用性并显示相关信息
-    """
-    print('=== NPU 可用性检查 ===')
-
-    if torch.npu.is_available():
-        print('✓ NPU 可用')
-        device_count = torch.npu.device_count()
-        print(f'  - 可用设备数: {device_count}')
-
-        for i in range(device_count):
-            name = torch.npu.get_device_name(i)
-            capability = torch.npu.get_device_capability(i)
-            print(f'  - 设备 {i}: {name}, 计算能力: {capability}')
-    else:
-        print('✗ NPU 不可用')
-        return False
-
-    # 检查NPU Flash Attention API可用性
     try:
         import torch_npu
-        if hasattr(torch_npu, 'npu_fusion_attention'):
-            print('✓ torch_npu.npu_fusion_attention 可用')
-        else:
-            print('✗ torch_npu.npu_fusion_attention 不可用')
-
-        if hasattr(torch_npu, 'npu_incre_flash_attention'):
-            print('✓ torch_npu.npu_incre_flash_attention 可用')
-        else:
-            print('✗ torch_npu.npu_incre_flash_attention 不可用')
+        print(f'torch_npu version: {getattr(torch_npu, "__version__", "unknown")}')
     except ImportError:
-        print('✗ torch_npu 模块不可用')
+        print('torch_npu not installed. Install CANN toolkit for NPU support.')
         return False
+
+    if not torch.npu.is_available():
+        print('NPU not available. Check CANN driver installation.')
+        return False
+
+    device_count = torch.npu.device_count()
+    print(f'NPU devices: {device_count}')
+    for i in range(device_count):
+        name = torch.npu.get_device_name(i)
+        print(f'  Device {i}: {name}')
+
+    # Check API availability
+    apis = {
+        'npu_fusion_attention': 'Training + basic inference',
+        'npu_incre_flash_attention': 'Incremental decode (legacy)',
+        'npu_prompt_flash_attention': 'Prefill (legacy)',
+        'npu_fused_infer_attention_score': 'Unified inference (recommended)',
+    }
+    for api, desc in apis.items():
+        available = hasattr(torch_npu, api)
+        status = 'OK' if available else 'NOT AVAILABLE'
+        print(f'  {api}: {status} ({desc})')
 
     print()
     return True
 
 
+def demo_attention_layer():
+    """Demonstrate low-level NPU Flash Attention via the Attention layer.
+
+    This shows prefill and decode phases using mini-vLLM's Attention module
+    with the NPU backend automatically selected.
+    """
+    from minivllm.models.layers.attention import Attention
+    from minivllm.utils.context import Context, set_context, reset_context
+
+    print('=' * 60)
+    print('Demo: Low-level Attention Layer on NPU')
+    print('=' * 60)
+
+    num_heads = 8
+    head_dim = 64
+    num_kv_heads = 8
+    scale = 1.0 / (head_dim ** 0.5)
+    device = torch.device('npu:0')
+
+    attn = Attention(
+        num_heads=num_heads,
+        head_dim=head_dim,
+        scale=scale,
+        num_kv_heads=num_kv_heads,
+    )
+    print(f'Attention backend: {attn.backend.__class__.__name__}')
+
+    # --- Prefill Phase ---
+    print('\n--- Prefill Phase ---')
+    batch_sizes = [4, 6]
+    total_tokens = sum(batch_sizes)
+    seq_len = max(batch_sizes)
+
+    q = torch.randn(total_tokens, num_heads, head_dim, device=device)
+    k = torch.randn(total_tokens, num_kv_heads, head_dim, device=device)
+    v = torch.randn(total_tokens, num_kv_heads, head_dim, device=device)
+
+    cum_q = torch.tensor([0, 4, 10], dtype=torch.int32, device=device)
+    cum_k = torch.tensor([0, 4, 10], dtype=torch.int32, device=device)
+
+    set_context(
+        is_prefill=True,
+        max_seqlen_q=seq_len,
+        max_seqlen_k=seq_len,
+        cum_seqlens_q=cum_q,
+        cum_seqlens_k=cum_k,
+        slot_mapping=torch.arange(total_tokens, device=device),
+    )
+
+    with torch.no_grad():
+        out = attn(q, k, v)
+    reset_context()
+
+    print(f'Input: q={q.shape}, k={k.shape}, v={v.shape}')
+    print(f'Output: {out.shape}, device={out.device}')
+
+    # --- Decode Phase ---
+    print('\n--- Decode Phase ---')
+    batch_size = 2
+    block_size = 16
+    num_blocks = 4
+
+    attn.k_cache = torch.randn(num_blocks, block_size, num_kv_heads, head_dim,
+                               device=device)
+    attn.v_cache = torch.randn(num_blocks, block_size, num_kv_heads, head_dim,
+                               device=device)
+    attn._cache_initialized = True
+
+    q = torch.randn(batch_size, num_heads, head_dim, device=device)
+    k = torch.randn(batch_size, num_kv_heads, head_dim, device=device)
+    v = torch.randn(batch_size, num_kv_heads, head_dim, device=device)
+
+    set_context(
+        is_prefill=False,
+        slot_mapping=torch.tensor([0, block_size], dtype=torch.int32,
+                                  device=device),
+        context_lens=torch.tensor([3, 5], dtype=torch.int32, device=device),
+        block_tables=torch.tensor([[0, -1], [1, 2]], dtype=torch.int32,
+                                  device=device),
+    )
+
+    with torch.no_grad():
+        out = attn(q, k, v)
+    reset_context()
+
+    print(f'Input: q={q.shape}')
+    print(f'Output: {out.shape}, device={out.device}')
+    print()
+
+
+def demo_npu_inference_backend():
+    """Demonstrate the NPUAttentionBackend directly.
+
+    Shows unified_inference API that auto-selects prefill/decode kernels.
+    """
+    from minivllm.models.layers.attention_backend import NPUAttentionBackend
+
+    print('=' * 60)
+    print('Demo: NPUAttentionBackend Unified Inference')
+    print('=' * 60)
+
+    device = torch.device('npu:0')
+    backend = NPUAttentionBackend()
+
+    num_heads = 8
+    num_kv_heads = 8
+    head_dim = 64
+    scale = 1.0 / (head_dim ** 0.5)
+
+    # Prefill
+    batch_size = 2
+    seq_len = 16
+
+    query = torch.randn(batch_size, num_heads, seq_len, head_dim, device=device)
+    key = torch.randn(batch_size, num_kv_heads, seq_len, head_dim, device=device)
+    value = torch.randn(batch_size, num_kv_heads, seq_len, head_dim, device=device)
+
+    out = backend.forward(query, key, value, is_causal=True)
+    print(f'Prefill output: {out.shape}')
+
+    # Decode
+    query = torch.randn(batch_size, num_heads, 1, head_dim, device=device)
+    out = backend.forward(query, key, value, is_causal=True)
+    print(f'Decode output: {out.shape}')
+    print()
+
+
+def demo_llm_inference(model_path: Optional[str] = None):
+    """Demonstrate full LLM inference on NPU using the high-level API.
+
+    Args:
+        model_path: Path to a local model or HuggingFace model ID.
+    """
+    from minivllm import LLM, SamplingParams
+
+    print('=' * 60)
+    print('Demo: Full LLM Inference on NPU')
+    print('=' * 60)
+
+    model = model_path or os.environ.get(
+        'MINIVLLM_MODEL', 'facebook/opt-125m')
+
+    print(f'Model: {model}')
+    print(f'Device: NPU')
+
+    llm = LLM(
+        model=model,
+        max_num_seqs=4,
+        max_model_len=128,
+        enforce_eager=True,
+        trust_remote_code=True,
+        device_memory_utilization=0.8,
+        dtype='float16',
+    )
+
+    prompts = [
+        'Hello, who are you?',
+        'What is the capital of France?',
+        'Tell me a short joke.',
+    ]
+
+    params = SamplingParams(temperature=0.7, max_tokens=32)
+    outputs = llm.generate(prompts, params, use_tqdm=True)
+
+    for prompt, output in zip(prompts, outputs):
+        text = output['text'].strip()
+        tokens = len(output['token_ids'])
+        print(f'\nPrompt: {prompt!r}')
+        print(f'Output ({tokens} tokens): {text!r}')
+
+    print()
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description='NPU Flash Attention Example',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument('--model', type=str, default=None,
+                        help='Model path or HuggingFace model ID')
+    parser.add_argument('--skip-low-level', action='store_true',
+                        help='Skip low-level attention demos')
+    return parser.parse_args()
+
+
 def main():
-    """
-    主函数：运行所有示例
-    """
-    print('华为昇腾NPU Flash Attention 使用示例')
-    print('=' * 50)
+    args = parse_args()
 
-    # 检查NPU可用性
-    if not check_npu_availability():
-        print('NPU不可用，无法运行示例')
-        return
+    print('mini-vLLM NPU Flash Attention Example\n')
 
-    # 设置NPU设备
+    if not check_npu_environment():
+        print('NPU not available. This example requires Huawei Ascend NPU '
+              'with CANN toolkit installed.')
+        print('\nTo run on other devices, see examples/cpu_inference_opt.py '
+              'or the main examples.py')
+        return 1
+
     torch.npu.set_device(0)
 
-    # 运行预填充阶段示例
-    try:
-        example_prefill_phase()
-    except Exception as e:
-        print(f'预填充阶段示例出错: {e}')
-        import traceback
-        traceback.print_exc()
-        print()
+    if not args.skip_low_level:
+        try:
+            demo_attention_layer()
+        except Exception as e:
+            print(f'Attention layer demo failed: {e}')
 
-    # 运行解码阶段示例
-    try:
-        example_decode_phase()
-    except Exception as e:
-        print(f'解码阶段示例出错: {e}')
-        import traceback
-        traceback.print_exc()
-        print()
+        try:
+            demo_npu_inference_backend()
+        except Exception as e:
+            print(f'Backend demo failed: {e}')
+
+    if args.model:
+        try:
+            demo_llm_inference(args.model)
+        except Exception as e:
+            print(f'LLM inference demo failed: {e}')
+
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

@@ -395,15 +395,16 @@ class NPUAttentionBackend(AttentionBackend):
                                                   attention_mask, is_causal)
 
         try:
+            # Only convert to bfloat16 if not already a supported dtype
+            # NPU Flash Attention supports float16 and bfloat16
             q_dtype = query.dtype
-            k_dtype = key.dtype
-            v_dtype = value.dtype
-            if q_dtype != torch.bfloat16:
-                query = query.to(torch.bfloat16)
-            if k_dtype != torch.bfloat16:
-                key = key.to(torch.bfloat16)
-            if v_dtype != torch.bfloat16:
-                value = value.to(torch.bfloat16)
+            target_dtype = None
+            if q_dtype not in (torch.float16, torch.bfloat16):
+                target_dtype = torch.float16  # Use float16 as safe default
+                query = query.to(target_dtype)
+                key = key.to(target_dtype)
+                value = value.to(target_dtype)
+
             q = query.transpose(1, 2)
             k = key.transpose(1, 2)
             v = value.transpose(1, 2)
@@ -417,7 +418,7 @@ class NPUAttentionBackend(AttentionBackend):
                 input_layout='BSND',
             )
 
-            if q_dtype != torch.bfloat16:
+            if target_dtype is not None:
                 output = output.to(q_dtype)
             return output.transpose(1, 2)
 
@@ -536,12 +537,14 @@ class NPUAttentionBackend(AttentionBackend):
         try:
             # Basic implementation of unified inference
             # Note: This matches the signature expected by Attention.forward
-            # Cast to bfloat16 for NPU kernel support
+            # Cast to supported dtype for NPU kernel
             q_dtype = query.dtype
-            if q_dtype != torch.bfloat16:
-                query = query.to(torch.bfloat16)
-                key_cache = key_cache.to(torch.bfloat16)
-                value_cache = value_cache.to(torch.bfloat16)
+            target_dtype = None
+            if q_dtype not in (torch.float16, torch.bfloat16):
+                target_dtype = torch.float16
+                query = query.to(target_dtype)
+                key_cache = key_cache.to(target_dtype)
+                value_cache = value_cache.to(target_dtype)
 
             # Construct attention mask for prefill (causal)
             q_len = query.shape[2]
@@ -594,7 +597,7 @@ class NPUAttentionBackend(AttentionBackend):
             if isinstance(out, tuple):
                 out = out[0]
 
-            if q_dtype != torch.bfloat16:
+            if target_dtype is not None:
                 out = out.to(q_dtype)
 
             if is_prefill and context_lens is not None:
@@ -771,7 +774,9 @@ class NPUAttentionBackend(AttentionBackend):
 
             # Get active indices
             active_block_ids = block_ids[mask]
-            active_offsets = block_offsets.expand(batch_size, -1)[mask]
+            # Expand block_offsets to match batch dimension before masking
+            active_offsets_expanded = block_offsets.expand(batch_size, -1)
+            active_offsets = active_offsets_expanded[mask]
 
             # Gather
             gathered_k = k_cache[active_block_ids, active_offsets]

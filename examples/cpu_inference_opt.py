@@ -49,7 +49,8 @@ class CPUInferenceConfig:
         max_tokens: Maximum tokens to generate per prompt.
         prompts: List of prompts to generate from.
     """
-    model_name_or_path: str = '/Users/jianzhengnie/hfhub/models/facebook/opt-125m'
+    model_name_or_path: str = os.environ.get(
+        'MINIVLLM_MODEL', 'facebook/opt-125m')
     max_num_seqs: int = 8
     max_model_len: int = 1024
     temperature: float = 0.6
@@ -79,7 +80,7 @@ def parse_args() -> CPUInferenceConfig:
     parser.add_argument(
         '--model',
         type=str,
-        default='/Users/jianzhengnie/hfhub/models/facebook/opt-125m',
+        default=os.environ.get('MINIVLLM_MODEL', 'facebook/opt-125m'),
         help='Path to the model (HuggingFace format)',
     )
     parser.add_argument(
@@ -141,7 +142,8 @@ def validate_config(config: CPUInferenceConfig) -> None:
     Raises:
         ValueError: If any parameter is invalid.
     """
-    if not Path(config.model_name_or_path).exists():
+    # Accept local directory or HuggingFace model ID (contains no '/')
+    if not Path(config.model_name_or_path).is_dir() and '/' in config.model_name_or_path:
         raise ValueError(
             f'Model path does not exist: {config.model_name_or_path}\n'
             f'Set the model path via --model argument.')
