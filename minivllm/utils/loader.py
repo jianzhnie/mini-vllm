@@ -137,7 +137,11 @@ def load_model(model: nn.Module, model_path: str | Path) -> None:
             from huggingface_hub import snapshot_download
 
             repo_id = str(model_path)
-            base_path = Path(snapshot_download(repo_id=repo_id))
+            try:
+                base_path = Path(
+                    snapshot_download(repo_id=repo_id, local_files_only=True))
+            except OSError:
+                base_path = Path(snapshot_download(repo_id=repo_id))
             logger.info(f"Resolved HuggingFace model ID to: {base_path}")
         except Exception as e:
             raise FileNotFoundError(
