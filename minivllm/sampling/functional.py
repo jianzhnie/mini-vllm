@@ -14,14 +14,13 @@ MIN_PROB = 1e-10
 try:
     import torch._dynamo
 
-    # Use 'reduce-overhead' or 'max-autotune' if stable, but 'default' is safer for now
-    # We only compile if not on MPS (which has issues with compile sometimes) or if explicitly desired
     compile_ops = True
 
     # Disable compile on NPU to avoid backend errors
-    if (hasattr(torch, 'npu') and torch.npu.is_available()
-            or not torch.cuda.is_available()
-            and not torch.backends.mps.is_available()):
+    if hasattr(torch, 'npu') and torch.npu.is_available():
+        compile_ops = False
+    # Only compile when CUDA is available
+    elif not torch.cuda.is_available():
         compile_ops = False
 except ImportError:
     compile_ops = False

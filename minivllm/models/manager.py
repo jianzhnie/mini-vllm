@@ -158,11 +158,21 @@ class ModelManager:
         if self.config.hf_config and hasattr(self.config.hf_config,
                                              'model_type'):
             model_type = self.config.hf_config.model_type.lower()
-            if 'qwen2' in model_type:
+            if model_type == 'qwen2':
                 return 'qwen2'
-            if 'qwen' in model_type:
+            if model_type == 'qwen3':
                 return 'qwen3'
-            if 'opt' in model_type:
+            if model_type == 'opt':
+                return 'opt'
+
+        # Also check architectures list from HF config
+        if self.config.hf_config:
+            architectures = getattr(self.config.hf_config, 'architectures', [])
+            if 'Qwen2ForCausalLM' in architectures:
+                return 'qwen2'
+            if 'Qwen3ForCausalLM' in architectures:
+                return 'qwen3'
+            if 'OPTForCausalLM' in architectures:
                 return 'opt'
 
         # Fallback to path string matching
@@ -170,8 +180,10 @@ class ModelManager:
 
         if 'qwen2' in model_path_lower:
             return 'qwen2'
-        elif 'qwen' in model_path_lower and 'qwen2' not in model_path_lower:
-            return 'qwen3'  # Default to qwen3 for newer qwen models
+        elif 'qwen3' in model_path_lower:
+            return 'qwen3'
+        elif 'qwen' in model_path_lower:
+            return 'qwen3'
         elif 'opt' in model_path_lower:
             return 'opt'
         else:
@@ -181,20 +193,28 @@ class ModelManager:
                                                     trust_remote_code=True)
                 model_type = getattr(config, 'model_type', '').lower()
 
-                if 'qwen2' in model_type:
+                if model_type == 'qwen2':
                     return 'qwen2'
-                elif 'qwen' in model_type:
+                elif model_type == 'qwen3':
                     return 'qwen3'
-                elif 'opt' in model_type:
+                elif model_type == 'opt':
                     return 'opt'
-                else:
-                    logger.warning(
-                        'Could not auto-detect model type, defaulting to qwen2'
-                    )
+
+                architectures = getattr(config, 'architectures', [])
+                if 'Qwen2ForCausalLM' in architectures:
                     return 'qwen2'
+                if 'Qwen3ForCausalLM' in architectures:
+                    return 'qwen3'
+                if 'OPTForCausalLM' in architectures:
+                    return 'opt'
+
+                logger.warning(
+                    f'Could not auto-detect model type (model_type={model_type}), '
+                    f'defaulting to qwen3')
+                return 'qwen3'
             except Exception:
-                logger.warning('Auto-detection failed, defaulting to qwen2')
-                return 'qwen2'
+                logger.warning('Auto-detection failed, defaulting to qwen3')
+                return 'qwen3'
 
     def _validate_model_compatibility(self) -> None:
         """Validate model compatibility with current configuration."""

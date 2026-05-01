@@ -46,6 +46,7 @@ Dependencies:
     - torch: Always required
 """
 
+import logging
 import math
 import os
 from typing import Any, Tuple
@@ -411,10 +412,10 @@ class Attention(nn.Module):
         """
         import warnings
         warnings.warn(
-            'FlashAttention not available. Using fallback implementation which is significantly slower. '
-            'For optimal performance, install flash-attn: pip install flash-attn',
+            'FlashAttention not available. Using fallback implementation. '
+            'Install flash-attn for optimal performance: pip install flash-attn',
             RuntimeWarning,
-            stacklevel=3)
+            stacklevel=2)
 
         if context.is_prefill:
             # For prefill, process complete sequences with causal masking
@@ -533,20 +534,19 @@ class Attention(nn.Module):
             cached_v = cached_v.squeeze(0)
 
             # DEBUG: Check if cached_k contains valid data
-            if cached_k.abs().sum() == 0:
+            if logger.isEnabledFor(logging.DEBUG) and cached_k.abs().sum() == 0:
                 logger.debug(
-                    f'[DEBUG] Decode Step: cached_k is all zeros! Batch size: {batch_size}'
+                    f'Decode Step: cached_k is all zeros! Batch size: {batch_size}'
                 )
-                logger.debug(f'[DEBUG] Context Lens: {context.context_lens}')
+                logger.debug(f'Context Lens: {context.context_lens}')
                 logger.debug(
-                    f"[DEBUG] Block Tables sample: {context.block_tables[0] if len(context.block_tables) > 0 else 'Empty'}"
+                    f"Block Tables sample: {context.block_tables[0] if len(context.block_tables) > 0 else 'Empty'}"
                 )
                 logger.debug(
-                    f"[DEBUG] Slot Mapping sample: {context.slot_mapping[:10] if context.slot_mapping is not None else 'None'}"
+                    f"Slot Mapping sample: {context.slot_mapping[:10] if context.slot_mapping is not None else 'None'}"
                 )
-                # Check k_cache status
                 logger.debug(
-                    f'[DEBUG] Global k_cache non-zero elements: {self.k_cache.count_nonzero()}'
+                    f'Global k_cache non-zero elements: {self.k_cache.count_nonzero()}'
                 )
 
             # Compute attention for single query token per sequence
