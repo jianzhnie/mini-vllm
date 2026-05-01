@@ -106,6 +106,11 @@ class Config:
         # Validate model path exists and is accessible
         self._validate_model_path()
 
+        # Validate simple fields
+        self._validate_dtype()
+        self._validate_eos()
+        self._validate_num_kvcache_blocks()
+
         # Validate numeric ranges
         self._validate_device_memory_utilization()
         self._validate_kvcache_block_size()
@@ -133,6 +138,27 @@ class Config:
             f"Model path '{self.model}' is not a valid directory. "
             f'Please ensure the model is properly downloaded and accessible.'
         )
+
+    def _validate_dtype(self) -> None:
+        """Validate dtype is a recognized value."""
+        valid = ('auto', 'float16', 'bfloat16', 'float32')
+        if self.dtype not in valid:
+            raise ValueError(
+                f'dtype must be one of {valid}, got {self.dtype!r}')
+
+    def _validate_eos(self) -> None:
+        """Validate eos token ID."""
+        if self.eos < -1:
+            raise ValueError(
+                f'eos must be -1 (auto-detect) or a non-negative token ID, '
+                f'got {self.eos}')
+
+    def _validate_num_kvcache_blocks(self) -> None:
+        """Validate KV cache block count."""
+        if self.num_kvcache_blocks < -1 or self.num_kvcache_blocks == 0:
+            raise ValueError(
+                f'num_kvcache_blocks must be -1 (auto) or a positive integer, '
+                f'got {self.num_kvcache_blocks}')
 
     def _validate_device_memory_utilization(self) -> None:
         """Validate device memory utilization is in reasonable range."""

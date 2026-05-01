@@ -5,7 +5,6 @@ This module provides a unified interface for different attention backends
 It also implements efficient KV-cache storage kernels.
 """
 
-import logging
 from abc import ABC, abstractmethod
 from typing import Any, Optional, Tuple
 
@@ -35,7 +34,9 @@ try:
 except ImportError:
     npu_fused_infer_attention_score = None
 
-logger = logging.getLogger(__name__)
+from minivllm.utils.logger_utils import get_logger
+
+logger = get_logger(__name__)
 
 # Optional imports for high-performance kernels
 _TRITON_AVAILABLE = False

@@ -9,6 +9,7 @@ This module provides the InferenceExecutor class which handles:
 - Input preparation for both prefill and decode phases
 """
 
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
@@ -16,7 +17,7 @@ import torch
 from minivllm.config import Config
 from minivllm.engine.sequence import Sequence
 from minivllm.sampling.sampler import Sampler
-from minivllm.utils.context import reset_context, set_context
+from minivllm.utils.context import get_context, reset_context, set_context
 from minivllm.utils.device import (
     empty_cache,
     get_current_device,
@@ -351,7 +352,6 @@ class InferenceExecutor:
             end_time = torch.cuda.Event(enable_timing=True)
             start_time.record()
         else:
-            import time
             start_time = time.perf_counter()
 
         try:
@@ -678,7 +678,6 @@ class InferenceExecutor:
         vars_dict['positions'][:batch_size] = positions
 
         # Update context information from current context
-        from minivllm.utils.context import get_context
         ctx = get_context()
 
         if ctx.slot_mapping is not None:

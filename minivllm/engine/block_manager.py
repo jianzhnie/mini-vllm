@@ -49,7 +49,6 @@ class Block:
         self.ref_count: int = 0
         self.hash: int = -1
         self.token_ids: List[int] = []
-        self.last_access_time: Optional[float] = None  # For cache strategy
 
     def update(self, hash_val: int, token_ids: List[int]) -> None:
         """Update block with token data and hash.
@@ -60,7 +59,6 @@ class Block:
         """
         self.hash = hash_val
         self.token_ids = token_ids.copy()
-        self.last_access_time = None  # Reset access time
 
     def reset(self) -> None:
         """Reset block to initial allocated state.
@@ -71,7 +69,6 @@ class Block:
         self.ref_count = 1
         self.hash = -1
         self.token_ids.clear()
-        self.last_access_time = None  # Reset access time
 
 
 class BlockManager:

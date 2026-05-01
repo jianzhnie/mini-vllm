@@ -7,6 +7,7 @@ pipeline including model loading, scheduling, and token generation.
 import atexit
 import os
 import socket
+import warnings
 from dataclasses import fields
 from time import perf_counter
 from typing import Any, Dict, List, Optional, Set, Tuple, TypeAlias, Union
@@ -95,10 +96,10 @@ class LLMEngine:
         if config.tensor_parallel_size > 1:
             os.environ.setdefault('MASTER_ADDR', '127.0.0.1')
             if 'MASTER_PORT' not in os.environ:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.bind(('127.0.0.1', 0))
-                port = sock.getsockname()[1]
-                sock.close()
+                with socket.socket(socket.AF_INET,
+                                   socket.SOCK_STREAM) as sock:
+                    sock.bind(('127.0.0.1', 0))
+                    port = sock.getsockname()[1]
                 os.environ['MASTER_PORT'] = str(port)
 
             ctx: mp.context.SpawnContext = mp.get_context('spawn')
@@ -156,8 +157,6 @@ class LLMEngine:
                     try:
                         p.join(timeout=5)
                         if p.is_alive():
-                            import warnings
-
                             warnings.warn(
                                 f'Worker process {i} did not terminate gracefully, '
                                 f'forcing termination',
@@ -175,8 +174,6 @@ class LLMEngine:
 
         finally:
             if errors:
-                import warnings
-
                 warnings.warn(
                     f"Errors during engine cleanup: {'; '.join(errors)}",
                     RuntimeWarning)

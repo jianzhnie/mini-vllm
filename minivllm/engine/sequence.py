@@ -5,7 +5,6 @@ individual sequences/requests in the LLM engine, including token tracking,
 cache management, and state serialization.
 """
 
-from copy import copy
 from enum import Enum, auto
 from itertools import count
 from typing import Iterator, List, Optional, Tuple, Union
@@ -78,7 +77,7 @@ class Sequence:
 
         self.seq_id: int = next(Sequence.counter)
         self.status: SequenceStatus = SequenceStatus.WAITING
-        self.token_ids: List[int] = copy(token_ids)
+        self.token_ids: List[int] = list(token_ids)
         self.last_token: int = self.token_ids[-1]
         self.num_tokens: int = len(self.token_ids)
         self.num_prompt_tokens: int = len(self.token_ids)
