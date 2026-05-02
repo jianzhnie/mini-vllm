@@ -358,7 +358,8 @@ class QwenForCausalLM(nn.Module):
 
             for key, (new_key,
                       shard_id) in self.packed_modules_mapping.items():
-                if name.endswith(f"{key}.weight"):
+                if name.endswith(f"{key}.weight") or name.endswith(
+                        f"{key}.bias"):
                     parts = name.split('.')
                     if len(parts) >= 2 and parts[-2] == key:
                         parts[-2] = new_key
