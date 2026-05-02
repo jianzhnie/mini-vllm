@@ -1,4 +1,4 @@
-# mini-vLLM：轻量级大语言模型推理引擎
+# `mini`-vLLM：轻量级大语言模型推理引擎
 
 ## 目录
 
@@ -76,7 +76,7 @@ mini-vLLM 是一个**从零构建的轻量级大语言模型推理引擎**，灵
 | 属性 | 值 |
 |------|-----|
 | 语言 | Python 3.10–3.12 |
-| 核心代码 | ~9,500 行 / 41 个 Python 文件 |
+| 核心代码 | ~9,100 行 / 41 个 Python 文件 |
 | 核心依赖 | torch, transformers, safetensors, xxhash |
 | 许可证 | Apache 2.0 |
 | 支持模型 | Qwen2、Qwen3、OPT |
@@ -133,7 +133,7 @@ mini-vllm/
 │   │   ├── distributed_manager.py  # 多进程通信协调
 │   │   └── sequence.py             # 序列状态
 │   ├── models/                     # 模型实现
-│   │   ├── __init__.py             # 导出 + 模型注册
+│   │   ├── __init__.py             # 导出模型类和工厂函数
 │   │   ├── registry.py             # 模型注册表 + 工厂函数
 │   │   ├── manager.py              # 模型加载和生命周期管理
 │   │   ├── qwen_base.py            # Qwen 系列共享基类
@@ -262,7 +262,7 @@ class Config:
 ```python
 @dataclass
 class SamplingParams:
-    temperature: float = 1.0    # > 1e-10
+    temperature: float = 1.0    # >= 0
     top_p: float = 1.0          # (0, 1.0]
     top_k: int = -1             # -1 禁用，或 > 0
     min_p: float = 0.0          # [0, 1.0]
@@ -354,8 +354,9 @@ class DistributedManager:
 Qwen2 和 Qwen3 共享相同的 Transformer 架构，差异仅在默认参数：
 - `qkv_bias`：Qwen2 默认 True，Qwen3 默认 False
 - `rope_theta`：Qwen2 默认 1000000，Qwen3 默认 10000
+- `attention_bias` config fallback：Qwen2 默认 True，Qwen3 默认 False
 
-包含 `QwenBaseModel`、`QwenBaseAttention`、`QwenBaseMLP`、`QwenBaseDecoderLayer`、`QwenBaseForCausalLM` 基类。
+包含 `QwenModel`、`QwenAttention`、`QwenMLP`、`QwenDecoderLayer`、`QwenForCausalLM` 基类。
 
 #### `manager.py` — ModelManager
 
@@ -373,12 +374,13 @@ Qwen2 和 Qwen3 共享相同的 Transformer 架构，差异仅在默认参数：
 
 ```python
 class Attention(nn.Module):
-    def forward(self, q, k, v, k_cache, v_cache, slot_mapping):
-        store_kvcache_kernel(k, v, k_cache, v_cache, slot_mapping)
-        if is_prefill:
+    def forward(self, q, k, v):
+        context = get_context()
+        self.backend.store_kv_cache(k, v, self.k_cache, self.v_cache, context.slot_mapping)
+        if context.is_prefill:
             o = flash_attn_varlen_func(q, k, v, ...)       # Prefill
         else:
-            o = flash_attn_with_kvcache(q, k_cache, v_cache, ...)  # Decode
+            o = flash_attn_with_kvcache(q, self.k_cache, self.v_cache, ...)  # Decode
 ```
 
 #### `attention_backend.py` — 注意力后端
@@ -401,7 +403,7 @@ LinearBase
 | 文件 | 功能 |
 |------|------|
 | `rotary_embedding.py` | RoPE 旋转位置编码，预计算 cos/sin cache |
-| `layernorm.py` | RMSNorm 归一化层 |
+| `layernorm.py` | RMSNorm 归一化层（含 NPU 加速） |
 | `activation.py` | SiLU + Mul 门控激活 |
 | `embed_head.py` | VocabParallelEmbedding + ParallelLMHead |
 | `npu_flash_attention.py` | NPU 专用 FlashAttention（BNSD 布局）|
