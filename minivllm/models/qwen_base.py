@@ -28,6 +28,35 @@ from minivllm.utils.logger_utils import get_logger
 logger = get_logger(__name__)
 
 
+def _resolve_rope_theta(config, default: float) -> float:
+    """Resolve rope_theta from config, handling nested storage formats."""
+    if hasattr(config, 'rope_theta'):
+        return config.rope_theta
+    rope_params = getattr(config, 'rope_parameters', None) or {}
+    if isinstance(rope_params, dict) and 'rope_theta' in rope_params:
+        return rope_params['rope_theta']
+    rope_scaling = getattr(config, 'rope_scaling', None) or {}
+    if isinstance(rope_scaling, dict) and 'rope_theta' in rope_scaling:
+        return rope_scaling['rope_theta']
+    return default
+
+
+def _resolve_rope_scaling(config) -> dict[str, Any] | None:
+    """Resolve rope_scaling from config, filtering out non-scaling params."""
+    raw = getattr(config, 'rope_scaling', None)
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        # Some configs (e.g. Qwen3) store rope_theta/rope_type alongside scaling params
+        scaling_keys = {
+            'factor', 'type', 'low_freq_factor', 'high_freq_factor',
+            'original_max_position_embeddings', 'short_factor', 'long_factor'
+        }
+        scaling = {k: v for k, v in raw.items() if k in scaling_keys}
+        return scaling or None
+    return None
+
+
 class QwenAttention(nn.Module):
     """Multi-head attention block for Qwen-style models."""
 
@@ -220,9 +249,9 @@ class QwenDecoderLayer(nn.Module):
             qkv_bias=getattr(config, 'attention_bias',
                              self.attention_cls.default_qkv_bias),
             head_dim=getattr(config, 'head_dim', None),
-            rope_theta=getattr(config, 'rope_theta',
-                               self.attention_cls.default_rope_theta),
-            rope_scaling=getattr(config, 'rope_scaling', None),
+            rope_theta=_resolve_rope_theta(
+                config, self.attention_cls.default_rope_theta),
+            rope_scaling=_resolve_rope_scaling(config),
         )
         self.mlp = QwenMLP(
             hidden_size=config.hidden_size,

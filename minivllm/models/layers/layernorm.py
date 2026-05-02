@@ -99,13 +99,9 @@ class RMSNorm(nn.Module):
 
         # Compute variance (mean of squares) along last dimension
         var = x.pow(2).mean(dim=-1, keepdim=True)
+        x = x * torch.rsqrt(var + self.eps)
 
-        # Normalize by RMS: divide by sqrt(var + eps)
-        x.mul_(torch.rsqrt(var + self.eps))
-
-        # Restore original dtype and apply learned scaling
-        x = x.to(orig_dtype).mul_(self.weight)
-        return x
+        return x.to(orig_dtype) * self.weight
 
     def add_rms_forward(
             self, x: torch.Tensor,
@@ -132,20 +128,16 @@ class RMSNorm(nn.Module):
                                           epsilon=self.eps)[0], residual
 
         orig_dtype = x.dtype
-
         # Add residual to input and convert to float
-        x = x.float().add_(residual.float())
-
+        x = x.float() + residual.float()
         # Update residual in original dtype
         residual = x.to(orig_dtype)
 
         # Compute variance and normalize
         var = x.pow(2).mean(dim=-1, keepdim=True)
-        x.mul_(torch.rsqrt(var + self.eps))
+        x = x * torch.rsqrt(var + self.eps)
 
-        # Restore dtype and apply scaling
-        x = x.to(orig_dtype).mul_(self.weight)
-        return x, residual
+        return x.to(orig_dtype) * self.weight, residual
 
     def forward(
         self,
