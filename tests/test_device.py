@@ -81,8 +81,8 @@ def test_device_specific_features():
     graph_support = supports_device_graph()
     assert isinstance(graph_support, bool)
 
-    # Test that only CUDA devices support graphs currently
-    if current_device.type == 'cuda':
+    # CUDA and NPU support graph optimization
+    if current_device.type in ('cuda', 'npu'):
         assert graph_support is True
     else:
         assert graph_support is False
