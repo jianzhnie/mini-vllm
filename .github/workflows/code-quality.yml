@@ -2,13 +2,13 @@ name: Code Quality
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
     paths:
       - "minivllm/**/*.py"
       - "pyproject.toml"
       - ".pre-commit-config.yaml"
   pull_request:
-    branches: [main, develop]
+    branches: [main]
     paths:
       - "minivllm/**/*.py"
       - "pyproject.toml"
@@ -34,16 +34,13 @@ jobs:
       - name: Install linting dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install black ruff mypy types-PyYAML types-tqdm
+          pip install black ruff
 
       - name: Run Black
-        run: black --check --diff minivllm/
+        run: black --check --diff minivllm/ tests/
 
       - name: Run Ruff
-        run: ruff check minivllm/
-
-      - name: Run Ruff Format Check
-        run: ruff format --check minivllm/
+        run: ruff check minivllm/ tests/
 
   type-check:
     name: Type Check
@@ -61,13 +58,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install mypy types-PyYAML types-tqdm
-          # Install minimal runtime dependencies for mypy
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install transformers numpy tqdm safetensors colorama xxhash
           pip install -e . --no-deps
 
       - name: Run MyPy
-        run: mypy minivllm/ --ignore-missing-imports --show-error-codes
+        run: mypy minivllm/ --show-error-codes
 
   security:
     name: Security Scan
@@ -84,7 +80,11 @@ jobs:
         run: pip install bandit[toml]
 
       - name: Run Bandit Security Scan
-        run: bandit -r minivllm/ -f json -o bandit-report.json || true
+        run: bandit -r minivllm/ -ll -ii
+
+      - name: Generate Bandit Report
+        if: always()
+        run: bandit -r minivllm/ -ll -ii -f json -o bandit-report.json || true
 
       - name: Upload Bandit Report
         uses: actions/upload-artifact@v4
