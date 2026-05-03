@@ -17,7 +17,6 @@ import sys
 import torch
 
 from minivllm.config import Config
-from minivllm.utils.example_utils import DEFAULT_MODEL
 
 
 def check_npu_environment() -> bool:
@@ -28,7 +27,9 @@ def check_npu_environment() -> bool:
 
     try:
         import torch_npu
-        print(f'torch_npu version: {getattr(torch_npu, "__version__", "unknown")}')
+        print(
+            f'torch_npu version: {getattr(torch_npu, "__version__", "unknown")}'
+        )
     except ImportError:
         print('torch_npu not installed. Install CANN toolkit for NPU support.')
         return False
@@ -62,7 +63,7 @@ def check_npu_environment() -> bool:
 def demo_attention_layer():
     """Demonstrate low-level NPU Flash Attention via the Attention layer."""
     from minivllm.models.layers.attention import Attention
-    from minivllm.utils.context import set_context, reset_context
+    from minivllm.utils.context import reset_context, set_context
 
     print('=' * 60)
     print('Demo: Low-level Attention Layer on NPU')
@@ -71,7 +72,7 @@ def demo_attention_layer():
     num_heads = 8
     head_dim = 64
     num_kv_heads = 8
-    scale = 1.0 / (head_dim ** 0.5)
+    scale = 1.0 / (head_dim**0.5)
     device = torch.device('npu:0')
 
     attn = Attention(
@@ -117,9 +118,15 @@ def demo_attention_layer():
     block_size = 16
     num_blocks = 4
 
-    attn.k_cache = torch.randn(num_blocks, block_size, num_kv_heads, head_dim,
+    attn.k_cache = torch.randn(num_blocks,
+                               block_size,
+                               num_kv_heads,
+                               head_dim,
                                device=device)
-    attn.v_cache = torch.randn(num_blocks, block_size, num_kv_heads, head_dim,
+    attn.v_cache = torch.randn(num_blocks,
+                               block_size,
+                               num_kv_heads,
+                               head_dim,
                                device=device)
     attn._cache_initialized = True
 
@@ -129,10 +136,12 @@ def demo_attention_layer():
 
     set_context(
         is_prefill=False,
-        slot_mapping=torch.tensor([0, block_size], dtype=torch.int32,
+        slot_mapping=torch.tensor([0, block_size],
+                                  dtype=torch.int32,
                                   device=device),
         context_lens=torch.tensor([3, 5], dtype=torch.int32, device=device),
-        block_tables=torch.tensor([[0, -1], [1, 2]], dtype=torch.int32,
+        block_tables=torch.tensor([[0, -1], [1, 2]],
+                                  dtype=torch.int32,
                                   device=device),
     )
 
@@ -164,9 +173,21 @@ def demo_npu_inference_backend():
     batch_size = 2
     seq_len = 16
 
-    query = torch.randn(batch_size, num_heads, seq_len, head_dim, device=device)
-    key = torch.randn(batch_size, num_kv_heads, seq_len, head_dim, device=device)
-    value = torch.randn(batch_size, num_kv_heads, seq_len, head_dim, device=device)
+    query = torch.randn(batch_size,
+                        num_heads,
+                        seq_len,
+                        head_dim,
+                        device=device)
+    key = torch.randn(batch_size,
+                      num_kv_heads,
+                      seq_len,
+                      head_dim,
+                      device=device)
+    value = torch.randn(batch_size,
+                        num_kv_heads,
+                        seq_len,
+                        head_dim,
+                        device=device)
 
     out = backend.forward(query, key, value, is_causal=True)
     print(f'Prefill output: {out.shape}')
@@ -187,7 +208,7 @@ def demo_llm_inference(model_path=None):
     print('=' * 60)
 
     config = Config(
-        model=model_path or DEFAULT_MODEL,
+        model=model_path,
         max_num_seqs=4,
         max_model_len=128,
         enforce_eager=True,
@@ -248,9 +269,11 @@ def main():
     # Optional: run LLM demo via --model <path>
     import argparse
     parser = argparse.ArgumentParser(description='NPU Flash Attention Example')
-    parser.add_argument('--model', default=None,
+    parser.add_argument('--model',
+                        default='facebook/opt-125m',
                         help='Model path or HuggingFace ID')
-    parser.add_argument('--skip-low-level', action='store_true',
+    parser.add_argument('--skip-low-level',
+                        action='store_true',
                         help='Skip low-level attention demos')
     args = parser.parse_args()
 

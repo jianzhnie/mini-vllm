@@ -1,12 +1,8 @@
 """Shared utilities for mini-vLLM example scripts."""
 
-import os
-
 from minivllm.utils.logger_utils import get_logger
 
 logger = get_logger(__name__)
-
-DEFAULT_MODEL = os.environ.get('MINIVLLM_MODEL', 'facebook/opt-125m')
 
 DEFAULT_PROMPTS = [
     'Hello, who are you?',

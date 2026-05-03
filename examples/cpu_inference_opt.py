@@ -23,7 +23,7 @@ os.environ['MINIVLLM_DEVICE'] = 'cpu'
 
 from minivllm import LLM, SamplingParams  # noqa: E402
 from minivllm.config import Config  # noqa: E402
-from minivllm.utils.example_utils import DEFAULT_MODEL, format_prompts_with_chat_template  # noqa: E402
+from minivllm.utils.example_utils import format_prompts_with_chat_template  # noqa: E402
 from minivllm.utils.logger_utils import get_logger  # noqa: E402
 
 logger = get_logger(__name__)
@@ -119,7 +119,7 @@ def format_output_box(prompt: str,
 def run_inference() -> None:
     """Run the inference pipeline."""
     config = Config(
-        model=DEFAULT_MODEL,
+        model='facebook/opt-125m',
         max_num_seqs=8,
         max_model_len=1024,
         enforce_eager=True,
@@ -139,9 +139,8 @@ def run_inference() -> None:
 
     logger.info('Starting CPU inference with mini-vLLM')
     logger.info(f'Model: {config.model}')
-    logger.info(
-        f'Configuration: max_seqs={config.max_num_seqs}, '
-        f'max_tokens={sampling_params.max_tokens}')
+    logger.info(f'Configuration: max_seqs={config.max_num_seqs}, '
+                f'max_tokens={sampling_params.max_tokens}')
 
     # Initialize LLM engine
     logger.info('Initializing LLM engine...')
@@ -179,14 +178,15 @@ def run_inference() -> None:
     print('=' * 80 + '\n')
 
     # Print detailed results
-    for idx, (formatted_prompt, output) in enumerate(
-            zip(formatted_prompts, outputs)):
-        original_prompt = prompts[idx] if idx < len(prompts) else formatted_prompt
+    for idx, (formatted_prompt,
+              output) in enumerate(zip(formatted_prompts, outputs)):
+        original_prompt = prompts[idx] if idx < len(
+            prompts) else formatted_prompt
         output_text = deduplicate_text(output['text'])
         token_count = len(output['token_ids'])
 
         print(format_output_box(original_prompt, output_text, idx,
-                                 token_count))
+                                token_count))
         print()
 
     print('=' * 80)

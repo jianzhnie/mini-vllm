@@ -18,7 +18,6 @@ from time import perf_counter
 
 from minivllm import LLM, SamplingParams
 from minivllm.config import Config
-from minivllm.utils.example_utils import DEFAULT_MODEL
 from minivllm.utils.logger_utils import get_logger
 
 logger = get_logger(__name__)
@@ -55,7 +54,7 @@ def main():
         return 1
 
     config = Config(
-        model=DEFAULT_MODEL,
+        model='facebook/opt-125m',
         max_num_seqs=4,
         max_model_len=256,
         enforce_eager=True,
@@ -72,8 +71,9 @@ def main():
     )
 
     print(f'\nModel: {config.model}')
-    print(f'Config: max_seqs={config.max_num_seqs}, max_len={config.max_model_len}, '
-          f'dtype={config.dtype}')
+    print(
+        f'Config: max_seqs={config.max_num_seqs}, max_len={config.max_model_len}, '
+        f'dtype={config.dtype}')
     print(f'Prompts: {len(prompts)}\n')
 
     # Initialize LLM engine on NPU
