@@ -15,5 +15,8 @@ export MINIVLLM_USE_NPU_FA=1
 # 常规 NPU 环境
 export ASCEND_RT_VISIBLE_DEVICES=0,1
 
+# 模型
+export MINIVLLM_MODEL="/Users/robin/hfhub/models/Qwen/Qwen3-0.6B"
+
 # conda activate vllm091
 source /home/jianzhnie/llmtuner/software/miniconda3/bin/activate vllm091
