@@ -89,8 +89,6 @@ class RMSNorm(nn.Module):
         """
         # NPU optimization
         if _NPU_RMS_NORM_AVAILABLE and x.device.type == "npu":
-            import torch_npu
-
             return torch_npu.npu_rms_norm(x, self.weight, epsilon=self.eps)[0]
 
         orig_dtype = x.dtype
@@ -120,8 +118,6 @@ class RMSNorm(nn.Module):
         """
         # NPU optimization
         if _NPU_RMS_NORM_AVAILABLE and x.device.type == "npu":
-            import torch_npu
-
             x = x + residual
             residual = x
             return torch_npu.npu_rms_norm(x, self.weight, epsilon=self.eps)[0], residual

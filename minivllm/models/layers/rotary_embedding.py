@@ -62,8 +62,6 @@ def apply_rotary_emb(
         >>> print(rotated.shape)  # torch.Size([2, 8, 64])
     """
     if _USE_NPU_ROPE and x.device.type == "npu":
-        import torch_npu
-
         needs_unsqueeze = x.dim() == 3
         if needs_unsqueeze:
             x = x.unsqueeze(1)

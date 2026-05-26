@@ -361,14 +361,21 @@ class Attention(nn.Module):
                     try:
                         batch_size = q.size(0)
                         target_dtype = torch.float16
-                        # NPU API expects BNSD layout: [B, N, S=1, D] for decode
                         q_npu = q.to(target_dtype).unsqueeze(2)
-                        k_cache_f16 = k_cache.to(target_dtype)
-                        v_cache_f16 = v_cache.to(target_dtype)
+                        k_cache_native = (
+                            k_cache
+                            if k_cache.dtype == target_dtype
+                            else k_cache.to(target_dtype)
+                        )
+                        v_cache_native = (
+                            v_cache
+                            if v_cache.dtype == target_dtype
+                            else v_cache.to(target_dtype)
+                        )
                         attn_out = npu_incre_flash_attention(
                             q_npu,
-                            k_cache_f16,
-                            v_cache_f16,
+                            k_cache_native,
+                            v_cache_native,
                             num_heads=self.num_heads,
                             num_key_value_heads=self.num_kv_heads,
                             input_layout="BNSD",
@@ -435,34 +442,6 @@ class Attention(nn.Module):
                         softmax_scale=self.scale,
                         causal=True,
                     )
-                elif (
-                    _NPU_FLASH_ATTN_AVAILABLE and npu_incre_flash_attention is not None
-                ):
-                    # Legacy NPU incremental FlashAttention
-                    # Reshape tensors for NPU format
-                    batch_size = q.size(0)
-                    q_npu = q.view(
-                        batch_size, self.num_heads, self.head_dim
-                    )  # [B, H, D]
-
-                    # Prepare KV cache in NPU format
-                    k_cache_npu = k_cache  # Should be in correct format already
-                    v_cache_npu = v_cache
-
-                    attn_out = npu_incre_flash_attention(
-                        q_npu,
-                        k_cache_npu,
-                        v_cache_npu,
-                        num_heads=self.num_heads,
-                        num_key_value_heads=self.num_kv_heads,
-                        input_layout="BNSD",  # Use optimal layout
-                        scale_value=self.scale,
-                        actual_seq_lengths=context.context_lens,
-                        block_table=context.block_tables,
-                    )
-
-                    # Reshape back to original format [batch, num_heads, head_dim]
-                    attn_out = attn_out.view(batch_size, self.num_heads, self.head_dim)
                 else:
                     attn_out = self._fallback_attention(q, k, v, context)
         else:

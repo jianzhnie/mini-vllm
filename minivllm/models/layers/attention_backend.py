@@ -393,12 +393,11 @@ class NPUAttentionBackend(AttentionBackend):
             )
 
         try:
-            # Only convert to bfloat16 if not already a supported dtype
-            # NPU Flash Attention supports float16 and bfloat16
             q_dtype = query.dtype
             target_dtype = None
+            _query_orig, _key_orig, _value_orig = query, key, value
             if q_dtype not in (torch.float16, torch.bfloat16):
-                target_dtype = torch.float16  # Use float16 as safe default
+                target_dtype = torch.float16
                 query = query.to(target_dtype)
                 key = key.to(target_dtype)
                 value = value.to(target_dtype)
@@ -425,7 +424,7 @@ class NPUAttentionBackend(AttentionBackend):
                 f"NPU attention failed: {e}, falling back to standard attention"
             )
             return self._fallback_backend.forward(
-                query, key, value, attention_mask, is_causal
+                _query_orig, _key_orig, _value_orig, attention_mask, is_causal
             )
 
     def unified_inference(
@@ -538,131 +537,88 @@ class NPUAttentionBackend(AttentionBackend):
             if query.dim() == 3:
                 query = query.unsqueeze(2)  # (batch, num_heads, 1, head_dim)
 
+        # Basic implementation of unified inference
+        # Note: This matches the signature expected by Attention.forward
+        # Cast to supported dtype for NPU kernel
+        q_dtype = query.dtype
+        target_dtype = None
+        if q_dtype not in (torch.float16, torch.bfloat16):
+            target_dtype = torch.float16
+            query = query.to(target_dtype)
+            key_cache = key_cache.to(target_dtype)
+            value_cache = value_cache.to(target_dtype)
+
+        # Construct attention mask for prefill (causal)
+        q_len = query.shape[2]
+        atten_mask = None
+        if q_len > 1:
+            atten_mask = torch.triu(
+                torch.ones(q_len, q_len, device=query.device, dtype=torch.bool),
+                diagonal=1,
+            )
+            atten_mask = atten_mask.view(1, 1, q_len, q_len)
+
         try:
-            # Basic implementation of unified inference
-            # Note: This matches the signature expected by Attention.forward
-            # Cast to supported dtype for NPU kernel
-            q_dtype = query.dtype
-            target_dtype = None
-            if q_dtype not in (torch.float16, torch.bfloat16):
-                target_dtype = torch.float16
-                query = query.to(target_dtype)
-                key_cache = key_cache.to(target_dtype)
-                value_cache = value_cache.to(target_dtype)
-
-            # Construct attention mask for prefill (causal)
-            q_len = query.shape[2]
-            atten_mask = None
-            if q_len > 1:
-                # Causal mask for prefill: 1 for mask, 0 for keep (BOOL)
-                # Use upper triangle as mask (standard for NPU FlashAttention)
-                atten_mask = torch.triu(
-                    torch.ones(q_len, q_len, device=query.device, dtype=torch.bool),
-                    diagonal=1,
-                )
-                atten_mask = atten_mask.view(1, 1, q_len, q_len)
-
-            try:
-                out = self.npu_fused_infer_attention_score(
-                    query,
-                    key_cache,
-                    value_cache,
-                    atten_mask=atten_mask,
-                    actual_seq_lengths=q_seq_lens,
-                    actual_seq_lengths_kv=kv_seq_lens,
-                    num_heads=query.shape[1],
-                    num_key_value_heads=num_kv_heads,
-                    input_layout="BNSD",
-                    sparse_mode=0 if is_prefill else SPARSE_MODE,
-                    pre_tokens=65535,
-                    next_tokens=0,
-                    scale=scale,
-                )
-            except TypeError:
-                out = self.npu_fused_infer_attention_score(
-                    query,
-                    key_cache,
-                    value_cache,
-                    num_heads=query.shape[1],
-                    num_key_value_heads=num_kv_heads,
-                    input_layout="BNSD",
-                    actual_seq_lengths=q_seq_lens,
-                    actual_seq_lengths_kv=kv_seq_lens,
-                    scale=scale,
-                    sparse_mode=0 if is_prefill else SPARSE_MODE,
-                    atten_mask=atten_mask,
-                    pre_tokens=65535,
-                    next_tokens=0,
-                )
-
-            # Handle tuple return (attn_out, softmax_lse)
-            if isinstance(out, tuple):
-                out = out[0]
-
-            if target_dtype is not None:
-                out = out.to(q_dtype)
-
-            if is_prefill and context_lens is not None:
-                # Flatten back to (TotalTokens, NumHeads, HeadDim)
-                # out is BNSD: (batch, num_heads, max_seq_len, head_dim)
-                out_flat = torch.empty(
-                    sum(kv_seq_lens),
-                    out.shape[1],
-                    out.shape[3],
-                    dtype=out.dtype,
-                    device=out.device,
-                )
-                start = 0
-                for i, s_len in enumerate(kv_seq_lens):
-                    end = start + s_len
-                    # out[i, :, :s_len, :] is (num_heads, s_len, head_dim)
-                    # permute to (s_len, num_heads, head_dim)
-                    out_flat[start:end] = out[i, :, :s_len, :].permute(1, 0, 2)
-                    start = end
-                return out_flat
-
-            # Transpose back to BNSD for attention.py compatibility (Decode phase)
-            # Output is already BNSD, but attention.py expects (batch, num_heads, head_dim) for decode
-            # out: (batch, num_heads, 1, head_dim)
-            if out.dim() == 4 and out.shape[2] == 1:
-                out = out.squeeze(2)
-
-            return out
+            out = self.npu_fused_infer_attention_score(
+                query,
+                key_cache,
+                value_cache,
+                atten_mask=atten_mask,
+                actual_seq_lengths=q_seq_lens,
+                actual_seq_lengths_kv=kv_seq_lens,
+                num_heads=query.shape[1],
+                num_key_value_heads=num_kv_heads,
+                input_layout="BNSD",
+                sparse_mode=0 if is_prefill else SPARSE_MODE,
+                pre_tokens=65535,
+                next_tokens=0,
+                scale=scale,
+            )
         except RuntimeError as e:
-            if self._handle_oom(e):
-                logger.warning("Retrying NPU inference after OOM handling")
-                try:
-                    return self.npu_fused_infer_attention_score(
-                        query,
-                        key_cache,
-                        value_cache,
-                        atten_mask=None,
-                        actual_seq_lengths=q_seq_lens,
-                        actual_seq_lengths_kv=kv_seq_lens,
-                        num_heads=query.shape[1],
-                        num_key_value_heads=num_kv_heads,
-                        input_layout="BNSD",
-                        sparse_mode=SPARSE_MODE,
-                        pre_tokens=65535,
-                        next_tokens=0,
-                        scale=scale,
-                    )
-                except TypeError:
-                    return self.npu_fused_infer_attention_score(
-                        query,
-                        key_cache,
-                        value_cache,
-                        num_heads=query.shape[1],
-                        num_key_value_heads=num_kv_heads,
-                        input_layout="BNSD",
-                        actual_seq_lengths=q_seq_lens,
-                        actual_seq_lengths_kv=kv_seq_lens,
-                        scale=scale,
-                        sparse_mode=SPARSE_MODE,
-                        pre_tokens=65535,
-                        next_tokens=0,
-                    )
-            raise e
+            if not self._handle_oom(e):
+                raise e
+            logger.warning("Retrying NPU inference after OOM handling")
+            out = self.npu_fused_infer_attention_score(
+                query,
+                key_cache,
+                value_cache,
+                atten_mask=None,
+                actual_seq_lengths=q_seq_lens,
+                actual_seq_lengths_kv=kv_seq_lens,
+                num_heads=query.shape[1],
+                num_key_value_heads=num_kv_heads,
+                input_layout="BNSD",
+                sparse_mode=SPARSE_MODE,
+                pre_tokens=65535,
+                next_tokens=0,
+                scale=scale,
+            )
+
+        if isinstance(out, tuple):
+            out = out[0]
+
+        if target_dtype is not None:
+            out = out.to(q_dtype)
+
+        if is_prefill and context_lens is not None:
+            out_flat = torch.empty(
+                sum(kv_seq_lens),
+                out.shape[1],
+                out.shape[3],
+                dtype=out.dtype,
+                device=out.device,
+            )
+            start = 0
+            for i, s_len in enumerate(kv_seq_lens):
+                end = start + s_len
+                out_flat[start:end] = out[i, :, :s_len, :].permute(1, 0, 2)
+                start = end
+            return out_flat
+
+        if out.dim() == 4 and out.shape[2] == 1:
+            out = out.squeeze(2)
+
+        return out
 
     def _handle_oom(self, e: RuntimeError) -> bool:
         """Handle OOM error by clearing cache or advising fallback.
@@ -763,11 +719,16 @@ class NPUAttentionBackend(AttentionBackend):
             if block_tables.device != k.device:
                 block_tables = block_tables.to(k.device)
 
-            # Clamp indices to avoid out of bounds (though valid_mask should handle it logic-wise)
             max_block_idx = block_tables.size(1) - 1
             safe_indices = block_table_indices.clamp(max=max_block_idx)
 
-            # Expand safe_indices to batch size
+            if (block_table_indices > max_block_idx).any():
+                logger.warning(
+                    "Block table index out of range in prepare_npu_cache. "
+                    f"Max block index: {max_block_idx}, "
+                    f"Max requested: {block_table_indices.max().item()}"
+                )
+
             safe_indices = safe_indices.expand(batch_size, -1)
 
             # Gather block IDs: [batch_size, max_seqlen]

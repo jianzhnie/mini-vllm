@@ -56,10 +56,10 @@ def get_attn_mask_npu(device: torch.device, size: int = 2048) -> Tensor:
             if current_size >= new_size:
                 return ATTN_MASK_NPU_CACHE[device][:size, :size]
 
-        # Create new mask
         mask = torch.triu(
-            torch.ones((new_size, new_size), device=device), diagonal=1
-        ).bool()
+            torch.ones((new_size, new_size), dtype=torch.bool, device=device),
+            diagonal=1,
+        )
         ATTN_MASK_NPU_CACHE[device] = mask
 
     return ATTN_MASK_NPU_CACHE[device][:size, :size]

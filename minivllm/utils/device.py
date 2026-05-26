@@ -20,8 +20,8 @@ from minivllm.utils.logger_utils import get_logger
 
 logger = get_logger(__name__)
 
-# Re-export for convenience — many modules import this via device.py.
-is_torch_npu_available = is_torch_npu_available
+# `is_torch_npu_available` is re-exported via the import at the top of this
+# module so callers can use `from minivllm.utils.device import is_torch_npu_available`.
 
 # Device types with standard torch.{type} module and set_device/mem APIs.
 _ACCELERATOR_TYPES = frozenset(("cuda", "npu", "xpu"))

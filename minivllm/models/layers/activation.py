@@ -82,8 +82,6 @@ class SiluAndMul(nn.Module):
         """
         # NPU optimization
         if _NPU_SWIGLU_AVAILABLE and x.device.type == "npu":
-            import torch_npu
-
             return torch_npu.npu_swiglu(x, dim=-1)
 
         if x.size(-1) % 2 != 0:
