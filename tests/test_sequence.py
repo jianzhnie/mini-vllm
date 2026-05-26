@@ -26,9 +26,7 @@ class TestSequenceInitialization:
     def test_sequence_with_sampling_params(self) -> None:
         """Test sequence creation with sampling parameters."""
         token_ids = [1, 2, 3]
-        params = SamplingParams(temperature=0.8,
-                                max_tokens=100,
-                                ignore_eos=True)
+        params = SamplingParams(temperature=0.8, max_tokens=100, ignore_eos=True)
         seq = Sequence(token_ids, params)
 
         assert seq.temperature == 0.8
@@ -37,8 +35,7 @@ class TestSequenceInitialization:
 
     def test_empty_sequence_raises_error(self) -> None:
         """Test that empty token_ids raises ValueError."""
-        with pytest.raises(ValueError,
-                           match='must contain at least one token'):
+        with pytest.raises(ValueError, match="must contain at least one token"):
             Sequence([])
 
     def test_sequence_last_token(self) -> None:
@@ -72,8 +69,7 @@ class TestSequenceTokenManagement:
         seq = Sequence([1, 2, 3])
         seq.status = SequenceStatus.FINISHED
 
-        with pytest.raises(RuntimeError,
-                           match='Cannot append token to finished'):
+        with pytest.raises(RuntimeError, match="Cannot append token to finished"):
             seq.append_token(4)
 
     def test_append_invalid_token_id(self) -> None:
@@ -81,7 +77,7 @@ class TestSequenceTokenManagement:
         seq = Sequence([1, 2, 3])
         seq.status = SequenceStatus.RUNNING
 
-        with pytest.raises(ValueError, match='Token ID must be non-negative'):
+        with pytest.raises(ValueError, match="Token ID must be non-negative"):
             seq.append_token(-1)
 
     def test_completion_tokens(self) -> None:
@@ -140,7 +136,7 @@ class TestSequenceProperties:
 
     def test_block_retrieval(self) -> None:
         """Test block() method for retrieving token blocks."""
-        token_ids = [i for i in range(128)]  # 2 blocks
+        token_ids = list(range(128))  # 2 blocks
         seq = Sequence(token_ids)
 
         block_0 = seq.block(0)
@@ -155,7 +151,7 @@ class TestSequenceProperties:
         """Test that accessing invalid block raises IndexError."""
         seq = Sequence([1] * 64)
 
-        with pytest.raises(IndexError, match='Block index'):
+        with pytest.raises(IndexError, match="Block index"):
             seq.block(1)
 
 
@@ -180,5 +176,5 @@ class TestSequenceGetItem:
         assert seq[-2] == 40
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

@@ -28,22 +28,23 @@ from minivllm.sampling_params import SamplingParams
 
 def create_mock_config(tmp_path: Path, extra_config: dict = None) -> Config:
     """Helper to create a mock config with model directory."""
-    model_dir = tmp_path / 'test_model'
+    model_dir = tmp_path / "test_model"
     model_dir.mkdir()
 
     config = {
-        'model_type': 'llama',
-        'hidden_size': 768,
-        'num_hidden_layers': 12,
-        'num_attention_heads': 12,
-        'max_position_embeddings': 4096,
-        'torch_dtype': 'float32',
+        "model_type": "llama",
+        "hidden_size": 768,
+        "num_hidden_layers": 12,
+        "num_attention_heads": 12,
+        "max_position_embeddings": 4096,
+        "torch_dtype": "float32",
     }
     if extra_config:
         config.update(extra_config)
 
     import json
-    (model_dir / 'config.json').write_text(json.dumps(config))
+
+    (model_dir / "config.json").write_text(json.dumps(config))
 
     return Config(str(model_dir))
 
@@ -51,14 +52,12 @@ def create_mock_config(tmp_path: Path, extra_config: dict = None) -> Config:
 class TestModelRunnerInitialization:
     """Test cases for ModelRunner initialization."""
 
-    @patch('minivllm.engine.inference_executor.InferenceExecutor.initialize')
-    @patch(
-        'minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs'
-    )
-    @patch('minivllm.models.manager.ModelManager.initialize')
-    @patch('minivllm.engine.distributed_manager.DistributedManager.initialize')
-    @patch('minivllm.models.create_model')
-    @patch('transformers.AutoTokenizer.from_pretrained')
+    @patch("minivllm.engine.inference_executor.InferenceExecutor.initialize")
+    @patch("minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs")
+    @patch("minivllm.models.manager.ModelManager.initialize")
+    @patch("minivllm.engine.distributed_manager.DistributedManager.initialize")
+    @patch("minivllm.models.create_model")
+    @patch("transformers.AutoTokenizer.from_pretrained")
     def test_runner_initialization(
         self,
         mock_tokenizer,
@@ -90,14 +89,12 @@ class TestModelRunnerInitialization:
         # Cleanup
         runner.exit()
 
-    @patch('minivllm.engine.inference_executor.InferenceExecutor.initialize')
-    @patch(
-        'minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs'
-    )
-    @patch('minivllm.models.manager.ModelManager.initialize')
-    @patch('minivllm.engine.distributed_manager.DistributedManager.initialize')
-    @patch('minivllm.models.create_model')
-    @patch('transformers.AutoTokenizer.from_pretrained')
+    @patch("minivllm.engine.inference_executor.InferenceExecutor.initialize")
+    @patch("minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs")
+    @patch("minivllm.models.manager.ModelManager.initialize")
+    @patch("minivllm.engine.distributed_manager.DistributedManager.initialize")
+    @patch("minivllm.models.create_model")
+    @patch("transformers.AutoTokenizer.from_pretrained")
     def test_runner_initialization_with_tensor_parallelism(
         self,
         mock_tokenizer,
@@ -113,7 +110,7 @@ class TestModelRunnerInitialization:
         mock_model.to.return_value = mock_model
         mock_create_model.return_value = mock_model
 
-        config = create_mock_config(tmp_path, {'tensor_parallel_size': 4})
+        config = create_mock_config(tmp_path, {"tensor_parallel_size": 4})
         config.tensor_parallel_size = 4  # Override after creation
         mock_event = [MagicMock() for _ in range(3)]
 
@@ -128,14 +125,12 @@ class TestModelRunnerInitialization:
 class TestModelRunnerInference:
     """Test cases for model inference execution."""
 
-    @patch('minivllm.engine.inference_executor.InferenceExecutor.initialize')
-    @patch(
-        'minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs'
-    )
-    @patch('minivllm.models.manager.ModelManager.initialize')
-    @patch('minivllm.engine.distributed_manager.DistributedManager.initialize')
-    @patch('minivllm.models.create_model')
-    @patch('transformers.AutoTokenizer.from_pretrained')
+    @patch("minivllm.engine.inference_executor.InferenceExecutor.initialize")
+    @patch("minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs")
+    @patch("minivllm.models.manager.ModelManager.initialize")
+    @patch("minivllm.engine.distributed_manager.DistributedManager.initialize")
+    @patch("minivllm.models.create_model")
+    @patch("transformers.AutoTokenizer.from_pretrained")
     def test_call_method_exists(
         self,
         mock_tokenizer,
@@ -155,19 +150,17 @@ class TestModelRunnerInference:
         mock_event = MagicMock()
 
         runner = ModelRunner(config, rank=0, event=mock_event)
-        assert hasattr(runner, 'call')
+        assert hasattr(runner, "call")
         assert callable(runner.call)
 
         runner.exit()
 
-    @patch('minivllm.engine.inference_executor.InferenceExecutor.initialize')
-    @patch(
-        'minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs'
-    )
-    @patch('minivllm.models.manager.ModelManager.initialize')
-    @patch('minivllm.engine.distributed_manager.DistributedManager.initialize')
-    @patch('minivllm.models.create_model')
-    @patch('transformers.AutoTokenizer.from_pretrained')
+    @patch("minivllm.engine.inference_executor.InferenceExecutor.initialize")
+    @patch("minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs")
+    @patch("minivllm.models.manager.ModelManager.initialize")
+    @patch("minivllm.engine.distributed_manager.DistributedManager.initialize")
+    @patch("minivllm.models.create_model")
+    @patch("transformers.AutoTokenizer.from_pretrained")
     def test_call_run_method(
         self,
         mock_tokenizer,
@@ -189,24 +182,21 @@ class TestModelRunnerInference:
         runner = ModelRunner(config, rank=0, event=mock_event)
 
         # Create mock sequences
-        seq = Sequence(token_ids=[1, 2, 3, 4, 5],
-                       sampling_params=SamplingParams())
+        seq = Sequence(token_ids=[1, 2, 3, 4, 5], sampling_params=SamplingParams())
 
         # Mock the run method
-        with patch.object(runner, 'run', return_value=[6, 7]) as mock_run:
-            runner.call('run', [seq], True)
+        with patch.object(runner, "run", return_value=[6, 7]) as mock_run:
+            runner.call("run", [seq], True)
             mock_run.assert_called_once_with([seq], True)
 
         runner.exit()
 
-    @patch('minivllm.engine.inference_executor.InferenceExecutor.initialize')
-    @patch(
-        'minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs'
-    )
-    @patch('minivllm.models.manager.ModelManager.initialize')
-    @patch('minivllm.engine.distributed_manager.DistributedManager.initialize')
-    @patch('minivllm.models.create_model')
-    @patch('transformers.AutoTokenizer.from_pretrained')
+    @patch("minivllm.engine.inference_executor.InferenceExecutor.initialize")
+    @patch("minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs")
+    @patch("minivllm.models.manager.ModelManager.initialize")
+    @patch("minivllm.engine.distributed_manager.DistributedManager.initialize")
+    @patch("minivllm.models.create_model")
+    @patch("transformers.AutoTokenizer.from_pretrained")
     def test_call_exit_method(
         self,
         mock_tokenizer,
@@ -229,8 +219,8 @@ class TestModelRunnerInference:
 
         try:
             # Mock the exit method to test call routing
-            with patch.object(runner, 'exit') as mock_exit:
-                runner.call('exit')
+            with patch.object(runner, "exit") as mock_exit:
+                runner.call("exit")
                 mock_exit.assert_called_once()
         finally:
             # Ensure cleanup even though exit was mocked
@@ -240,14 +230,12 @@ class TestModelRunnerInference:
 class TestModelRunnerDeviceGraph:
     """Test cases for device graph capture and replay."""
 
-    @patch('minivllm.engine.inference_executor.InferenceExecutor.initialize')
-    @patch(
-        'minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs'
-    )
-    @patch('minivllm.models.manager.ModelManager.initialize')
-    @patch('minivllm.engine.distributed_manager.DistributedManager.initialize')
-    @patch('minivllm.models.create_model')
-    @patch('transformers.AutoTokenizer.from_pretrained')
+    @patch("minivllm.engine.inference_executor.InferenceExecutor.initialize")
+    @patch("minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs")
+    @patch("minivllm.models.manager.ModelManager.initialize")
+    @patch("minivllm.engine.distributed_manager.DistributedManager.initialize")
+    @patch("minivllm.models.create_model")
+    @patch("transformers.AutoTokenizer.from_pretrained")
     def test_cuda_graph_capture_disabled_on_cpu(
         self,
         mock_tokenizer,
@@ -263,7 +251,7 @@ class TestModelRunnerDeviceGraph:
         mock_model.to.return_value = mock_model
         mock_create_model.return_value = mock_model
 
-        config = create_mock_config(tmp_path, {'enforce_eager': False})
+        config = create_mock_config(tmp_path, {"enforce_eager": False})
         mock_event = MagicMock()
 
         runner = ModelRunner(config, rank=0, event=mock_event)
@@ -271,14 +259,12 @@ class TestModelRunnerDeviceGraph:
         # Graph capture should be skipped on CPU (handled by InferenceExecutor)
         runner.exit()
 
-    @patch('minivllm.engine.inference_executor.InferenceExecutor.initialize')
-    @patch(
-        'minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs'
-    )
-    @patch('minivllm.models.manager.ModelManager.initialize')
-    @patch('minivllm.engine.distributed_manager.DistributedManager.initialize')
-    @patch('minivllm.models.create_model')
-    @patch('transformers.AutoTokenizer.from_pretrained')
+    @patch("minivllm.engine.inference_executor.InferenceExecutor.initialize")
+    @patch("minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs")
+    @patch("minivllm.models.manager.ModelManager.initialize")
+    @patch("minivllm.engine.distributed_manager.DistributedManager.initialize")
+    @patch("minivllm.models.create_model")
+    @patch("transformers.AutoTokenizer.from_pretrained")
     def test_enforce_eager_skips_graph(
         self,
         mock_tokenizer,
@@ -294,7 +280,7 @@ class TestModelRunnerDeviceGraph:
         mock_model.to.return_value = mock_model
         mock_create_model.return_value = mock_model
 
-        config = create_mock_config(tmp_path, {'enforce_eager': True})
+        config = create_mock_config(tmp_path, {"enforce_eager": True})
         mock_event = MagicMock()
 
         runner = ModelRunner(config, rank=0, event=mock_event)
@@ -307,14 +293,12 @@ class TestModelRunnerDeviceGraph:
 class TestModelRunnerCleanup:
     """Test cases for model runner cleanup."""
 
-    @patch('minivllm.engine.inference_executor.InferenceExecutor.initialize')
-    @patch(
-        'minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs'
-    )
-    @patch('minivllm.models.manager.ModelManager.initialize')
-    @patch('minivllm.engine.distributed_manager.DistributedManager.initialize')
-    @patch('minivllm.models.create_model')
-    @patch('transformers.AutoTokenizer.from_pretrained')
+    @patch("minivllm.engine.inference_executor.InferenceExecutor.initialize")
+    @patch("minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs")
+    @patch("minivllm.models.manager.ModelManager.initialize")
+    @patch("minivllm.engine.distributed_manager.DistributedManager.initialize")
+    @patch("minivllm.models.create_model")
+    @patch("transformers.AutoTokenizer.from_pretrained")
     def test_exit_cleans_resources(
         self,
         mock_tokenizer,
@@ -343,14 +327,12 @@ class TestModelRunnerCleanup:
 class TestModelRunnerDistributed:
     """Test cases for distributed tensor parallelism."""
 
-    @patch('minivllm.engine.inference_executor.InferenceExecutor.initialize')
-    @patch(
-        'minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs'
-    )
-    @patch('minivllm.models.manager.ModelManager.initialize')
-    @patch('minivllm.engine.distributed_manager.DistributedManager.initialize')
-    @patch('minivllm.models.create_model')
-    @patch('transformers.AutoTokenizer.from_pretrained')
+    @patch("minivllm.engine.inference_executor.InferenceExecutor.initialize")
+    @patch("minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs")
+    @patch("minivllm.models.manager.ModelManager.initialize")
+    @patch("minivllm.engine.distributed_manager.DistributedManager.initialize")
+    @patch("minivllm.models.create_model")
+    @patch("transformers.AutoTokenizer.from_pretrained")
     def test_distributed_initialization(
         self,
         mock_tokenizer,
@@ -385,16 +367,14 @@ class TestModelRunnerErrorHandling:
     def test_invalid_config_raises_error(self, tmp_path: Path) -> None:
         """Test that invalid configuration raises appropriate error."""
         with pytest.raises(ValueError):
-            Config(model='/nonexistent/path')
+            Config(model="/nonexistent/path")
 
-    @patch('minivllm.engine.inference_executor.InferenceExecutor.initialize')
-    @patch(
-        'minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs'
-    )
-    @patch('minivllm.models.manager.ModelManager.initialize')
-    @patch('minivllm.engine.distributed_manager.DistributedManager.initialize')
-    @patch('minivllm.models.create_model')
-    @patch('transformers.AutoTokenizer.from_pretrained')
+    @patch("minivllm.engine.inference_executor.InferenceExecutor.initialize")
+    @patch("minivllm.engine.inference_executor.InferenceExecutor.capture_device_graphs")
+    @patch("minivllm.models.manager.ModelManager.initialize")
+    @patch("minivllm.engine.distributed_manager.DistributedManager.initialize")
+    @patch("minivllm.models.create_model")
+    @patch("transformers.AutoTokenizer.from_pretrained")
     def test_inference_executor_initialized(
         self,
         mock_tokenizer,

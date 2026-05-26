@@ -18,15 +18,15 @@ class TestNPUAvailability:
 
     def test_npu_availability_report(self):
         """Report NPU availability and native function status."""
-        print(f'\nNPU available: {is_torch_npu_available()}')
-        print(f'Native NPU functions available: {_NPU_FLASH_ATTN_AVAILABLE}')
+        print(f"\nNPU available: {is_torch_npu_available()}")
+        print(f"Native NPU functions available: {_NPU_FLASH_ATTN_AVAILABLE}")
 
         if is_torch_npu_available():
             try:
                 import torch_npu
 
-                version = getattr(torch_npu, '__version__', 'unknown')
-                print(f'torch_npu version: {version}')
+                version = getattr(torch_npu, "__version__", "unknown")
+                print(f"torch_npu version: {version}")
                 print(
                     f"npu_fusion_attention available: {hasattr(torch_npu, 'npu_fusion_attention')}"
                 )
@@ -34,9 +34,9 @@ class TestNPUAvailability:
                     f"npu_incre_flash_attention available: {hasattr(torch_npu, 'npu_incre_flash_attention')}"
                 )
             except ImportError as e:
-                print(f'Error importing torch_npu: {e}')
+                print(f"Error importing torch_npu: {e}")
         else:
-            print('NPU not available - will use CPU fallback')
+            print("NPU not available - will use CPU fallback")
 
 
 class TestAttentionCreation:
@@ -81,7 +81,7 @@ class TestAttentionForward:
 
     def test_prefill_forward(self):
         """Test forward pass in prefill phase."""
-        device = 'npu' if is_torch_npu_available() else 'cpu'
+        device = "npu" if is_torch_npu_available() else "cpu"
 
         attention = Attention(
             num_heads=8,
@@ -97,28 +97,17 @@ class TestAttentionForward:
         head_dim = 64
 
         # Create test tensors
-        q = torch.randn(batch_size * seq_len,
-                        num_heads,
-                        head_dim,
-                        device=device)
-        k = torch.randn(batch_size * seq_len,
-                        num_kv_heads,
-                        head_dim,
-                        device=device)
-        v = torch.randn(batch_size * seq_len,
-                        num_kv_heads,
-                        head_dim,
-                        device=device)
+        q = torch.randn(batch_size * seq_len, num_heads, head_dim, device=device)
+        k = torch.randn(batch_size * seq_len, num_kv_heads, head_dim, device=device)
+        v = torch.randn(batch_size * seq_len, num_kv_heads, head_dim, device=device)
 
         # Create context for prefill
         context = Context(
             is_prefill=True,
             max_seqlen_q=seq_len,
             max_seqlen_k=seq_len,
-            cum_seqlens_q=torch.tensor([0, seq_len, seq_len * 2],
-                                       device=device),
-            cum_seqlens_k=torch.tensor([0, seq_len, seq_len * 2],
-                                       device=device),
+            cum_seqlens_q=torch.tensor([0, seq_len, seq_len * 2], device=device),
+            cum_seqlens_k=torch.tensor([0, seq_len, seq_len * 2], device=device),
             block_tables=None,
             slot_mapping=torch.arange(batch_size * seq_len, device=device),
         )
@@ -135,7 +124,7 @@ class TestAttentionForward:
 
     def test_decode_forward(self):
         """Test forward pass in decode phase (single token)."""
-        device = 'npu' if is_torch_npu_available() else 'cpu'
+        device = "npu" if is_torch_npu_available() else "cpu"
 
         attention = Attention(
             num_heads=8,
@@ -150,16 +139,8 @@ class TestAttentionForward:
         head_dim = 64
 
         # Initialize KV cache for decode phase
-        attention.k_cache = torch.randn(10,
-                                        16,
-                                        num_kv_heads,
-                                        head_dim,
-                                        device=device)
-        attention.v_cache = torch.randn(10,
-                                        16,
-                                        num_kv_heads,
-                                        head_dim,
-                                        device=device)
+        attention.k_cache = torch.randn(10, 16, num_kv_heads, head_dim, device=device)
+        attention.v_cache = torch.randn(10, 16, num_kv_heads, head_dim, device=device)
         attention._cache_initialized = True
 
         # Single token decode
@@ -195,7 +176,7 @@ class TestNPUOOMHandling:
     def test_oom_handling_logic(self):
         """Test OOM handling logic (mocked)."""
         if not is_torch_npu_available():
-            pytest.skip('NPU not available')
+            pytest.skip("NPU not available")
 
         from minivllm.models.layers.attention_backend import NPUAttentionBackend
 
@@ -208,15 +189,15 @@ class TestNPUOOMHandling:
 
         if isinstance(attention.backend, NPUAttentionBackend):
             # Test OOM error handling
-            oom_error = RuntimeError('NPU out of memory')
+            oom_error = RuntimeError("NPU out of memory")
             handled = attention.backend._handle_oom(oom_error)
             assert handled is True
 
             # Test non-OOM error handling
-            other_error = RuntimeError('Some other error')
+            other_error = RuntimeError("Some other error")
             handled = attention.backend._handle_oom(other_error)
             assert handled is False
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

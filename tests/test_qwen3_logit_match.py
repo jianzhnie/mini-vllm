@@ -10,30 +10,29 @@ or /Users/robin/hfhub/models/Qwen/Qwen3-0.6B by default.
 import os
 import sys
 
-os.environ['CUDA_VISIBLE_DEVICES'] = ''
-os.environ['MINIVLLM_DEVICE'] = 'cpu'
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
+os.environ["MINIVLLM_DEVICE"] = "cpu"
 
 import torch  # noqa: E402
 import torch.nn.functional as F  # noqa: E402
 from safetensors.torch import load_file  # noqa: E402
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer  # noqa: E402
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))  # noqa: E402
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))  # noqa: E402
 from minivllm.models import create_model  # noqa: E402
 from minivllm.utils.context import reset_context, set_context  # noqa: E402
 
 MODEL_PATH = os.environ.get(
-    'MINIVLLM_MODEL',
-    '/Users/robin/hfhub/models/Qwen/Qwen3-0.6B',
+    "MINIVLLM_MODEL",
+    "/Users/robin/hfhub/models/Qwen/Qwen3-0.6B",
 )
-PROMPT = ('<|im_start|>user\nHello, who are you?'
-          '<|im_end|>\n<|im_start|>assistant\n')
+PROMPT = "<|im_start|>user\nHello, who are you?<|im_end|>\n<|im_start|>assistant\n"
 
 
 def load_minivllm_model():
     config = AutoConfig.from_pretrained(MODEL_PATH, trust_remote_code=True)
     model = create_model(config)
-    weights = load_file(os.path.join(MODEL_PATH, 'model.safetensors'))
+    weights = load_file(os.path.join(MODEL_PATH, "model.safetensors"))
     model.load_weights(weights)
     model.eval()
     return model
@@ -48,7 +47,7 @@ def load_hf_model():
 
 def compare_logits(mv_model, hf_model, tokenizer):
     """Step 1: Compare final logits."""
-    input_ids = tokenizer.encode(PROMPT, return_tensors='pt')
+    input_ids = tokenizer.encode(PROMPT, return_tensors="pt")
     seq_len = input_ids.shape[1]
 
     set_context(
@@ -72,24 +71,24 @@ def compare_logits(mv_model, hf_model, tokenizer):
         hf_logits[0, -1].unsqueeze(0),
     ).item()
 
-    print('=' * 60)
-    print('Step 1: Final Logits Comparison')
-    print('=' * 60)
-    print(f'  Cosine similarity: {cos_sim:.6f}')
+    print("=" * 60)
+    print("Step 1: Final Logits Comparison")
+    print("=" * 60)
+    print(f"  Cosine similarity: {cos_sim:.6f}")
 
     mv_probs = torch.softmax(mv_logits[-1], dim=-1)
     hf_probs = torch.softmax(hf_logits[0, -1], dim=-1)
     mv_top5 = torch.topk(mv_probs, 5)
     hf_top5 = torch.topk(hf_probs, 5)
 
-    print('  mini-vllm top-5:')
+    print("  mini-vllm top-5:")
     for i in range(5):
         tok = tokenizer.decode([mv_top5.indices[i].item()])
-        print(f'    {tok!r}: {mv_top5.values[i].item():.4f}')
-    print('  HuggingFace top-5:')
+        print(f"    {tok!r}: {mv_top5.values[i].item():.4f}")
+    print("  HuggingFace top-5:")
     for i in range(5):
         tok = tokenizer.decode([hf_top5.indices[i].item()])
-        print(f'    {tok!r}: {hf_top5.values[i].item():.4f}')
+        print(f"    {tok!r}: {hf_top5.values[i].item():.4f}")
 
     reset_context()
     return cos_sim
@@ -97,7 +96,7 @@ def compare_logits(mv_model, hf_model, tokenizer):
 
 def compare_layer_by_layer(mv_model, hf_model, tokenizer):
     """Step 2: Hook HF model, step mini-vllm manually, compare each layer."""
-    input_ids = tokenizer.encode(PROMPT, return_tensors='pt')
+    input_ids = tokenizer.encode(PROMPT, return_tensors="pt")
     seq_len = input_ids.shape[1]
 
     set_context(
@@ -112,7 +111,6 @@ def compare_layer_by_layer(mv_model, hf_model, tokenizer):
     hf_layer_outputs = {}
 
     def make_hook(idx):
-
         def hook(module, args, kwargs, output):  # noqa: ARG001
             o = output[0] if isinstance(output, tuple) else output
             hf_layer_outputs[idx] = o.detach()
@@ -132,9 +130,9 @@ def compare_layer_by_layer(mv_model, hf_model, tokenizer):
         residual = None
 
         print()
-        print('=' * 60)
-        print('Step 2: Layer-by-Layer Comparison')
-        print('=' * 60)
+        print("=" * 60)
+        print("Step 2: Layer-by-Layer Comparison")
+        print("=" * 60)
 
         for i in range(len(mv_model.model.layers)):
             layer = mv_model.model.layers[i]
@@ -150,10 +148,11 @@ def compare_layer_by_layer(mv_model, hf_model, tokenizer):
                     hf_h.unsqueeze(0),
                 ).item()
                 max_diff = (mv_h - hf_h).abs().max().item()
-                status = 'OK' if cos_sim > 0.99 else '*** DIVERGE ***'
+                status = "OK" if cos_sim > 0.99 else "*** DIVERGE ***"
                 print(
-                    f'  Layer {i:2d}: cos_sim={cos_sim:.6f}, '
-                    f'max_diff={max_diff:.4f}  {status}', )
+                    f"  Layer {i:2d}: cos_sim={cos_sim:.6f}, "
+                    f"max_diff={max_diff:.4f}  {status}",
+                )
 
                 if cos_sim < 0.99 and i <= 3:
                     compare_subcomponents(
@@ -173,9 +172,9 @@ def compare_layer_by_layer(mv_model, hf_model, tokenizer):
 def compare_subcomponents(mv_model, hf_model, input_ids, seq_len, layer_idx=0):
     """Step 3: Dig into a specific layer's subcomponents."""
     print()
-    print('=' * 60)
-    print(f'Step 3: Subcomponent Breakdown (Layer {layer_idx})')
-    print('=' * 60)
+    print("=" * 60)
+    print(f"Step 3: Subcomponent Breakdown (Layer {layer_idx})")
+    print("=" * 60)
 
     set_context(
         is_prefill=True,
@@ -197,34 +196,31 @@ def compare_subcomponents(mv_model, hf_model, input_ids, seq_len, layer_idx=0):
 
         # Embedding
         match = torch.allclose(emb, emb_hf.view_as(emb), atol=1e-5)
-        status = 'PASS' if match else 'FAIL'
+        status = "PASS" if match else "FAIL"
         print(f"  Embedding: {status}")
 
         # Input LayerNorm
         ln_out, _ = layer.input_layernorm(emb, None)
         ln_hf = hf_layer.input_layernorm(emb_hf.view_as(emb))
         match = torch.allclose(ln_out, ln_hf, atol=1e-4)
-        status = 'PASS' if match else 'FAIL'
+        status = "PASS" if match else "FAIL"
         print(f"  Input LayerNorm: {status}")
 
         # QKV Projection
         qkv = layer.self_attn.qkv_proj(ln_out)
         q_mv, k_mv, v_mv = qkv.split(
-            [
-                layer.self_attn.q_size, layer.self_attn.kv_size,
-                layer.self_attn.kv_size
-            ],
+            [layer.self_attn.q_size, layer.self_attn.kv_size, layer.self_attn.kv_size],
             dim=-1,
         )
         q_hf = F.linear(ln_hf.view_as(ln_out), hf_attn.q_proj.weight)
         k_hf = F.linear(ln_hf.view_as(ln_out), hf_attn.k_proj.weight)
         v_hf = F.linear(ln_hf.view_as(ln_out), hf_attn.v_proj.weight)
 
-        status = 'PASS' if torch.allclose(q_mv, q_hf, atol=1e-4) else 'FAIL'
+        status = "PASS" if torch.allclose(q_mv, q_hf, atol=1e-4) else "FAIL"
         print(f"  Q Projection: {status}")
-        status = 'PASS' if torch.allclose(k_mv, k_hf, atol=1e-4) else 'FAIL'
+        status = "PASS" if torch.allclose(k_mv, k_hf, atol=1e-4) else "FAIL"
         print(f"  K Projection: {status}")
-        status = 'PASS' if torch.allclose(v_mv, v_hf, atol=1e-4) else 'FAIL'
+        status = "PASS" if torch.allclose(v_mv, v_hf, atol=1e-4) else "FAIL"
         print(f"  V Projection: {status}")
 
         # Q/K Norm
@@ -243,11 +239,9 @@ def compare_subcomponents(mv_model, hf_model, input_ids, seq_len, layer_idx=0):
         q_hf_normed = hf_attn.q_norm(q_hf_r.float()).to(q_hf_r.dtype)
         k_hf_normed = hf_attn.k_norm(k_hf_r.float()).to(k_hf_r.dtype)
 
-        status = ('PASS' if torch.allclose(q_normed, q_hf_normed, atol=1e-4)
-                  else 'FAIL')
+        status = "PASS" if torch.allclose(q_normed, q_hf_normed, atol=1e-4) else "FAIL"
         print(f"  Q Norm: {status}")
-        status = ('PASS' if torch.allclose(k_normed, k_hf_normed, atol=1e-4)
-                  else 'FAIL')
+        status = "PASS" if torch.allclose(k_normed, k_hf_normed, atol=1e-4) else "FAIL"
         print(f"  K Norm: {status}")
 
         # RoPE
@@ -257,27 +251,28 @@ def compare_subcomponents(mv_model, hf_model, input_ids, seq_len, layer_idx=0):
             k_normed.clone(),
         )
 
-        inv_freq = 1.0 / (1000000.0**(
-            torch.arange(0, head_dim, 2, dtype=torch.float) / head_dim))
+        inv_freq = 1.0 / (
+            1000000.0 ** (torch.arange(0, head_dim, 2, dtype=torch.float) / head_dim)
+        )
         freqs = torch.outer(positions.float(), inv_freq)
         emb_cos = torch.cat([freqs.cos(), freqs.cos()], dim=-1).unsqueeze(1)
         emb_sin = torch.cat([freqs.sin(), freqs.sin()], dim=-1).unsqueeze(1)
 
         def rotate_half(x):
-            x1 = x[..., :x.shape[-1] // 2]
-            x2 = x[..., x.shape[-1] // 2:]
+            x1 = x[..., : x.shape[-1] // 2]
+            x2 = x[..., x.shape[-1] // 2 :]
             return torch.cat((-x2, x1), dim=-1)
 
-        q_hf_rope = (q_hf_normed.float() *
-                     emb_cos) + (rotate_half(q_hf_normed.float()) * emb_sin)
-        k_hf_rope = (k_hf_normed.float() *
-                     emb_cos) + (rotate_half(k_hf_normed.float()) * emb_sin)
+        q_hf_rope = (q_hf_normed.float() * emb_cos) + (
+            rotate_half(q_hf_normed.float()) * emb_sin
+        )
+        k_hf_rope = (k_hf_normed.float() * emb_cos) + (
+            rotate_half(k_hf_normed.float()) * emb_sin
+        )
 
-        status = ('PASS'
-                  if torch.allclose(q_rope, q_hf_rope, atol=1e-4) else 'FAIL')
+        status = "PASS" if torch.allclose(q_rope, q_hf_rope, atol=1e-4) else "FAIL"
         print(f"  RoPE (Q): {status}")
-        status = ('PASS'
-                  if torch.allclose(k_rope, k_hf_rope, atol=1e-4) else 'FAIL')
+        status = "PASS" if torch.allclose(k_rope, k_hf_rope, atol=1e-4) else "FAIL"
         print(f"  RoPE (K): {status}")
 
         # Full Attention
@@ -292,7 +287,7 @@ def compare_subcomponents(mv_model, hf_model, input_ids, seq_len, layer_idx=0):
         x_before = x_orig.clone()
         _, _ = norm(x_orig)
         mutated = not torch.allclose(x_orig, x_before)
-        status = 'BUG: input mutated!' if mutated else 'OK: input preserved'
+        status = "BUG: input mutated!" if mutated else "OK: input preserved"
         print(f"  RMSNorm mutation: {status}")
 
     reset_context()
@@ -301,7 +296,7 @@ def compare_subcomponents(mv_model, hf_model, input_ids, seq_len, layer_idx=0):
 def main():
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
 
-    print('Loading models...')
+    print("Loading models...")
     mv_model = load_minivllm_model()
     hf_model = load_hf_model()
 
@@ -310,12 +305,12 @@ def main():
 
     print()
     if cos_sim > 0.99:
-        print('RESULT: Logits match (cos_sim > 0.99)')
+        print("RESULT: Logits match (cos_sim > 0.99)")
     else:
-        print(f'RESULT: Logits DIVERGE (cos_sim={cos_sim:.6f})')
+        print(f"RESULT: Logits DIVERGE (cos_sim={cos_sim:.6f})")
 
     return 0 if cos_sim > 0.99 else 1
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())

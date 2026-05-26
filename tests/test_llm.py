@@ -42,9 +42,9 @@ class TestLLMInitialization:
         llm = LLM(config)
 
         assert llm is not None
-        assert hasattr(llm, 'scheduler')
-        assert hasattr(llm, 'model_runner')
-        assert hasattr(llm, 'tokenizer')
+        assert hasattr(llm, "scheduler")
+        assert hasattr(llm, "model_runner")
+        assert hasattr(llm, "tokenizer")
 
     def test_llm_initialization_with_custom_params(
         self,
@@ -110,5 +110,5 @@ class TestLLMConfigPropagation:
         assert config.max_model_len == 8192
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

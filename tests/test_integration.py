@@ -18,9 +18,9 @@ class TestConfigAndSequenceIntegration:
 
     def test_sampling_params_from_config(self, tmp_path: Path) -> None:
         """Test that SamplingParams works with Config."""
-        model_dir = tmp_path / 'test_model'
+        model_dir = tmp_path / "test_model"
         model_dir.mkdir()
-        (model_dir / 'config.json').write_text('{"model_type": "llama"}')
+        (model_dir / "config.json").write_text('{"model_type": "llama"}')
 
         config = Config(str(model_dir), max_num_seqs=128)
         sampling_params = SamplingParams(temperature=0.8, max_tokens=512)
@@ -30,9 +30,9 @@ class TestConfigAndSequenceIntegration:
 
     def test_sequence_with_config_max_tokens(self, tmp_path: Path) -> None:
         """Test sequence creation with parameters matching config."""
-        model_dir = tmp_path / 'test_model'
+        model_dir = tmp_path / "test_model"
         model_dir.mkdir()
-        (model_dir / 'config.json').write_text('{"model_type": "llama"}')
+        (model_dir / "config.json").write_text('{"model_type": "llama"}')
 
         config = Config(str(model_dir), max_model_len=2048)
         sampling_params = SamplingParams(max_tokens=256)
@@ -95,7 +95,7 @@ class TestBlockManagement:
 
     def test_single_block_sequence(self) -> None:
         """Test sequence that fits in single block."""
-        token_ids = [i for i in range(50)]
+        token_ids = list(range(50))
         seq = Sequence(token_ids)
 
         assert seq.num_blocks == 1
@@ -104,7 +104,7 @@ class TestBlockManagement:
     def test_multi_block_sequence(self) -> None:
         """Test sequence spanning multiple blocks."""
         # Create a sequence with 200 tokens (> 3 blocks of 64)
-        token_ids = [i for i in range(200)]
+        token_ids = list(range(200))
         seq = Sequence(token_ids)
 
         assert seq.num_blocks == 4
@@ -140,9 +140,7 @@ class TestSamplingParameters:
     def test_sampling_params_constraints(self) -> None:
         """Test that sampling parameters enforce constraints."""
         # Valid params
-        params = SamplingParams(temperature=0.7,
-                                max_tokens=256,
-                                ignore_eos=False)
+        params = SamplingParams(temperature=0.7, max_tokens=256, ignore_eos=False)
         assert params.temperature == 0.7
         assert params.max_tokens == 256
         assert params.ignore_eos is False
@@ -160,9 +158,7 @@ class TestSamplingParameters:
 
     def test_sampling_params_in_sequence(self) -> None:
         """Test sampling parameters applied to sequences."""
-        params = SamplingParams(temperature=0.6,
-                                max_tokens=512,
-                                ignore_eos=True)
+        params = SamplingParams(temperature=0.6, max_tokens=512, ignore_eos=True)
         seq = Sequence([1, 2, 3], params)
 
         assert seq.temperature == params.temperature
@@ -170,5 +166,5 @@ class TestSamplingParameters:
         assert seq.ignore_eos == params.ignore_eos
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

@@ -66,8 +66,9 @@ class TestBlockManagerAllocation:
         block = bm.blocks[block_id]
         # Partial blocks don't compute hash immediately
         assert block.hash == -1
-        assert (block.token_ids == []
-                )  # Partial blocks don't store tokens until filled/updated?
+        assert (
+            block.token_ids == []
+        )  # Partial blocks don't store tokens until filled/updated?
         # Wait, allocate() calls block.update() only if hash_prev != -1 (which implies full block)
         # Let's check allocate logic:
         # if len(token_ids) == block_size: compute hash
@@ -89,7 +90,7 @@ class TestBlockManagerAllocation:
         bm.allocate(seq1)
 
         seq2 = Sequence([5, 6, 7, 8], SamplingParams())
-        with pytest.raises(ValueError, match='No free blocks'):
+        with pytest.raises(ValueError, match="No free blocks"):
             bm.allocate(seq2)
 
 

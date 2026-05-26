@@ -18,7 +18,7 @@ from minivllm.models.layers.attention_backend import NPUAttentionBackend
 class TestNPUBackendForward:
     """Tests for NPU backend forward pass."""
 
-    @patch('minivllm.models.layers.attention_backend.npu_flash_attn_func')
+    @patch("minivllm.models.layers.attention_backend.npu_flash_attn_func")
     def test_forward_transposes_correctly(self, mock_npu_func):
         """Test that NPU backend correctly transposes inputs and outputs.
 
@@ -62,8 +62,8 @@ class TestNPUBackendForward:
 
         # Simulate NPU error
         with patch(
-                'minivllm.models.layers.attention_backend.npu_flash_attn_func',
-                side_effect=RuntimeError('NPU Error'),
+            "minivllm.models.layers.attention_backend.npu_flash_attn_func",
+            side_effect=RuntimeError("NPU Error"),
         ):
             q = torch.randn(2, 4, 8, 16)
             k = torch.randn(2, 4, 8, 16)
@@ -150,8 +150,7 @@ class TestNPUUnifiedInference:
 
         # Mock the unified inference function
         backend.npu_fused_infer_attention_score = MagicMock()
-        backend.npu_fused_infer_attention_score.return_value = torch.randn(
-            1, 1, 1)
+        backend.npu_fused_infer_attention_score.return_value = torch.randn(1, 1, 1)
 
         query = torch.randn(2, 4, 16)
         key_cache = torch.randn(2, 10, 4, 16)
@@ -159,12 +158,9 @@ class TestNPUUnifiedInference:
         seq_len = 10
         num_kv_heads = 4
 
-        backend.unified_inference(query,
-                                  key_cache,
-                                  value_cache,
-                                  seq_len,
-                                  num_kv_heads,
-                                  scale=1.0)
+        backend.unified_inference(
+            query, key_cache, value_cache, seq_len, num_kv_heads, scale=1.0
+        )
 
         # Verify the function was called
         backend.npu_fused_infer_attention_score.assert_called_once()
@@ -179,8 +175,8 @@ class TestNPUUnifiedInference:
 
         # Verify scale kwarg
         kwargs = backend.npu_fused_infer_attention_score.call_args[1]
-        assert kwargs['scale'] == 1.0
+        assert kwargs["scale"] == 1.0
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

@@ -38,11 +38,13 @@ class TestSchedulerInitialization:
 
     def test_scheduler_with_custom_config(self, temp_model_dir: Path) -> None:
         """Test scheduler with custom configuration parameters."""
-        config = Config(str(temp_model_dir),
-                        max_num_seqs=256,
-                        max_num_batched_tokens=8192,
-                        kvcache_block_size=512,
-                        num_kvcache_blocks=100)
+        config = Config(
+            str(temp_model_dir),
+            max_num_seqs=256,
+            max_num_batched_tokens=8192,
+            kvcache_block_size=512,
+            num_kvcache_blocks=100,
+        )
         scheduler = Scheduler(config)
 
         assert scheduler.max_num_seqs == 256
@@ -64,8 +66,7 @@ class TestSchedulerSequenceManagement:
         scheduler = Scheduler(default_config)
 
         # Create a test sequence
-        seq = Sequence(token_ids=[1, 2, 3, 4, 5],
-                       sampling_params=SamplingParams())
+        seq = Sequence(token_ids=[1, 2, 3, 4, 5], sampling_params=SamplingParams())
 
         scheduler.add(seq)
 
@@ -79,9 +80,8 @@ class TestSchedulerSequenceManagement:
 
         # Add multiple sequences
         num_sequences = 5
-        for i in range(num_sequences):
-            seq = Sequence(token_ids=[1, 2, 3, 4, 5],
-                           sampling_params=SamplingParams())
+        for _i in range(num_sequences):
+            seq = Sequence(token_ids=[1, 2, 3, 4, 5], sampling_params=SamplingParams())
             scheduler.add(seq)
 
         assert len(scheduler.waiting) == num_sequences
@@ -91,14 +91,12 @@ class TestSchedulerSequenceManagement:
 class TestSchedulerPrefillPhase:
     """Test cases for prefill phase scheduling."""
 
-    def test_prefill_scheduling_single_sequence(
-            self, default_config: Config) -> None:
+    def test_prefill_scheduling_single_sequence(self, default_config: Config) -> None:
         """Test prefill phase scheduling with a single sequence."""
         scheduler = Scheduler(default_config)
 
         # Add a sequence
-        seq = Sequence(token_ids=[1, 2, 3, 4, 5],
-                       sampling_params=SamplingParams())
+        seq = Sequence(token_ids=[1, 2, 3, 4, 5], sampling_params=SamplingParams())
         scheduler.add(seq)
 
         # Verify sequence is in waiting queue
@@ -106,20 +104,19 @@ class TestSchedulerPrefillPhase:
         assert len(scheduler.running) == 0
         assert not scheduler.is_finished()
 
-    def test_prefill_respects_max_sequences(self,
-                                            temp_model_dir: Path) -> None:
+    def test_prefill_respects_max_sequences(self, temp_model_dir: Path) -> None:
         """Test that prefill respects max_num_seqs constraint."""
         config = Config(
             str(temp_model_dir),
             max_num_seqs=2,  # Only allow 2 sequences per batch
             max_num_batched_tokens=8192,
-            num_kvcache_blocks=100)
+            num_kvcache_blocks=100,
+        )
         scheduler = Scheduler(config)
 
         # Add more sequences than max_num_seqs
-        for i in range(5):
-            seq = Sequence(token_ids=[1, 2, 3, 4, 5],
-                           sampling_params=SamplingParams())
+        for _i in range(5):
+            seq = Sequence(token_ids=[1, 2, 3, 4, 5], sampling_params=SamplingParams())
             scheduler.add(seq)
 
         # Schedule sequences
@@ -129,20 +126,21 @@ class TestSchedulerPrefillPhase:
         assert is_prefill
         assert len(scheduled) <= 2
 
-    def test_prefill_respects_max_tokens(self,
-                                         temp_short_model_dir: Path) -> None:
+    def test_prefill_respects_max_tokens(self, temp_short_model_dir: Path) -> None:
         """Test that prefill respects max_num_batched_tokens constraint."""
         config = Config(
             str(temp_short_model_dir),
             max_num_seqs=10,
             max_num_batched_tokens=128,  # Match max_model_len
-            num_kvcache_blocks=100)
+            num_kvcache_blocks=100,
+        )
         scheduler = Scheduler(config)
 
         # Add a sequence with many tokens
         seq = Sequence(
             token_ids=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],  # 10 tokens
-            sampling_params=SamplingParams())
+            sampling_params=SamplingParams(),
+        )
         scheduler.add(seq)
 
         # Verify sequence was added
@@ -153,29 +151,27 @@ class TestSchedulerPrefillPhase:
 class TestSchedulerDecodePhase:
     """Test cases for decode phase scheduling."""
 
-    def test_decode_scheduling_single_sequence(self,
-                                               default_config: Config) -> None:
+    def test_decode_scheduling_single_sequence(self, default_config: Config) -> None:
         """Test decode phase scheduling with a single sequence."""
         scheduler = Scheduler(default_config)
 
         # Create and add a sequence
-        seq = Sequence(token_ids=[1, 2, 3, 4, 5],
-                       sampling_params=SamplingParams())
+        seq = Sequence(token_ids=[1, 2, 3, 4, 5], sampling_params=SamplingParams())
         scheduler.add(seq)
 
         # Verify it's in waiting queue
         assert len(scheduler.waiting) == 1
         assert not scheduler.is_finished()
 
-    def test_decode_handles_cache_pressure(
-            self, limited_cache_config: Config) -> None:
+    def test_decode_handles_cache_pressure(self, limited_cache_config: Config) -> None:
         """Test decode phase handles cache pressure via preemption."""
         scheduler = Scheduler(limited_cache_config)
 
         # Add multiple sequences
-        for i in range(3):
-            seq = Sequence(token_ids=[1, 2, 3],
-                           sampling_params=SamplingParams(max_tokens=10))
+        for _i in range(3):
+            seq = Sequence(
+                token_ids=[1, 2, 3], sampling_params=SamplingParams(max_tokens=10)
+            )
             scheduler.add(seq)
 
         # Verify all added
@@ -190,8 +186,7 @@ class TestSchedulerPreemption:
         scheduler = Scheduler(default_config)
 
         # Create and add a sequence
-        seq = Sequence(token_ids=[1, 2, 3, 4, 5],
-                       sampling_params=SamplingParams())
+        seq = Sequence(token_ids=[1, 2, 3, 4, 5], sampling_params=SamplingParams())
         scheduler.add(seq)
 
         # Move sequence to running queue
@@ -213,8 +208,7 @@ class TestSchedulerPreemption:
         scheduler = Scheduler(default_config)
 
         # Create and add a sequence
-        seq = Sequence(token_ids=[1, 2, 3, 4, 5],
-                       sampling_params=SamplingParams())
+        seq = Sequence(token_ids=[1, 2, 3, 4, 5], sampling_params=SamplingParams())
         scheduler.add(seq)
 
         # Move to running and simulate some caching
@@ -240,8 +234,9 @@ class TestSchedulerPostprocessing:
         scheduler = Scheduler(config)
 
         # Create a sequence and manually add to running
-        seq = Sequence(token_ids=[1, 2, 3],
-                       sampling_params=SamplingParams(max_tokens=5))
+        seq = Sequence(
+            token_ids=[1, 2, 3], sampling_params=SamplingParams(max_tokens=5)
+        )
         scheduler.running.append(seq)
 
         # Postprocess with new tokens
@@ -257,8 +252,9 @@ class TestSchedulerPostprocessing:
         scheduler = Scheduler(config)
 
         # Create a sequence with max_tokens=1
-        seq = Sequence(token_ids=[1, 2, 3],
-                       sampling_params=SamplingParams(max_tokens=1))
+        seq = Sequence(
+            token_ids=[1, 2, 3], sampling_params=SamplingParams(max_tokens=1)
+        )
         scheduler.running.append(seq)
 
         # Postprocess with one token (should reach max)
@@ -272,17 +268,15 @@ class TestSchedulerPostprocessing:
 class TestSchedulerErrorHandling:
     """Test cases for error handling in scheduler."""
 
-    def test_schedule_with_no_sequences_raises(self,
-                                               default_config: Config) -> None:
+    def test_schedule_with_no_sequences_raises(self, default_config: Config) -> None:
         """Test that schedule with no sequences raises RuntimeError."""
         scheduler = Scheduler(default_config)
 
         # Calling schedule on empty scheduler should raise RuntimeError
-        with pytest.raises(RuntimeError, match='No sequences scheduled'):
+        with pytest.raises(RuntimeError, match="No sequences scheduled"):
             scheduler.schedule()
 
-    def test_postprocess_with_fewer_tokens(self,
-                                           default_config: Config) -> None:
+    def test_postprocess_with_fewer_tokens(self, default_config: Config) -> None:
         """Test postprocess handles fewer tokens than sequences gracefully.
 
         The postprocess method uses zip() which silently truncates to the shorter
@@ -292,9 +286,8 @@ class TestSchedulerErrorHandling:
 
         # Create multiple sequences
         seqs = []
-        for i in range(3):
-            seq = Sequence(token_ids=[1, 2, 3],
-                           sampling_params=SamplingParams())
+        for _i in range(3):
+            seq = Sequence(token_ids=[1, 2, 3], sampling_params=SamplingParams())
             # Move to RUNNING status to allow token appending
             seq.status = SequenceStatus.RUNNING
             seqs.append(seq)
@@ -310,5 +303,5 @@ class TestSchedulerErrorHandling:
         assert seqs[2].num_tokens == 3  # Unchanged
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

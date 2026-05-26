@@ -67,8 +67,7 @@ class TestSamplerConfig:
         """Test Typical Sampling."""
         # Case: [0.9, 0.05, 0.05] -> Entropy low.
         # If tau is small, we might filter out 1 and 2.
-        logits = torch.tensor([[5.0, 2.0,
-                                2.0]])  # Softmax approx [0.9, 0.05, 0.05]
+        logits = torch.tensor([[5.0, 2.0, 2.0]])  # Softmax approx [0.9, 0.05, 0.05]
         config = SamplingConfig(typical_p=0.2)  # Strict typicality
         sampler = Sampler(config)
 
@@ -96,9 +95,7 @@ class TestSamplerConfig:
         sampler = Sampler(config)
 
         torch.manual_seed(42)
-        samples = [
-            sampler(logits, prev_tokens=prev_tokens).item() for _ in range(50)
-        ]
+        samples = [sampler(logits, prev_tokens=prev_tokens).item() for _ in range(50)]
         # 0 should be rare
         assert samples.count(0) < samples.count(1)
 
@@ -125,52 +122,52 @@ class TestSamplerOverrides:
 
     def test_top_k_override(self):
         """Test vectorized Top-K filtering."""
-        logits = torch.tensor([
-            [10.0, 9.0, 8.0, 1.0, 0.0],  # Seq 0
-            [10.0, 9.0, 8.0, 1.0, 0.0],  # Seq 1
-        ])
+        logits = torch.tensor(
+            [
+                [10.0, 9.0, 8.0, 1.0, 0.0],  # Seq 0
+                [10.0, 9.0, 8.0, 1.0, 0.0],  # Seq 1
+            ]
+        )
         temperatures = torch.tensor([1.0, 1.0])
         # Seq 0: k=2 (keep 10.0, 9.0), Seq 1: k=1 (keep 10.0)
         top_ks = torch.tensor([2, 1])
 
         for _ in range(20):
-            tokens = self.sampler(logits,
-                                  temperatures=temperatures,
-                                  top_ks=top_ks)
+            tokens = self.sampler(logits, temperatures=temperatures, top_ks=top_ks)
             assert tokens[0].item() in [0, 1]
             assert tokens[1].item() == 0
 
     def test_top_p_override(self):
         """Test Top-P (nucleus) filtering override."""
         logits = torch.log(
-            torch.tensor([
-                [0.6, 0.2, 0.1, 0.1],
-                [0.6, 0.2, 0.1, 0.1],
-            ]))
+            torch.tensor(
+                [
+                    [0.6, 0.2, 0.1, 0.1],
+                    [0.6, 0.2, 0.1, 0.1],
+                ]
+            )
+        )
         temperatures = torch.tensor([1.0, 1.0])
         # Seq 0: p=0.5 (keep 0.6 only), Seq 1: p=0.9 (keep 0.6, 0.2, 0.1)
         top_ps = torch.tensor([0.5, 0.9])
 
         for _ in range(20):
-            tokens = self.sampler(logits,
-                                  temperatures=temperatures,
-                                  top_ps=top_ps)
+            tokens = self.sampler(logits, temperatures=temperatures, top_ps=top_ps)
             assert tokens[0].item() == 0
             assert tokens[1].item() in [0, 1, 2, 3]
 
     def test_min_p_override(self):
         """Test Min-P filtering override."""
         logits = torch.log(
-            torch.tensor([[0.8, 0.1, 0.05, 0.05], [0.8, 0.1, 0.05, 0.05]]))
+            torch.tensor([[0.8, 0.1, 0.05, 0.05], [0.8, 0.1, 0.05, 0.05]])
+        )
         temperatures = torch.tensor([1.0, 1.0])
         # Seq 0: min_p = 0.2 (thresh=0.16) -> keep 0.8
         # Seq 1: min_p = 0.1 (thresh=0.08) -> keep 0.8, 0.1
         min_ps = torch.tensor([0.2, 0.1])
 
         for _ in range(20):
-            tokens = self.sampler(logits,
-                                  temperatures=temperatures,
-                                  min_ps=min_ps)
+            tokens = self.sampler(logits, temperatures=temperatures, min_ps=min_ps)
             assert tokens[0].item() == 0
             assert tokens[1].item() in [0, 1]
 
@@ -194,15 +191,15 @@ class TestSamplerEdgeCases:
 
     def test_nan_handling(self):
         """Test handling of NaN logits."""
-        logits = torch.tensor([[float('nan'), 1.0, 0.0], [1.0, 2.0, 3.0]])
+        logits = torch.tensor([[float("nan"), 1.0, 0.0], [1.0, 2.0, 3.0]])
         temperatures = torch.tensor([1.0, 1.0])
 
         # Should not crash and ignore NaNs
         tokens = self.sampler(logits, temperatures=temperatures)
-        assert tokens.shape == (2, )
+        assert tokens.shape == (2,)
 
         # If all are NaN
-        logits_all_nan = torch.full((1, 5), float('nan'))
+        logits_all_nan = torch.full((1, 5), float("nan"))
         temperatures_nan = torch.tensor([1.0])
         tokens = self.sampler(logits_all_nan, temperatures=temperatures_nan)
         assert 0 <= tokens.item() < 5
@@ -225,7 +222,7 @@ class TestMirostat:
         sampler = MirostatSampler(target_perplexity=3.0)
         for _ in range(5):
             token = sampler(logits)
-            assert token.shape == (1, )
+            assert token.shape == (1,)
             assert 0 <= token.item() < 100
 
     def test_mirostat_v2(self):
@@ -233,9 +230,9 @@ class TestMirostat:
         sampler = MirostatV2Sampler(target_perplexity=3.0)
         for _ in range(5):
             token = sampler(logits)
-            assert token.shape == (1, )
+            assert token.shape == (1,)
             assert 0 <= token.item() < 100
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     pytest.main([__file__])

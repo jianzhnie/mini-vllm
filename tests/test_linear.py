@@ -28,9 +28,9 @@ class TestDivide:
 
     def test_divide_uneven_raises(self):
         """Test that uneven division raises ValueError."""
-        with pytest.raises(ValueError, match='not divisible'):
+        with pytest.raises(ValueError, match="not divisible"):
             divide(10, 3)
-        with pytest.raises(ValueError, match='not divisible'):
+        with pytest.raises(ValueError, match="not divisible"):
             divide(100, 7)
 
     def test_divide_by_one(self):
@@ -48,7 +48,7 @@ class TestColumnParallelLinear:
         assert linear.output_size == 32
         assert linear.weight.shape == (32, 16)
         assert linear.bias is not None
-        assert linear.bias.shape == (32, )
+        assert linear.bias.shape == (32,)
 
     def test_initialization_no_bias(self):
         """Test initialization without bias."""
@@ -80,7 +80,7 @@ class TestRowParallelLinear:
         assert linear.output_size == 32
         assert linear.weight.shape == (32, 16)
         assert linear.bias is not None
-        assert linear.bias.shape == (32, )
+        assert linear.bias.shape == (32,)
 
     def test_forward_pass(self):
         """Test forward pass produces correct output shape."""
@@ -100,7 +100,7 @@ class TestQKVParallelLinear:
         # output = (4 + 2*4) * 4 = 12 * 4 = 48
         assert linear.weight.shape == (48, 16)
         assert linear.bias is not None
-        assert linear.bias.shape == (48, )
+        assert linear.bias.shape == (48,)
 
     def test_mqa_initialization(self):
         """Test initialization with MQA (multi-query attention)."""
@@ -139,8 +139,7 @@ class TestQKVParallelLinear:
         num_heads = 4
         num_kv_heads = 2
 
-        linear = QKVParallelLinear(hidden_size, head_dim, num_heads,
-                                   num_kv_heads)
+        linear = QKVParallelLinear(hidden_size, head_dim, num_heads, num_kv_heads)
         x = torch.randn(2, 10, hidden_size)
         output = linear(x)
 
@@ -149,13 +148,13 @@ class TestQKVParallelLinear:
         kv_size = num_kv_heads * head_dim
 
         q = output[..., :q_size]
-        k = output[..., q_size:q_size + kv_size]
-        v = output[..., q_size + kv_size:]
+        k = output[..., q_size : q_size + kv_size]
+        v = output[..., q_size + kv_size :]
 
         assert q.shape == (2, 10, q_size)
         assert k.shape == (2, 10, kv_size)
         assert v.shape == (2, 10, kv_size)
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

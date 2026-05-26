@@ -30,9 +30,7 @@ def test_device_detection():
     # Test default device name
     default_device_name = get_default_device_name()
     assert isinstance(default_device_name, str)
-    assert default_device_name in [
-        'cuda', 'npu', 'xpu', 'mlu', 'musa', 'mps', 'cpu'
-    ]
+    assert default_device_name in ["cuda", "npu", "xpu", "mlu", "musa", "mps", "cpu"]
 
     # Test current device
     current_device = get_current_device()
@@ -41,11 +39,11 @@ def test_device_detection():
     # Test device capabilities
     capabilities = get_device_capabilities(current_device)
     assert isinstance(capabilities, dict)
-    assert 'device_type' in capabilities
-    assert 'supports_graph' in capabilities
-    assert 'supports_empty_cache' in capabilities
-    assert 'supports_synchronize' in capabilities
-    assert 'supports_memory_stats' in capabilities
+    assert "device_type" in capabilities
+    assert "supports_graph" in capabilities
+    assert "supports_empty_cache" in capabilities
+    assert "supports_synchronize" in capabilities
+    assert "supports_memory_stats" in capabilities
 
 
 def test_distributed_backend():
@@ -53,7 +51,7 @@ def test_distributed_backend():
     # Test that we get a valid backend string
     backend = get_distributed_backend()
     assert isinstance(backend, str)
-    assert backend in ['nccl', 'hccl', 'ccl', 'cncl', 'musa', 'gloo']
+    assert backend in ["nccl", "hccl", "ccl", "cncl", "musa", "gloo"]
 
 
 def test_tensor_movement():
@@ -68,9 +66,8 @@ def test_tensor_movement():
     assert tensor_on_device.device.type == current_device.type
 
     # Test moving back to CPU
-    tensor_on_cpu = move_tensor_to_device(tensor_on_device,
-                                          torch.device('cpu'))
-    assert tensor_on_cpu.device == torch.device('cpu')
+    tensor_on_cpu = move_tensor_to_device(tensor_on_device, torch.device("cpu"))
+    assert tensor_on_cpu.device == torch.device("cpu")
 
 
 def test_device_specific_features():
@@ -82,72 +79,72 @@ def test_device_specific_features():
     assert isinstance(graph_support, bool)
 
     # CUDA and NPU support graph optimization
-    if current_device.type in ('cuda', 'npu'):
+    if current_device.type in ("cuda", "npu"):
         assert graph_support is True
     else:
         assert graph_support is False
 
     # Test device capabilities match expected values
     capabilities = get_device_capabilities(current_device)
-    if current_device.type in ['cuda', 'npu', 'xpu']:
-        assert capabilities['supports_empty_cache'] is True
-        assert capabilities['supports_synchronize'] is True
-        assert capabilities['supports_memory_stats'] is True
+    if current_device.type in ["cuda", "npu", "xpu"]:
+        assert capabilities["supports_empty_cache"] is True
+        assert capabilities["supports_synchronize"] is True
+        assert capabilities["supports_memory_stats"] is True
     else:
-        assert capabilities['supports_empty_cache'] is False
-        assert capabilities['supports_synchronize'] is False
-        assert capabilities['supports_memory_stats'] is False
+        assert capabilities["supports_empty_cache"] is False
+        assert capabilities["supports_synchronize"] is False
+        assert capabilities["supports_memory_stats"] is False
 
 
-@pytest.mark.skipif(not is_torch_cuda_available(), reason='CUDA not available')
+@pytest.mark.skipif(not is_torch_cuda_available(), reason="CUDA not available")
 def test_cuda_specific_features():
     """Test CUDA-specific features."""
     if is_torch_cuda_available():
         assert get_device_count() > 0
-        assert get_default_device_name() == 'cuda'
-        assert get_distributed_backend() == 'nccl'
+        assert get_default_device_name() == "cuda"
+        assert get_distributed_backend() == "nccl"
 
 
-@pytest.mark.skipif(not is_torch_npu_available(), reason='NPU not available')
+@pytest.mark.skipif(not is_torch_npu_available(), reason="NPU not available")
 def test_npu_specific_features():
     """Test NPU-specific features."""
     if is_torch_npu_available():
         assert get_device_count() > 0
-        assert get_default_device_name() == 'npu'
-        assert get_distributed_backend() == 'hccl'
+        assert get_default_device_name() == "npu"
+        assert get_distributed_backend() == "hccl"
 
 
-@pytest.mark.skipif(not is_torch_xpu_available(), reason='XPU not available')
+@pytest.mark.skipif(not is_torch_xpu_available(), reason="XPU not available")
 def test_xpu_specific_features():
     """Test XPU-specific features."""
     if is_torch_xpu_available():
         assert get_device_count() > 0
-        assert get_default_device_name() == 'xpu'
-        assert get_distributed_backend() == 'ccl'
+        assert get_default_device_name() == "xpu"
+        assert get_distributed_backend() == "ccl"
 
 
-@pytest.mark.skipif(not is_torch_mlu_available(), reason='MLU not available')
+@pytest.mark.skipif(not is_torch_mlu_available(), reason="MLU not available")
 def test_mlu_specific_features():
     """Test MLU-specific features."""
     if is_torch_mlu_available():
         assert get_device_count() > 0
-        assert get_default_device_name() == 'mlu'
-        assert get_distributed_backend() == 'cncl'
+        assert get_default_device_name() == "mlu"
+        assert get_distributed_backend() == "cncl"
 
 
-@pytest.mark.skipif(not is_torch_musa_available(), reason='MUSA not available')
+@pytest.mark.skipif(not is_torch_musa_available(), reason="MUSA not available")
 def test_musa_specific_features():
     """Test MUSA-specific features."""
     if is_torch_musa_available():
         assert get_device_count() > 0
-        assert get_default_device_name() == 'musa'
-        assert get_distributed_backend() == 'musa'
+        assert get_default_device_name() == "musa"
+        assert get_distributed_backend() == "musa"
 
 
-@pytest.mark.skipif(not is_torch_mps_available(), reason='MPS not available')
+@pytest.mark.skipif(not is_torch_mps_available(), reason="MPS not available")
 def test_mps_specific_features():
     """Test MPS-specific features."""
     if is_torch_mps_available():
         assert get_device_count() > 0
-        assert get_default_device_name() == 'mps'
-        assert get_distributed_backend() == 'gloo'
+        assert get_default_device_name() == "mps"
+        assert get_distributed_backend() == "gloo"

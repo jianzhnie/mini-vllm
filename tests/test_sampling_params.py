@@ -19,7 +19,7 @@ class TestSamplingParamsValidation:
 
     def test_temperature_negative_rejected(self) -> None:
         """Test that negative temperature is rejected."""
-        with pytest.raises(ValueError, match='temperature'):
+        with pytest.raises(ValueError, match="temperature"):
             SamplingParams(temperature=-0.1)
 
     def test_temperature_zero_greedy(self) -> None:
@@ -32,19 +32,17 @@ class TestSamplingParamsValidation:
 
     def test_max_tokens_positive(self) -> None:
         """Test that max_tokens must be positive."""
-        with pytest.raises(ValueError, match='max_tokens'):
+        with pytest.raises(ValueError, match="max_tokens"):
             SamplingParams(max_tokens=0)
 
     def test_max_tokens_negative(self) -> None:
         """Test that max_tokens cannot be negative."""
-        with pytest.raises(ValueError, match='max_tokens'):
+        with pytest.raises(ValueError, match="max_tokens"):
             SamplingParams(max_tokens=-10)
 
     def test_ignore_eos_flag(self) -> None:
         """Test ignore_eos flag can be set."""
-        params = SamplingParams(temperature=0.7,
-                                max_tokens=100,
-                                ignore_eos=True)
+        params = SamplingParams(temperature=0.7, max_tokens=100, ignore_eos=True)
         assert params.ignore_eos is True
 
     def test_default_values(self) -> None:
@@ -74,5 +72,5 @@ class TestSamplingParamsEdgeCases:
         assert params.max_tokens == 1000000
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

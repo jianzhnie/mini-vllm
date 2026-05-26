@@ -25,34 +25,27 @@ class TestQwen3NPUIntegration:
     def mock_npu_environment(self):
         """Mock NPU environment variables and availability."""
         with (
-                patch(
-                    'minivllm.models.layers.attention._NPU_FLASH_ATTN_AVAILABLE',
-                    True),
-                patch(
-                    'minivllm.models.layers.layernorm._NPU_RMS_NORM_AVAILABLE',
-                    True),
-                patch(
-                    'minivllm.models.layers.activation._NPU_SWIGLU_AVAILABLE',
-                    True),
-                patch('torch.cuda.is_available', return_value=False),
+            patch("minivllm.models.layers.attention._NPU_FLASH_ATTN_AVAILABLE", True),
+            patch("minivllm.models.layers.layernorm._NPU_RMS_NORM_AVAILABLE", True),
+            patch("minivllm.models.layers.activation._NPU_SWIGLU_AVAILABLE", True),
+            patch("torch.cuda.is_available", return_value=False),
+            patch("torch.Tensor.device", MagicMock(type="npu")),
         ):
-            # Also mock device.type to return 'npu' for tensors
-            with patch('torch.Tensor.device', MagicMock(type='npu')):
-                yield
+            yield
 
     @pytest.mark.skipif(
         not is_npu_available(),
-        reason='NPU not available - requires actual NPU hardware')
-    @patch('minivllm.models.layers.npu_flash_attention.npu_flash_attn_func')
-    def test_qwen3_initialization_on_npu(self, mock_npu_attn,
-                                         mock_npu_environment):
+        reason="NPU not available - requires actual NPU hardware",
+    )
+    @patch("minivllm.models.layers.npu_flash_attention.npu_flash_attn_func")
+    def test_qwen3_initialization_on_npu(self, mock_npu_attn, mock_npu_environment):
         """Test that Qwen3 initializes with NPU backend when NPU is available.
 
         This test requires actual NPU hardware as the Attention class
         checks for NPU device availability at initialization time.
         """
         config = SimpleNamespace(
-            model_type='qwen3',
+            model_type="qwen3",
             hidden_size=4096,
             num_hidden_layers=2,
             num_attention_heads=32,
@@ -60,7 +53,7 @@ class TestQwen3NPUIntegration:
             max_position_embeddings=32768,
             vocab_size=152064,
             intermediate_size=11008,
-            hidden_act='silu',
+            hidden_act="silu",
             rms_norm_eps=1e-6,
             attention_bias=True,
             head_dim=128,
@@ -71,29 +64,28 @@ class TestQwen3NPUIntegration:
 
         # Mock linear layers to avoid heavy initialization
         with (
-                patch(
-                    'minivllm.models.layers.linear.ColumnParallelLinear.forward',
-                    return_value=torch.randn(1, 10, 4096),
-                ),
-                patch(
-                    'minivllm.models.layers.linear.RowParallelLinear.forward',
-                    return_value=torch.randn(1, 10, 4096),
-                ),
+            patch(
+                "minivllm.models.layers.linear.ColumnParallelLinear.forward",
+                return_value=torch.randn(1, 10, 4096),
+            ),
+            patch(
+                "minivllm.models.layers.linear.RowParallelLinear.forward",
+                return_value=torch.randn(1, 10, 4096),
+            ),
         ):
             model = Qwen3ForCausalLM(config)
 
             # Verify Attention backend
             first_layer_attn = model.model.layers[0].self_attn
             assert isinstance(first_layer_attn.attn, Attention)
-            assert isinstance(first_layer_attn.attn.backend,
-                              NPUAttentionBackend)
+            assert isinstance(first_layer_attn.attn.backend, NPUAttentionBackend)
 
     def test_rmsnorm_npu_dispatch(self, mock_npu_environment):
         """Test that RMSNorm dispatches to NPU kernel."""
         layer = RMSNorm(hidden_size=4096)
         x = torch.randn(1, 10, 4096)
         # Mock device to be NPU
-        x.device.type = 'npu'
+        x.device.type = "npu"
 
         # We need to mock the import inside the method or rely on the patch in fixture
         # The method in RMSNorm does: import torch_npu
@@ -103,7 +95,7 @@ class TestQwen3NPUIntegration:
         # Instead, we can rely on the fact that if it tries to use torch_npu.npu_rms_norm,
         # we can mock that call if we can intercept the import.
 
-        with patch.dict('sys.modules', {'torch_npu': MagicMock()}):
+        with patch.dict("sys.modules", {"torch_npu": MagicMock()}):
             import torch_npu
 
             torch_npu.npu_rms_norm.return_value = (torch.randn_like(x), x)
@@ -115,9 +107,9 @@ class TestQwen3NPUIntegration:
         """Test that SiluAndMul dispatches to NPU kernel."""
         layer = SiluAndMul()
         x = torch.randn(1, 10, 8192)  # 2 * 4096
-        x.device.type = 'npu'
+        x.device.type = "npu"
 
-        with patch.dict('sys.modules', {'torch_npu': MagicMock()}):
+        with patch.dict("sys.modules", {"torch_npu": MagicMock()}):
             import torch_npu
 
             torch_npu.npu_swiglu.return_value = torch.randn(1, 10, 4096)
@@ -125,7 +117,7 @@ class TestQwen3NPUIntegration:
             layer(x)
             torch_npu.npu_swiglu.assert_called_once()
 
-    @patch('minivllm.models.layers.rotary_embedding._USE_NPU_ROPE', True)
+    @patch("minivllm.models.layers.rotary_embedding._USE_NPU_ROPE", True)
     def test_rope_npu_dispatch(self, mock_npu_environment):
         """Test that RoPE dispatches to NPU kernel."""
         from minivllm.models.layers.rotary_embedding import apply_rotary_emb
@@ -136,14 +128,14 @@ class TestQwen3NPUIntegration:
 
         # Mock x.device to report 'npu'
         mock_device = MagicMock()
-        mock_device.type = 'npu'
+        mock_device.type = "npu"
 
-        with patch.dict('sys.modules', {'torch_npu': MagicMock()}):
+        with patch.dict("sys.modules", {"torch_npu": MagicMock()}):
             import torch_npu
 
             torch_npu.npu_rotary_mul.return_value = torch.randn_like(x)
 
-            with patch.object(x, 'device', mock_device):
+            with patch.object(x, "device", mock_device):
                 apply_rotary_emb(x, cos, sin)
             torch_npu.npu_rotary_mul.assert_called_once()
 
@@ -159,9 +151,9 @@ class TestQwen3NPUIntegration:
         rope = RotaryEmbedding(head_size, rotary_dim, max_position, base)
 
         # Check if caches are registered
-        assert hasattr(rope, 'cos_cache')
-        assert hasattr(rope, 'sin_cache')
-        assert not hasattr(rope, 'cos_sin_cache')  # Should be removed
+        assert hasattr(rope, "cos_cache")
+        assert hasattr(rope, "sin_cache")
+        assert not hasattr(rope, "cos_sin_cache")  # Should be removed
 
         # Check shapes
         # cos/sin cache should be (max_position, rotary_dim)

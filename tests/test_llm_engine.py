@@ -45,9 +45,9 @@ class TestLLMEngineInitialization:
         config = Config(str(temp_model_dir), num_kvcache_blocks=100)
         engine = LLMEngine(config)
         assert engine is not None
-        assert hasattr(engine, 'scheduler')
-        assert hasattr(engine, 'model_runner')
-        assert hasattr(engine, 'tokenizer')
+        assert hasattr(engine, "scheduler")
+        assert hasattr(engine, "model_runner")
+        assert hasattr(engine, "tokenizer")
 
     def test_engine_config_parameters_propagation(
         self,
@@ -56,11 +56,13 @@ class TestLLMEngineInitialization:
         fully_mocked_model_runner: None,
     ) -> None:
         """Test that configuration parameters are properly propagated to engine."""
-        config = Config(str(temp_model_dir),
-                        max_num_seqs=256,
-                        max_num_batched_tokens=8192,
-                        device_memory_utilization=0.8,
-                        num_kvcache_blocks=100)
+        config = Config(
+            str(temp_model_dir),
+            max_num_seqs=256,
+            max_num_batched_tokens=8192,
+            device_memory_utilization=0.8,
+            num_kvcache_blocks=100,
+        )
         engine = LLMEngine(config)
         assert engine.scheduler.max_num_seqs == 256
         assert engine.scheduler.max_num_batched_tokens == 8192
@@ -72,13 +74,13 @@ class TestLLMEngineInitialization:
         fully_mocked_model_runner: None,
     ) -> None:
         """Test engine initialization with tensor parallelism."""
-        config = Config(str(temp_model_dir),
-                        tensor_parallel_size=4,
-                        num_kvcache_blocks=100)
+        config = Config(
+            str(temp_model_dir), tensor_parallel_size=4, num_kvcache_blocks=100
+        )
         engine = LLMEngine(config)
         # Check that worker processes attributes exist
-        assert hasattr(engine, 'ps')
-        assert hasattr(engine, 'events')
+        assert hasattr(engine, "ps")
+        assert hasattr(engine, "events")
 
 
 class TestLLMEngineSequenceManagement:
@@ -95,7 +97,7 @@ class TestLLMEngineSequenceManagement:
 
         config = Config(str(temp_model_dir), num_kvcache_blocks=100)
         engine = LLMEngine(config)
-        engine.add_request('Hello, world!', SamplingParams())
+        engine.add_request("Hello, world!", SamplingParams())
 
         # Verify sequence was added to scheduler
         assert len(engine.scheduler.waiting) > 0
@@ -140,7 +142,7 @@ class TestLLMEngineInferenceStep:
         config = Config(str(temp_model_dir), num_kvcache_blocks=100)
         engine = LLMEngine(config)
         # Without any sequences, step should raise RuntimeError
-        with pytest.raises(RuntimeError, match='No sequences scheduled'):
+        with pytest.raises(RuntimeError, match="No sequences scheduled"):
             engine.step()
 
     def test_step_with_mocked_execution(
@@ -157,7 +159,7 @@ class TestLLMEngineInferenceStep:
         engine.add_request([1, 2, 3], SamplingParams(max_tokens=10))
 
         # Mock the model runner's call method to return tokens
-        with patch.object(engine.model_runner, 'call', return_value=[4, 5, 6]):
+        with patch.object(engine.model_runner, "call", return_value=[4, 5, 6]):
             output, num_tokens = engine.step()
             assert isinstance(output, list)
             assert isinstance(num_tokens, (int, float))
@@ -174,26 +176,28 @@ class TestLLMEngineTextGeneration:
     ) -> None:
         """Test generate() method with string prompts."""
         mock_tokenizer.encode.return_value = [1, 2, 3]
-        mock_tokenizer.decode.return_value = 'Generated text'
+        mock_tokenizer.decode.return_value = "Generated text"
 
         config = Config(str(temp_model_dir), num_kvcache_blocks=100)
         engine = LLMEngine(config)
 
         # Mock the generation loop
-        with patch.object(engine, 'is_finished', side_effect=[False, True]):
-            with patch.object(engine, 'step') as mock_step:
-                seq = Mock(spec=Sequence)
-                seq.seq_id = 0
-                seq.is_finished = True
-                seq.completion_token_ids = [1, 2, 3]
-                mock_step.return_value = ([(0, [1, 2, 3])], 3)
+        with (
+            patch.object(engine, "is_finished", side_effect=[False, True]),
+            patch.object(engine, "step") as mock_step,
+        ):
+            seq = Mock(spec=Sequence)
+            seq.seq_id = 0
+            seq.is_finished = True
+            seq.completion_token_ids = [1, 2, 3]
+            mock_step.return_value = ([(0, [1, 2, 3])], 3)
 
-                results = engine.generate(['Hello, world!'], use_tqdm=False)
+            results = engine.generate(["Hello, world!"], use_tqdm=False)
 
-                assert isinstance(results, list)
-                if results:
-                    assert 'text' in results[0]
-                    assert 'token_ids' in results[0]
+            assert isinstance(results, list)
+            if results:
+                assert "text" in results[0]
+                assert "token_ids" in results[0]
 
     def test_generate_with_custom_sampling_params(
         self,
@@ -203,7 +207,7 @@ class TestLLMEngineTextGeneration:
     ) -> None:
         """Test generate() with custom sampling parameters."""
         mock_tokenizer.encode.return_value = [1, 2, 3]
-        mock_tokenizer.decode.return_value = 'Generated text'
+        mock_tokenizer.decode.return_value = "Generated text"
 
         config = Config(str(temp_model_dir), num_kvcache_blocks=100)
         engine = LLMEngine(config)
@@ -211,15 +215,17 @@ class TestLLMEngineTextGeneration:
         # Create custom sampling parameters
         params = SamplingParams(temperature=0.7, max_tokens=100)
 
-        with patch.object(engine, 'is_finished', side_effect=[False, True]):
-            with patch.object(engine, 'step') as mock_step:
-                mock_step.return_value = ([(0, [1, 2, 3])], 3)
+        with (
+            patch.object(engine, "is_finished", side_effect=[False, True]),
+            patch.object(engine, "step") as mock_step,
+        ):
+            mock_step.return_value = ([(0, [1, 2, 3])], 3)
 
-                results = engine.generate(['Hello, world!'],
-                                          sampling_params=params,
-                                          use_tqdm=False)
+            results = engine.generate(
+                ["Hello, world!"], sampling_params=params, use_tqdm=False
+            )
 
-                assert isinstance(results, list)
+            assert isinstance(results, list)
 
     def test_generate_with_mismatched_params(
         self,
@@ -232,11 +238,12 @@ class TestLLMEngineTextGeneration:
         engine = LLMEngine(config)
 
         # Mismatched number of prompts and sampling params
-        with pytest.raises(ValueError, match='Length of sampling_params'):
+        with pytest.raises(ValueError, match="Length of sampling_params"):
             engine.generate(
-                ['Prompt 1', 'Prompt 2'],
+                ["Prompt 1", "Prompt 2"],
                 sampling_params=[SamplingParams()],  # Only 1, should be 2
-                use_tqdm=False)
+                use_tqdm=False,
+            )
 
 
 class TestLLMEngineCleanup:
@@ -253,12 +260,12 @@ class TestLLMEngineCleanup:
         engine = LLMEngine(config)
 
         # Mock the model runner's call method before exit
-        with patch.object(engine.model_runner, 'call') as mock_call:
+        with patch.object(engine.model_runner, "call") as mock_call:
             # Call exit and verify cleanup was attempted
             engine.exit()
 
             # Verify model runner was called to exit
-            mock_call.assert_called_once_with('exit')
+            mock_call.assert_called_once_with("exit")
 
     def test_engine_cleanup_with_multiple_workers(
         self,
@@ -267,9 +274,9 @@ class TestLLMEngineCleanup:
         fully_mocked_model_runner: None,
     ) -> None:
         """Test cleanup with multiple worker processes."""
-        config = Config(str(temp_model_dir),
-                        tensor_parallel_size=4,
-                        num_kvcache_blocks=100)
+        config = Config(
+            str(temp_model_dir), tensor_parallel_size=4, num_kvcache_blocks=100
+        )
         engine = LLMEngine(config)
 
         # Mock worker processes
@@ -292,27 +299,27 @@ class TestLLMEngineErrorHandling:
 
     def test_invalid_model_path(self) -> None:
         """Test that invalid model path raises appropriate error."""
-        with pytest.raises(ValueError, match='not a valid directory'):
-            Config(model='/nonexistent/path/to/model')
+        with pytest.raises(ValueError, match="not a valid directory"):
+            Config(model="/nonexistent/path/to/model")
 
     def test_sampling_params_validation(self) -> None:
         """Test that invalid sampling parameters are caught."""
-        with pytest.raises(ValueError, match='temperature'):
+        with pytest.raises(ValueError, match="temperature"):
             SamplingParams(temperature=-1.0)  # Negative
 
-        with pytest.raises(ValueError, match='max_tokens'):
+        with pytest.raises(ValueError, match="max_tokens"):
             SamplingParams(max_tokens=0)  # Must be positive
 
     def test_config_validation_errors(self, temp_model_dir: Path) -> None:
         """Test configuration validation catches errors."""
         # Test invalid device memory utilization
-        with pytest.raises(ValueError, match='device_memory_utilization'):
+        with pytest.raises(ValueError, match="device_memory_utilization"):
             Config(str(temp_model_dir), device_memory_utilization=2.0)
 
         # Test invalid tensor parallel size
-        with pytest.raises(ValueError, match='tensor_parallel_size'):
+        with pytest.raises(ValueError, match="tensor_parallel_size"):
             Config(str(temp_model_dir), tensor_parallel_size=16)
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

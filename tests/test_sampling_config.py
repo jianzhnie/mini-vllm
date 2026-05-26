@@ -42,11 +42,9 @@ class TestSamplingConfigValidation:
 
     def test_negative_temperature_raises(self):
         """Test that negative temperature raises ValueError."""
-        with pytest.raises(ValueError,
-                           match='temperature must be non-negative'):
+        with pytest.raises(ValueError, match="temperature must be non-negative"):
             SamplingConfig(temperature=-0.1)
-        with pytest.raises(ValueError,
-                           match='temperature must be non-negative'):
+        with pytest.raises(ValueError, match="temperature must be non-negative"):
             SamplingConfig(temperature=-1.0)
 
     def test_valid_top_k(self):
@@ -58,9 +56,9 @@ class TestSamplingConfigValidation:
 
     def test_too_negative_top_k_raises(self):
         """Test that top_k < -1 raises ValueError."""
-        with pytest.raises(ValueError, match='top_k must be -1'):
+        with pytest.raises(ValueError, match="top_k must be -1"):
             SamplingConfig(top_k=-2)
-        with pytest.raises(ValueError, match='top_k must be -1'):
+        with pytest.raises(ValueError, match="top_k must be -1"):
             SamplingConfig(top_k=-10)
 
     def test_valid_top_p(self):
@@ -71,11 +69,9 @@ class TestSamplingConfigValidation:
 
     def test_invalid_top_p_raises(self):
         """Test that invalid top_p raises ValueError."""
-        with pytest.raises(ValueError,
-                           match='top_p must be between 0.0 and 1.0'):
+        with pytest.raises(ValueError, match="top_p must be between 0.0 and 1.0"):
             SamplingConfig(top_p=-0.1)
-        with pytest.raises(ValueError,
-                           match='top_p must be between 0.0 and 1.0'):
+        with pytest.raises(ValueError, match="top_p must be between 0.0 and 1.0"):
             SamplingConfig(top_p=1.1)
 
     def test_valid_min_p(self):
@@ -86,11 +82,9 @@ class TestSamplingConfigValidation:
 
     def test_invalid_min_p_raises(self):
         """Test that invalid min_p raises ValueError."""
-        with pytest.raises(ValueError,
-                           match='min_p must be between 0.0 and 1.0'):
+        with pytest.raises(ValueError, match="min_p must be between 0.0 and 1.0"):
             SamplingConfig(min_p=-0.1)
-        with pytest.raises(ValueError,
-                           match='min_p must be between 0.0 and 1.0'):
+        with pytest.raises(ValueError, match="min_p must be between 0.0 and 1.0"):
             SamplingConfig(min_p=1.1)
 
     def test_valid_typical_p(self):
@@ -101,9 +95,9 @@ class TestSamplingConfigValidation:
 
     def test_invalid_typical_p_raises(self):
         """Test that non-positive typical_p raises ValueError."""
-        with pytest.raises(ValueError, match='typical_p must be positive'):
+        with pytest.raises(ValueError, match="typical_p must be positive"):
             SamplingConfig(typical_p=0.0)
-        with pytest.raises(ValueError, match='typical_p must be positive'):
+        with pytest.raises(ValueError, match="typical_p must be positive"):
             SamplingConfig(typical_p=-1.0)
 
     def test_valid_avoid_top_k(self):
@@ -114,8 +108,7 @@ class TestSamplingConfigValidation:
 
     def test_negative_avoid_top_k_raises(self):
         """Test that negative avoid_top_k raises ValueError."""
-        with pytest.raises(ValueError,
-                           match='avoid_top_k must be non-negative'):
+        with pytest.raises(ValueError, match="avoid_top_k must be non-negative"):
             SamplingConfig(avoid_top_k=-1)
 
 
@@ -175,5 +168,5 @@ class TestSamplingConfigModification:
         assert config.top_k == 50
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

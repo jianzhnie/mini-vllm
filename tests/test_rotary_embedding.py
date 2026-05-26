@@ -32,8 +32,8 @@ class TestRotaryEmbeddingBasics:
             max_position_embeddings=100,
             base=10000.0,
         )
-        assert hasattr(rope, 'cos_cache')
-        assert hasattr(rope, 'sin_cache')
+        assert hasattr(rope, "cos_cache")
+        assert hasattr(rope, "sin_cache")
         # Cache shape should be (max_position, rotary_dim // 2)
         expected_shape = (100, 8)
         assert rope.cos_cache.shape == expected_shape
@@ -71,10 +71,9 @@ class TestRotaryEmbeddingProperties:
         """
         head_size = 16
         rotary_dim = 16
-        rope = RotaryEmbedding(head_size,
-                               rotary_dim,
-                               max_position_embeddings=100,
-                               base=10000.0)
+        rope = RotaryEmbedding(
+            head_size, rotary_dim, max_position_embeddings=100, base=10000.0
+        )
 
         # Create identical query and key at different positions
         q = torch.randn(1, 1, 1, head_size)
@@ -110,10 +109,9 @@ class TestRotaryEmbeddingProperties:
         """
         head_size = 16
         rotary_dim = 16
-        rope = RotaryEmbedding(head_size,
-                               rotary_dim,
-                               max_position_embeddings=1000,
-                               base=10000.0)
+        rope = RotaryEmbedding(
+            head_size, rotary_dim, max_position_embeddings=1000, base=10000.0
+        )
 
         q = torch.randn(1, 1, 1, head_size)
         k = q.clone()
@@ -145,22 +143,20 @@ class TestRotaryEmbeddingScaling:
         rotary_dim = 16
         max_pos = 100
         base = 10000.0
-        scaling = {'type': 'linear', 'factor': 2.0}
+        scaling = {"type": "linear", "factor": 2.0}
 
-        rope_scaled = RotaryEmbedding(head_size,
-                                      rotary_dim,
-                                      max_pos,
-                                      base,
-                                      rope_scaling=scaling)
+        rope_scaled = RotaryEmbedding(
+            head_size, rotary_dim, max_pos, base, rope_scaling=scaling
+        )
         rope_orig = RotaryEmbedding(head_size, rotary_dim, max_pos, base)
 
         # Position 2 in scaled should match position 1 in original
-        assert torch.allclose(rope_scaled.cos_cache[2],
-                              rope_orig.cos_cache[1],
-                              atol=1e-5)
-        assert torch.allclose(rope_scaled.sin_cache[2],
-                              rope_orig.sin_cache[1],
-                              atol=1e-5)
+        assert torch.allclose(
+            rope_scaled.cos_cache[2], rope_orig.cos_cache[1], atol=1e-5
+        )
+        assert torch.allclose(
+            rope_scaled.sin_cache[2], rope_orig.sin_cache[1], atol=1e-5
+        )
 
     def test_no_scaling(self):
         """Test that no scaling produces expected cache."""
@@ -171,12 +167,10 @@ class TestRotaryEmbeddingScaling:
         rope = RotaryEmbedding(head_size, rotary_dim, max_pos, base=10000.0)
 
         # Position 0 should have cos=1, sin=0
-        assert torch.allclose(rope.cos_cache[0],
-                              torch.ones(rotary_dim // 2),
-                              atol=1e-6)
-        assert torch.allclose(rope.sin_cache[0],
-                              torch.zeros(rotary_dim // 2),
-                              atol=1e-6)
+        assert torch.allclose(rope.cos_cache[0], torch.ones(rotary_dim // 2), atol=1e-6)
+        assert torch.allclose(
+            rope.sin_cache[0], torch.zeros(rotary_dim // 2), atol=1e-6
+        )
 
 
 class TestGetRope:
@@ -203,14 +197,13 @@ class TestGetRope:
         base = 10000.0
 
         rope1 = get_rope(head_size, rotary_dim, max_pos, base)
-        rope2 = get_rope(head_size,
-                         rotary_dim,
-                         max_pos,
-                         base,
-                         rope_scaling={
-                             'type': 'linear',
-                             'factor': 2.0
-                         })
+        rope2 = get_rope(
+            head_size,
+            rotary_dim,
+            max_pos,
+            base,
+            rope_scaling={"type": "linear", "factor": 2.0},
+        )
 
         # Should be different objects
         assert rope1 is not rope2
@@ -236,21 +229,18 @@ class TestRotaryEmbeddingEdgeCases:
         rotary_dim = 32  # Only rotate first half
 
         # Current implementation requires rotary_dim == head_size
-        with pytest.raises(ValueError,
-                           match='rotary_dim must equal head_size'):
-            RotaryEmbedding(head_size,
-                            rotary_dim,
-                            max_position_embeddings=100,
-                            base=10000.0)
+        with pytest.raises(ValueError, match="rotary_dim must equal head_size"):
+            RotaryEmbedding(
+                head_size, rotary_dim, max_position_embeddings=100, base=10000.0
+            )
 
     def test_batch_positions(self):
         """Test with batched positions of different shapes."""
         head_size = 16
         rotary_dim = 16
-        rope = RotaryEmbedding(head_size,
-                               rotary_dim,
-                               max_position_embeddings=100,
-                               base=10000.0)
+        rope = RotaryEmbedding(
+            head_size, rotary_dim, max_position_embeddings=100, base=10000.0
+        )
 
         # 2D positions (batch, seq)
         positions = torch.tensor([[0, 1, 2], [3, 4, 5]])
@@ -261,5 +251,5 @@ class TestRotaryEmbeddingEdgeCases:
         assert q_rot.shape == (2, 4, 3, head_size)
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
