@@ -206,5 +206,8 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 .vscode/
-.claude/
-.trae/
+# Claude Code
+.claude/config-audit.log
+.claude/command-log.txt
+.claude/stop-failure.log
+.claude/skills/gstack

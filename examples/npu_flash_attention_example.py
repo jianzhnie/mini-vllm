@@ -21,40 +21,39 @@ from minivllm.config import Config
 
 def check_npu_environment() -> bool:
     """Check NPU availability and print diagnostic information."""
-    print('=' * 60)
-    print('NPU Environment Check')
-    print('=' * 60)
+    print("=" * 60)
+    print("NPU Environment Check")
+    print("=" * 60)
 
     try:
         import torch_npu
-        print(
-            f'torch_npu version: {getattr(torch_npu, "__version__", "unknown")}'
-        )
+
+        print(f"torch_npu version: {getattr(torch_npu, '__version__', 'unknown')}")
     except ImportError:
-        print('torch_npu not installed. Install CANN toolkit for NPU support.')
+        print("torch_npu not installed. Install CANN toolkit for NPU support.")
         return False
 
     if not torch.npu.is_available():
-        print('NPU not available. Check CANN driver installation.')
+        print("NPU not available. Check CANN driver installation.")
         return False
 
     device_count = torch.npu.device_count()
-    print(f'NPU devices: {device_count}')
+    print(f"NPU devices: {device_count}")
     for i in range(device_count):
         name = torch.npu.get_device_name(i)
-        print(f'  Device {i}: {name}')
+        print(f"  Device {i}: {name}")
 
     # Check API availability
     apis = {
-        'npu_fusion_attention': 'Training + basic inference',
-        'npu_incre_flash_attention': 'Incremental decode (legacy)',
-        'npu_prompt_flash_attention': 'Prefill (legacy)',
-        'npu_fused_infer_attention_score': 'Unified inference (recommended)',
+        "npu_fusion_attention": "Training + basic inference",
+        "npu_incre_flash_attention": "Incremental decode (legacy)",
+        "npu_prompt_flash_attention": "Prefill (legacy)",
+        "npu_fused_infer_attention_score": "Unified inference (recommended)",
     }
     for api, desc in apis.items():
         available = hasattr(torch_npu, api)
-        status = 'OK' if available else 'NOT AVAILABLE'
-        print(f'  {api}: {status} ({desc})')
+        status = "OK" if available else "NOT AVAILABLE"
+        print(f"  {api}: {status} ({desc})")
 
     print()
     return True
@@ -65,15 +64,15 @@ def demo_attention_layer():
     from minivllm.models.layers.attention import Attention
     from minivllm.utils.context import reset_context, set_context
 
-    print('=' * 60)
-    print('Demo: Low-level Attention Layer on NPU')
-    print('=' * 60)
+    print("=" * 60)
+    print("Demo: Low-level Attention Layer on NPU")
+    print("=" * 60)
 
     num_heads = 8
     head_dim = 64
     num_kv_heads = 8
     scale = 1.0 / (head_dim**0.5)
-    device = torch.device('npu:0')
+    device = torch.device("npu:0")
 
     attn = Attention(
         num_heads=num_heads,
@@ -81,10 +80,10 @@ def demo_attention_layer():
         scale=scale,
         num_kv_heads=num_kv_heads,
     )
-    print(f'Attention backend: {attn.backend.__class__.__name__}')
+    print(f"Attention backend: {attn.backend.__class__.__name__}")
 
     # --- Prefill Phase ---
-    print('\n--- Prefill Phase ---')
+    print("\n--- Prefill Phase ---")
     batch_sizes = [4, 6]
     total_tokens = sum(batch_sizes)
     seq_len = max(batch_sizes)
@@ -109,25 +108,21 @@ def demo_attention_layer():
         out = attn(q, k, v)
     reset_context()
 
-    print(f'Input: q={q.shape}, k={k.shape}, v={v.shape}')
-    print(f'Output: {out.shape}, device={out.device}')
+    print(f"Input: q={q.shape}, k={k.shape}, v={v.shape}")
+    print(f"Output: {out.shape}, device={out.device}")
 
     # --- Decode Phase ---
-    print('\n--- Decode Phase ---')
+    print("\n--- Decode Phase ---")
     batch_size = 2
     block_size = 16
     num_blocks = 4
 
-    attn.k_cache = torch.randn(num_blocks,
-                               block_size,
-                               num_kv_heads,
-                               head_dim,
-                               device=device)
-    attn.v_cache = torch.randn(num_blocks,
-                               block_size,
-                               num_kv_heads,
-                               head_dim,
-                               device=device)
+    attn.k_cache = torch.randn(
+        num_blocks, block_size, num_kv_heads, head_dim, device=device
+    )
+    attn.v_cache = torch.randn(
+        num_blocks, block_size, num_kv_heads, head_dim, device=device
+    )
     attn._cache_initialized = True
 
     q = torch.randn(batch_size, num_heads, head_dim, device=device)
@@ -136,21 +131,17 @@ def demo_attention_layer():
 
     set_context(
         is_prefill=False,
-        slot_mapping=torch.tensor([0, block_size],
-                                  dtype=torch.int32,
-                                  device=device),
+        slot_mapping=torch.tensor([0, block_size], dtype=torch.int32, device=device),
         context_lens=torch.tensor([3, 5], dtype=torch.int32, device=device),
-        block_tables=torch.tensor([[0, -1], [1, 2]],
-                                  dtype=torch.int32,
-                                  device=device),
+        block_tables=torch.tensor([[0, -1], [1, 2]], dtype=torch.int32, device=device),
     )
 
     with torch.no_grad():
         out = attn(q, k, v)
     reset_context()
 
-    print(f'Input: q={q.shape}')
-    print(f'Output: {out.shape}, device={out.device}')
+    print(f"Input: q={q.shape}")
+    print(f"Output: {out.shape}, device={out.device}")
     print()
 
 
@@ -158,11 +149,11 @@ def demo_npu_inference_backend():
     """Demonstrate the NPUAttentionBackend directly."""
     from minivllm.models.layers.attention_backend import NPUAttentionBackend
 
-    print('=' * 60)
-    print('Demo: NPUAttentionBackend Unified Inference')
-    print('=' * 60)
+    print("=" * 60)
+    print("Demo: NPUAttentionBackend Unified Inference")
+    print("=" * 60)
 
-    device = torch.device('npu:0')
+    device = torch.device("npu:0")
     backend = NPUAttentionBackend()
 
     num_heads = 8
@@ -173,29 +164,17 @@ def demo_npu_inference_backend():
     batch_size = 2
     seq_len = 16
 
-    query = torch.randn(batch_size,
-                        num_heads,
-                        seq_len,
-                        head_dim,
-                        device=device)
-    key = torch.randn(batch_size,
-                      num_kv_heads,
-                      seq_len,
-                      head_dim,
-                      device=device)
-    value = torch.randn(batch_size,
-                        num_kv_heads,
-                        seq_len,
-                        head_dim,
-                        device=device)
+    query = torch.randn(batch_size, num_heads, seq_len, head_dim, device=device)
+    key = torch.randn(batch_size, num_kv_heads, seq_len, head_dim, device=device)
+    value = torch.randn(batch_size, num_kv_heads, seq_len, head_dim, device=device)
 
     out = backend.forward(query, key, value, is_causal=True)
-    print(f'Prefill output: {out.shape}')
+    print(f"Prefill output: {out.shape}")
 
     # Decode
     query = torch.randn(batch_size, num_heads, 1, head_dim, device=device)
     out = backend.forward(query, key, value, is_causal=True)
-    print(f'Decode output: {out.shape}')
+    print(f"Decode output: {out.shape}")
     print()
 
 
@@ -203,9 +182,9 @@ def demo_llm_inference(model_path=None):
     """Demonstrate full LLM inference on NPU using the high-level API."""
     from minivllm import LLM, SamplingParams
 
-    print('=' * 60)
-    print('Demo: Full LLM Inference on NPU')
-    print('=' * 60)
+    print("=" * 60)
+    print("Demo: Full LLM Inference on NPU")
+    print("=" * 60)
 
     config = Config(
         model=model_path,
@@ -214,77 +193,82 @@ def demo_llm_inference(model_path=None):
         enforce_eager=True,
         trust_remote_code=True,
         device_memory_utilization=0.8,
-        dtype='float16',
+        dtype="float16",
     )
 
-    print(f'Model: {config.model}')
-    print(f'Device: NPU')
+    print(f"Model: {config.model}")
+    print("Device: NPU")
 
     llm = LLM(config)
 
     prompts = [
-        'Hello, who are you?',
-        'What is the capital of France?',
-        'Tell me a short joke.',
+        "Hello, who are you?",
+        "What is the capital of France?",
+        "Tell me a short joke.",
     ]
 
     params = SamplingParams(temperature=0.7, max_tokens=32)
     outputs = llm.generate(prompts, params, use_tqdm=True)
 
-    for prompt, output in zip(prompts, outputs):
-        text = output['text'].strip()
-        tokens = len(output['token_ids'])
-        print(f'\nPrompt: {prompt!r}')
-        print(f'Output ({tokens} tokens): {text!r}')
+    for prompt, output in zip(prompts, outputs, strict=False):
+        text = output["text"].strip()
+        tokens = len(output["token_ids"])
+        print(f"\nPrompt: {prompt!r}")
+        print(f"Output ({tokens} tokens): {text!r}")
 
     print()
 
 
 def main():
-    print('mini-vLLM NPU Flash Attention Example\n')
+    print("mini-vLLM NPU Flash Attention Example\n")
 
     if not check_npu_environment():
-        print('NPU not available. This example requires Huawei Ascend NPU '
-              'with CANN toolkit installed.')
-        print('\nTo run on other devices, see examples/cpu_inference_opt.py '
-              'or the main examples.py')
+        print(
+            "NPU not available. This example requires Huawei Ascend NPU "
+            "with CANN toolkit installed."
+        )
+        print(
+            "\nTo run on other devices, see examples/cpu_inference_opt.py "
+            "or the main examples.py"
+        )
         return 1
 
     torch.npu.set_device(0)
 
     # Optional: skip low-level demos via --skip-low-level
-    skip_low_level = '--skip-low-level' in sys.argv
+    skip_low_level = "--skip-low-level" in sys.argv
 
     if not skip_low_level:
         try:
             demo_attention_layer()
         except Exception as e:
-            print(f'Attention layer demo failed: {e}')
+            print(f"Attention layer demo failed: {e}")
 
         try:
             demo_npu_inference_backend()
         except Exception as e:
-            print(f'Backend demo failed: {e}')
+            print(f"Backend demo failed: {e}")
 
     # Optional: run LLM demo via --model <path>
     import argparse
-    parser = argparse.ArgumentParser(description='NPU Flash Attention Example')
-    parser.add_argument('--model',
-                        default='facebook/opt-125m',
-                        help='Model path or HuggingFace ID')
-    parser.add_argument('--skip-low-level',
-                        action='store_true',
-                        help='Skip low-level attention demos')
+
+    parser = argparse.ArgumentParser(description="NPU Flash Attention Example")
+    parser.add_argument(
+        "--model", default="facebook/opt-125m", help="Model path or HuggingFace ID"
+    )
+    parser.add_argument(
+        "--skip-low-level", action="store_true", help="Skip low-level attention demos"
+    )
     args = parser.parse_args()
 
     if args.model:
         try:
             demo_llm_inference(args.model)
         except Exception as e:
-            print(f'LLM inference demo failed: {e}')
+            print(f"LLM inference demo failed: {e}")
 
     return 0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())
