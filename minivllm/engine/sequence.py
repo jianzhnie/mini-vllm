@@ -11,7 +11,7 @@ from itertools import count
 
 from minivllm.sampling_params import SamplingParams
 
-__all__ = ['Sequence', 'SequenceStatus']
+__all__ = ["Sequence", "SequenceStatus"]
 
 
 class SequenceStatus(Enum):
@@ -74,7 +74,7 @@ class Sequence:
             sampling_params = SamplingParams()
 
         if not token_ids:
-            raise ValueError('token_ids must contain at least one token')
+            raise ValueError("token_ids must contain at least one token")
 
         self.seq_id: int = next(Sequence.counter)
         self.status: SequenceStatus = SequenceStatus.WAITING
@@ -136,7 +136,7 @@ class Sequence:
         Returns:
             List of token IDs that make up the prompt.
         """
-        return self.token_ids[:self.num_prompt_tokens]
+        return self.token_ids[: self.num_prompt_tokens]
 
     @property
     def completion_token_ids(self) -> list[int]:
@@ -145,7 +145,7 @@ class Sequence:
         Returns:
             List of token IDs that have been generated (after prompt).
         """
-        return self.token_ids[self.num_prompt_tokens:]
+        return self.token_ids[self.num_prompt_tokens :]
 
     @property
     def num_cached_blocks(self) -> int:
@@ -195,8 +195,9 @@ class Sequence:
                 f"Block index {i} out of range [0, {self.num_blocks}). "
                 f"Sequence ID: {self.seq_id}, "
                 f"Total tokens: {self.num_tokens}, "
-                f"Block size: {self.block_size}")
-        return self.token_ids[i * self.block_size:(i + 1) * self.block_size]
+                f"Block size: {self.block_size}"
+            )
+        return self.token_ids[i * self.block_size : (i + 1) * self.block_size]
 
     def append_token(self, token_id: int) -> None:
         """Add a new token to the sequence.
@@ -219,13 +220,16 @@ class Sequence:
             RuntimeError: If sequence is already finished.
         """
         if token_id < 0:
-            raise ValueError(f"Token ID must be non-negative, got {token_id}. "
-                             f"Sequence ID: {self.seq_id}")
+            raise ValueError(
+                f"Token ID must be non-negative, got {token_id}. "
+                f"Sequence ID: {self.seq_id}"
+            )
 
         if self.status == SequenceStatus.FINISHED:
             raise RuntimeError(
                 f"Cannot append token to finished sequence. "
-                f"Sequence ID: {self.seq_id}, Token ID: {token_id}")
+                f"Sequence ID: {self.seq_id}, Token ID: {token_id}"
+            )
 
         self.token_ids.append(token_id)
         self.last_token = token_id
@@ -233,8 +237,19 @@ class Sequence:
 
     def __getstate__(
         self,
-    ) -> tuple[int, int, int, list[int], list[int] | int, float, float, int,
-               float, int, bool, ]:
+    ) -> tuple[
+        int,
+        int,
+        int,
+        list[int],
+        list[int] | int,
+        float,
+        float,
+        int,
+        float,
+        int,
+        bool,
+    ]:
         """Prepare sequence state for serialization/pickling.
 
         This method optimizes serialization by only storing complete
@@ -261,8 +276,7 @@ class Sequence:
             self.num_prompt_tokens,
             self.num_cached_tokens,
             self.block_table,
-            self.token_ids
-            if self.num_completion_tokens == 0 else self.last_token,
+            self.token_ids if self.num_completion_tokens == 0 else self.last_token,
             self.temperature,
             self.top_p,
             self.top_k,
@@ -273,8 +287,19 @@ class Sequence:
 
     def __setstate__(
         self,
-        state: tuple[int, int, int, list[int], list[int] | int, float, float,
-                     int, float, int, bool, ],
+        state: tuple[
+            int,
+            int,
+            int,
+            list[int],
+            list[int] | int,
+            float,
+            float,
+            int,
+            float,
+            int,
+            bool,
+        ],
     ) -> None:
         """Restore sequence state from serialization/unpickling.
 
@@ -317,8 +342,11 @@ class Sequence:
                 self.token_ids = token_data
                 self.last_token = self.token_ids[-1] if self.token_ids else 0
 
-        self.status = (SequenceStatus.RUNNING if num_completion_tokens > 0 else
-                       SequenceStatus.WAITING)
+        self.status = (
+            SequenceStatus.RUNNING
+            if num_completion_tokens > 0
+            else SequenceStatus.WAITING
+        )
 
         self.sampling_params = SamplingParams(
             temperature=self.temperature,

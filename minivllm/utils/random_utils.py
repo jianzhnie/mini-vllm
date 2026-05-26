@@ -14,7 +14,7 @@ try:
 except ImportError:
     from transformers.utils import is_torch_npu_available
 
-__all__ = ['set_random_seed']
+__all__ = ["set_random_seed"]
 
 
 def set_random_seed(seed: int) -> None:

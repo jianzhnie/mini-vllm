@@ -49,7 +49,7 @@ from minivllm.utils.logger_utils import get_logger
 
 logger = get_logger(__name__)
 
-__all__ = ['Scheduler']
+__all__ = ["Scheduler"]
 
 
 class Scheduler:
@@ -87,7 +87,8 @@ class Scheduler:
         self.max_num_batched_tokens: int = config.max_num_batched_tokens
         self.eos: int = config.eos
         self.block_manager: BlockManager = BlockManager(
-            config.num_kvcache_blocks, config.kvcache_block_size)
+            config.num_kvcache_blocks, config.kvcache_block_size
+        )
         self.waiting: deque[Sequence] = deque()
         self.running: deque[Sequence] = deque()
 
@@ -131,7 +132,7 @@ class Scheduler:
             AssertionError: If scheduling invariants are violated.
         """
         if self.is_finished():
-            raise RuntimeError('No sequences scheduled')
+            raise RuntimeError("No sequences scheduled")
 
         # Phase 1: Prefill phase for waiting sequences
         scheduled_sequences, is_prefill = self._schedule_prefill()
@@ -148,7 +149,7 @@ class Scheduler:
             # This should never happen if is_finished() is checked properly
             # Provide detailed debugging information
             error_msg = (
-                'No sequences scheduled, but scheduler is not finished. '
+                "No sequences scheduled, but scheduler is not finished. "
                 f"State: waiting={len(self.waiting)}, running={len(self.running)}, "
                 f"max_num_seqs={self.max_num_seqs}, max_num_batched_tokens={self.max_num_batched_tokens}"
             )
@@ -179,14 +180,16 @@ class Scheduler:
             # - Total token limit (including cached tokens)
             # - Available KV cache blocks
             if num_batched_tokens + len(
-                    sequence
+                sequence
             ) > self.max_num_batched_tokens or not self.block_manager.can_allocate(
-                    sequence):
+                sequence
+            ):
                 logger.debug(
                     f"Cannot schedule sequence {sequence.seq_id} (prefill): "
                     f"len={len(sequence)}, "
                     f"tokens={num_batched_tokens + len(sequence)}/{self.max_num_batched_tokens}, "
-                    f"free_blocks={self.block_manager.get_num_free_blocks()}")
+                    f"free_blocks={self.block_manager.get_num_free_blocks()}"
+                )
                 break
 
             num_seqs += 1
@@ -255,15 +258,12 @@ class Scheduler:
         Args:
             sequence: Sequence to preempt.
         """
-        logger.info(
-            f"Preempting sequence {sequence.seq_id} due to memory constraints."
-        )
+        logger.info(f"Preempting sequence {sequence.seq_id} due to memory constraints.")
         sequence.status = SequenceStatus.WAITING
         self.block_manager.deallocate(sequence)
         self.waiting.appendleft(sequence)
 
-    def postprocess(self, sequences: list[Sequence],
-                    token_ids: list[int]) -> None:
+    def postprocess(self, sequences: list[Sequence], token_ids: list[int]) -> None:
         """Update sequences with newly generated tokens and handle completion.
 
         This method:
@@ -276,7 +276,7 @@ class Scheduler:
             sequences: Sequences that were just processed.
             token_ids: Newly generated token IDs for each sequence.
         """
-        for sequence, token_id in zip(sequences, token_ids):
+        for sequence, token_id in zip(sequences, token_ids, strict=False):
             # Append new token to sequence
             sequence.append_token(token_id)
 

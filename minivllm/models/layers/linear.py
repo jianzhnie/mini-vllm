@@ -10,13 +10,13 @@ import torch.nn.functional as F
 from torch import nn
 
 __all__ = [
-    'LinearBase',
-    'ReplicatedLinear',
-    'ColumnParallelLinear',
-    'MergedColumnParallelLinear',
-    'QKVParallelLinear',
-    'RowParallelLinear',
-    'divide',
+    "LinearBase",
+    "ReplicatedLinear",
+    "ColumnParallelLinear",
+    "MergedColumnParallelLinear",
+    "QKVParallelLinear",
+    "RowParallelLinear",
+    "divide",
 ]
 
 
@@ -85,29 +85,27 @@ class LinearBase(nn.Module):
         self.tp_rank: int = get_tensor_parallel_rank()
         self.tp_size: int = get_tensor_parallel_world_size()
 
-        self.weight: nn.Parameter = nn.Parameter(
-            torch.empty(output_size, input_size))
+        self.weight: nn.Parameter = nn.Parameter(torch.empty(output_size, input_size))
         self.weight.weight_loader = self.weight_loader  # type: ignore
 
         if bias:
-            self.bias: nn.Parameter | None = nn.Parameter(
-                torch.empty(output_size))
+            self.bias: nn.Parameter | None = nn.Parameter(torch.empty(output_size))
             self.bias.weight_loader = self.weight_loader  # type: ignore
         else:
-            self.register_parameter('bias', None)
+            self.register_parameter("bias", None)
 
     def extra_repr(self) -> str:
         return f"input_size={self.input_size}, output_size={self.output_size}, bias={self.bias is not None}, tp_dim={self.tp_dim}, tp_size={self.tp_size}"
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass - to be implemented by subclasses."""
-        raise NotImplementedError('Subclasses must implement forward method')
+        raise NotImplementedError("Subclasses must implement forward method")
 
-    def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor,
-                      *args, **kwargs) -> None:
+    def weight_loader(
+        self, param: nn.Parameter, loaded_weight: torch.Tensor, *args, **kwargs
+    ) -> None:
         """Load weights - to be implemented by subclasses."""
-        raise NotImplementedError(
-            'Subclasses must implement weight_loader method')
+        raise NotImplementedError("Subclasses must implement weight_loader method")
 
 
 class ReplicatedLinear(LinearBase):
@@ -121,8 +119,9 @@ class ReplicatedLinear(LinearBase):
     ) -> None:
         super().__init__(input_size, output_size, bias)
 
-    def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor,
-                      *args, **kwargs) -> None:
+    def weight_loader(
+        self, param: nn.Parameter, loaded_weight: torch.Tensor, *args, **kwargs
+    ) -> None:
         """Load replicated weights (same across all ranks)."""
         param.data.copy_(loaded_weight)
 
@@ -147,15 +146,15 @@ class ColumnParallelLinear(LinearBase):
         tp_size = get_tensor_parallel_world_size()
         super().__init__(input_size, divide(output_size, tp_size), bias, 0)
 
-    def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor,
-                      *args, **kwargs) -> None:
+    def weight_loader(
+        self, param: nn.Parameter, loaded_weight: torch.Tensor, *args, **kwargs
+    ) -> None:
         """Load column-sharded weights."""
         param_data = param.data
-        assert self.tp_dim is not None, 'tp_dim must be set for column-parallel layers'
+        assert self.tp_dim is not None, "tp_dim must be set for column-parallel layers"
         shard_size = param_data.size(self.tp_dim)
         start_idx = self.tp_rank * shard_size
-        loaded_weight = loaded_weight.narrow(self.tp_dim, start_idx,
-                                             shard_size)
+        loaded_weight = loaded_weight.narrow(self.tp_dim, start_idx, shard_size)
         param_data.copy_(loaded_weight)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -193,12 +192,11 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
             loaded_shard_id: The index of the shard to load (default: 0).
         """
         param_data = param.data
-        assert self.tp_dim is not None, 'tp_dim must be set for column-parallel layers'
+        assert self.tp_dim is not None, "tp_dim must be set for column-parallel layers"
         shard_offset = sum(self.output_sizes[:loaded_shard_id]) // self.tp_size
         shard_size = self.output_sizes[loaded_shard_id] // self.tp_size
         param_data = param_data.narrow(self.tp_dim, shard_offset, shard_size)
-        loaded_weight = loaded_weight.chunk(self.tp_size,
-                                            self.tp_dim)[self.tp_rank]
+        loaded_weight = loaded_weight.chunk(self.tp_size, self.tp_dim)[self.tp_rank]
         param_data.copy_(loaded_weight)
 
 
@@ -223,8 +221,7 @@ class QKVParallelLinear(ColumnParallelLinear):
         self.head_size: int = head_size
         self.num_heads: int = divide(total_num_heads, tp_size)
         self.num_kv_heads: int = divide(total_num_kv_heads, tp_size)
-        output_size = (total_num_heads +
-                       2 * total_num_kv_heads) * self.head_size
+        output_size = (total_num_heads + 2 * total_num_kv_heads) * self.head_size
         super().__init__(hidden_size, output_size, bias)
 
     def weight_loader(
@@ -243,38 +240,38 @@ class QKVParallelLinear(ColumnParallelLinear):
             loaded_shard_id: One of 'q', 'k', 'v' to specify which projection to load.
         """
         if loaded_shard_id is None:
-            raise ValueError(
-                'loaded_shard_id must be provided for QKVParallelLinear')
+            raise ValueError("loaded_shard_id must be provided for QKVParallelLinear")
 
         param_data = param.data
         assert loaded_shard_id in [
-            'q',
-            'k',
-            'v',
+            "q",
+            "k",
+            "v",
         ], f"Invalid shard_id: {loaded_shard_id}"
 
-        if loaded_shard_id == 'q':
+        if loaded_shard_id == "q":
             shard_size = self.num_heads * self.head_size
             shard_offset = 0
-        elif loaded_shard_id == 'k':
+        elif loaded_shard_id == "k":
             shard_size = self.num_kv_heads * self.head_size
             shard_offset = self.num_heads * self.head_size
         else:  # 'v'
             shard_size = self.num_kv_heads * self.head_size
-            shard_offset = (self.num_heads * self.head_size +
-                            self.num_kv_heads * self.head_size)
+            shard_offset = (
+                self.num_heads * self.head_size + self.num_kv_heads * self.head_size
+            )
 
-        assert self.tp_dim is not None, 'tp_dim must be set for column-parallel layers'
+        assert self.tp_dim is not None, "tp_dim must be set for column-parallel layers"
         param_data = param_data.narrow(self.tp_dim, shard_offset, shard_size)
-        loaded_weight = loaded_weight.chunk(self.tp_size,
-                                            self.tp_dim)[self.tp_rank]
+        loaded_weight = loaded_weight.chunk(self.tp_size, self.tp_dim)[self.tp_rank]
         param_data.copy_(loaded_weight)
 
     def extra_repr(self) -> str:
         return (
             f"hidden_size={self.input_size}, head_size={self.head_size}, "
             f"num_heads={self.num_heads}, num_kv_heads={self.num_kv_heads}, "
-            f"bias={self.bias is not None}, tp_size={self.tp_size}")
+            f"bias={self.bias is not None}, tp_size={self.tp_size}"
+        )
 
 
 class RowParallelLinear(LinearBase):
@@ -293,8 +290,9 @@ class RowParallelLinear(LinearBase):
         tp_size = get_tensor_parallel_world_size()
         super().__init__(divide(input_size, tp_size), output_size, bias, 1)
 
-    def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor,
-                      *args, **kwargs) -> None:
+    def weight_loader(
+        self, param: nn.Parameter, loaded_weight: torch.Tensor, *args, **kwargs
+    ) -> None:
         """Load row-sharded weights."""
         # Handle bias (not sharded for RowParallelLinear)
         if param.data.dim() == 1:
@@ -303,11 +301,10 @@ class RowParallelLinear(LinearBase):
             return
 
         param_data = param.data
-        assert self.tp_dim is not None, 'tp_dim must be set for row-parallel layers'
+        assert self.tp_dim is not None, "tp_dim must be set for row-parallel layers"
         shard_size = param_data.size(self.tp_dim)
         start_idx = self.tp_rank * shard_size
-        loaded_weight = loaded_weight.narrow(self.tp_dim, start_idx,
-                                             shard_size)
+        loaded_weight = loaded_weight.narrow(self.tp_dim, start_idx, shard_size)
         param_data.copy_(loaded_weight)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

@@ -21,7 +21,7 @@ from minivllm.utils.logger_utils import get_logger
 
 logger = get_logger(__name__)
 
-__all__ = ['DistributedManager']
+__all__ = ["DistributedManager"]
 
 
 class DistributedManager:
@@ -61,8 +61,9 @@ class DistributedManager:
         self.is_distributed = self.world_size > 1
         self._initialized = False
 
-        logger.debug(f"DistributedManager created with rank {rank}, "
-                     f"world_size {self.world_size}")
+        logger.debug(
+            f"DistributedManager created with rank {rank}, world_size {self.world_size}"
+        )
 
     def initialize(self) -> None:
         """Initialize distributed communication if needed."""
@@ -70,7 +71,7 @@ class DistributedManager:
             return
 
         if not self.is_distributed:
-            logger.debug('Running in single-process mode')
+            logger.debug("Running in single-process mode")
             self._initialized = True
             return
 
@@ -78,21 +79,23 @@ class DistributedManager:
         self._validate_setup()
 
         self._initialized = True
-        logger.info(f"Distributed manager initialized. "
-                    f"Rank: {self.rank}, World size: {self.world_size}, "
-                    f"Backend: {self.backend}")
+        logger.info(
+            f"Distributed manager initialized. "
+            f"Rank: {self.rank}, World size: {self.world_size}, "
+            f"Backend: {self.backend}"
+        )
 
     def _setup_distributed_backend(self) -> None:
         """Setup the distributed communication backend."""
         try:
             self.backend = get_distributed_backend()
             if not dist.is_initialized():
-                dist.init_process_group(backend=self.backend,
-                                        rank=self.rank,
-                                        world_size=self.world_size)
+                dist.init_process_group(
+                    backend=self.backend, rank=self.rank, world_size=self.world_size
+                )
             logger.debug(f"Distributed backend setup: {self.backend}")
         except Exception as e:
-            raise RuntimeError(f"Failed to setup distributed backend: {e}")
+            raise RuntimeError(f"Failed to setup distributed backend: {e}") from e
 
     def _validate_setup(self) -> None:
         """Validate distributed setup is working correctly."""
@@ -104,9 +107,9 @@ class DistributedManager:
             tensor = torch.ones(1) * self.rank
 
             # Move to appropriate device based on backend
-            if self.backend == 'nccl':
+            if self.backend == "nccl":
                 tensor = tensor.cuda()
-            elif self.backend == 'hccl':
+            elif self.backend == "hccl":
                 tensor = tensor.npu()
 
             dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
@@ -114,12 +117,12 @@ class DistributedManager:
 
             if abs(tensor.item() - expected) > 1e-6:
                 raise RuntimeError(
-                    f"Distributed test failed: got {tensor.item()}, "
-                    f"expected {expected}")
+                    f"Distributed test failed: got {tensor.item()}, expected {expected}"
+                )
 
-            logger.debug('Distributed communication test passed')
+            logger.debug("Distributed communication test passed")
         except Exception as e:
-            raise RuntimeError(f"Distributed validation failed: {e}")
+            raise RuntimeError(f"Distributed validation failed: {e}") from e
 
     def _move_to_device(self, tensor: torch.Tensor) -> torch.Tensor:
         """Move tensor to appropriate device based on backend.
@@ -130,11 +133,11 @@ class DistributedManager:
         Returns:
             Tensor on the appropriate device.
         """
-        if self.backend == 'nccl':
+        if self.backend == "nccl":
             return tensor.cuda()
-        elif self.backend == 'hccl':
+        elif self.backend == "hccl":
             return tensor.npu()
-        elif self.backend == 'ccl':
+        elif self.backend == "ccl":
             return tensor.xpu()
         return tensor
 
@@ -177,8 +180,7 @@ class DistributedManager:
                 data_bytes_len = int(data_size.item())
                 data_tensor = torch.empty(data_bytes_len, dtype=torch.uint8)
             else:
-                data_tensor = torch.frombuffer(data_bytes,
-                                               dtype=torch.uint8).clone()
+                data_tensor = torch.frombuffer(data_bytes, dtype=torch.uint8).clone()
 
             # Move to device and broadcast data
             data_tensor = self._move_to_device(data_tensor)
@@ -205,8 +207,6 @@ class DistributedManager:
                 dist.destroy_process_group()
 
             self._initialized = False
-            logger.debug(
-                f"Rank {self.rank}: Distributed manager cleanup completed")
+            logger.debug(f"Rank {self.rank}: Distributed manager cleanup completed")
         except Exception as e:
-            logger.warning(
-                f"Rank {self.rank}: Error during distributed cleanup: {e}")
+            logger.warning(f"Rank {self.rank}: Error during distributed cleanup: {e}")

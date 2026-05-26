@@ -1,4 +1,5 @@
 """Rotary positional embedding helpers."""
+
 import os
 from functools import lru_cache
 from typing import Any
@@ -16,18 +17,20 @@ if is_torch_npu_available():
     try:
         import torch_npu
 
-        if hasattr(torch_npu, 'npu_rotary_mul'):
+        if hasattr(torch_npu, "npu_rotary_mul"):
             _NPU_ROPE_AVAILABLE = True
-            logger.info('NPU RoPE kernel available')
+            logger.info("NPU RoPE kernel available")
     except ImportError:
         pass
 
 _USE_NPU_ROPE = _NPU_ROPE_AVAILABLE and os.getenv(
-    'MINIVLLM_USE_NPU_ROPE', '0').lower() in {'1', 'true', 'yes'}
+    "MINIVLLM_USE_NPU_ROPE", "0"
+).lower() in {"1", "true", "yes"}
 
 
-def apply_rotary_emb(x: torch.Tensor, cos: torch.Tensor,
-                     sin: torch.Tensor) -> torch.Tensor:
+def apply_rotary_emb(
+    x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
+) -> torch.Tensor:
     """Apply rotary positional embeddings to last dimension of `x`.
 
     This function implements the core rotary embedding transformation:
@@ -58,7 +61,7 @@ def apply_rotary_emb(x: torch.Tensor, cos: torch.Tensor,
         >>> rotated = apply_rotary_emb(x, cos, sin)
         >>> print(rotated.shape)  # torch.Size([2, 8, 64])
     """
-    if _USE_NPU_ROPE and x.device.type == 'npu':
+    if _USE_NPU_ROPE and x.device.type == "npu":
         import torch_npu
 
         needs_unsqueeze = x.dim() == 3
@@ -156,35 +159,38 @@ class RotaryEmbedding(nn.Module):
         self.head_size: int = head_size
         self.max_position_embeddings: int = max_position_embeddings
         if rotary_dim != head_size:
-            raise ValueError('rotary_dim must equal head_size')
+            raise ValueError("rotary_dim must equal head_size")
 
         # Compute inverse frequencies for rotary embedding
-        inv_freq = 1.0 / (base**(
-            torch.arange(0, rotary_dim, 2, dtype=torch.float) / rotary_dim))
+        inv_freq = 1.0 / (
+            base ** (torch.arange(0, rotary_dim, 2, dtype=torch.float) / rotary_dim)
+        )
 
         # Handle RoPE scaling
         if rope_scaling:
-            scaling_type = rope_scaling.get('type')
-            factor = rope_scaling.get('factor', 1.0)
+            scaling_type = rope_scaling.get("type")
+            factor = rope_scaling.get("factor", 1.0)
 
-            if scaling_type == 'linear':
+            if scaling_type == "linear":
                 # Linear scaling: divide position indices by factor
                 # We can achieve this by dividing inv_freq by factor?
                 # No, cos(pos/factor * freq) = cos(pos * freq/factor).
                 inv_freq /= factor
-            elif scaling_type == 'dynamic':
+            elif scaling_type == "dynamic":
                 # NTK-Aware scaling
                 # Scale base by factor^(dim / (dim-2))
                 # This is a simplified approximation
-                base = base * (factor**(rotary_dim / (rotary_dim - 2)))
-                inv_freq = 1.0 / (base**(torch.arange(
-                    0, rotary_dim, 2, dtype=torch.float) / rotary_dim))
+                base = base * (factor ** (rotary_dim / (rotary_dim - 2)))
+                inv_freq = 1.0 / (
+                    base
+                    ** (torch.arange(0, rotary_dim, 2, dtype=torch.float) / rotary_dim)
+                )
 
         # Create position indices
         t = torch.arange(max_position_embeddings, dtype=torch.float)
 
         # Compute frequencies for all positions
-        freqs = torch.einsum('i,j -> ij', t, inv_freq)
+        freqs = torch.einsum("i,j -> ij", t, inv_freq)
 
         # Compute cosine and sine values
         cos = freqs.cos()
@@ -192,11 +198,12 @@ class RotaryEmbedding(nn.Module):
 
         # Store cos and sin values separately for efficient lookup
         # Shape: (max_pos, dim)
-        self.register_buffer('cos_cache', cos, persistent=False)
-        self.register_buffer('sin_cache', sin, persistent=False)
+        self.register_buffer("cos_cache", cos, persistent=False)
+        self.register_buffer("sin_cache", sin, persistent=False)
 
-    def forward(self, positions: torch.Tensor, query: torch.Tensor,
-                key: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self, positions: torch.Tensor, query: torch.Tensor, key: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Apply rotary embedding to query and key tensors.
 
         Args:
@@ -257,8 +264,7 @@ def get_rope(
 
     # Check if we need to bypass cache due to unhashable dict
     if rope_scaling is not None:
-        return RotaryEmbedding(head_size, rotary_dim, max_position, base,
-                               rope_scaling)
+        return RotaryEmbedding(head_size, rotary_dim, max_position, base, rope_scaling)
 
     return _get_rope_cached(head_size, rotary_dim, max_position, base)
 

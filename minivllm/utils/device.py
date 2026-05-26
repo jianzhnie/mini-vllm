@@ -24,42 +24,42 @@ logger = get_logger(__name__)
 is_torch_npu_available = is_torch_npu_available
 
 # Device types with standard torch.{type} module and set_device/mem APIs.
-_ACCELERATOR_TYPES = frozenset(('cuda', 'npu', 'xpu'))
+_ACCELERATOR_TYPES = frozenset(("cuda", "npu", "xpu"))
 
 
 def _get_device_type() -> str:
     """Detect best available device type (priority order)."""
     if is_torch_npu_available():
-        return 'npu'
+        return "npu"
     if is_torch_cuda_available():
-        return 'cuda'
+        return "cuda"
     if is_torch_musa_available():
-        return 'musa'
+        return "musa"
     if is_torch_mlu_available():
-        return 'mlu'
+        return "mlu"
     if is_torch_xpu_available():
-        return 'xpu'
+        return "xpu"
     if is_torch_mps_available():
-        return 'mps'
-    return 'cpu'
+        return "mps"
+    return "cpu"
 
 
 def get_visible_devices_keyword() -> str:
     """Get the environment variable keyword for visible devices."""
     if is_torch_cuda_available():
-        return 'CUDA_VISIBLE_DEVICES'
+        return "CUDA_VISIBLE_DEVICES"
     if is_torch_npu_available():
-        return 'ASCEND_RT_VISIBLE_DEVICES'
+        return "ASCEND_RT_VISIBLE_DEVICES"
     if is_torch_xpu_available():
-        return 'XPU_VISIBLE_DEVICES'
-    return ''
+        return "XPU_VISIBLE_DEVICES"
+    return ""
 
 
 def get_dist_info() -> tuple[int, int, int]:
     """Get distributed training information: (rank, world_size, local_rank)."""
-    rank = int(os.environ.get('RANK', 0))
-    world_size = int(os.environ.get('WORLD_SIZE', 1))
-    local_rank = int(os.environ.get('LOCAL_RANK', 0))
+    rank = int(os.environ.get("RANK", 0))
+    world_size = int(os.environ.get("WORLD_SIZE", 1))
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
     return rank, world_size, local_rank
 
 
@@ -71,32 +71,32 @@ def get_current_device(use_cpu: bool = False) -> torch.device:
     """
     _, _, local_rank = get_dist_info()
 
-    env_device = os.environ.get('MINIVLLM_DEVICE', '').lower().strip()
+    env_device = os.environ.get("MINIVLLM_DEVICE", "").lower().strip()
     if env_device:
-        if env_device == 'cpu':
-            return torch.device('cpu')
+        if env_device == "cpu":
+            return torch.device("cpu")
         return torch.device(f"{env_device}:{local_rank}")
 
     if use_cpu:
-        return torch.device('cpu')
+        return torch.device("cpu")
 
     dtype = _get_device_type()
-    if dtype == 'mps':
-        return torch.device('mps')
-    if dtype == 'cpu':
-        return torch.device('cpu')
+    if dtype == "mps":
+        return torch.device("mps")
+    if dtype == "cpu":
+        return torch.device("cpu")
     return torch.device(f"{dtype}:{local_rank}")
 
 
 def get_device_count() -> int:
     """Number of available devices for current device type."""
     dtype = _get_device_type()
-    if dtype == 'cpu':
+    if dtype == "cpu":
         return 0
     module = getattr(torch, dtype, None)
     if module is None:
         return 0
-    count_fn = getattr(module, 'device_count', None)
+    count_fn = getattr(module, "device_count", None)
     if count_fn is None:
         return 0
     return count_fn()
@@ -106,7 +106,7 @@ def set_device(device: torch.device) -> None:
     """Set current device for the given device type."""
     device_type = device.type
     module = getattr(torch, device_type, None)
-    set_fn = getattr(module, 'set_device', None) if module else None
+    set_fn = getattr(module, "set_device", None) if module else None
     if set_fn is not None:
         try:
             set_fn(device)
@@ -123,13 +123,13 @@ def get_distributed_backend() -> str:
     """Appropriate distributed backend for current device."""
     dtype = _get_device_type()
     backends = {
-        'npu': 'hccl',
-        'cuda': 'nccl',
-        'xpu': 'ccl',
-        'mlu': 'cncl',
-        'musa': 'musa',
+        "npu": "hccl",
+        "cuda": "nccl",
+        "xpu": "ccl",
+        "mlu": "cncl",
+        "musa": "musa",
     }
-    return backends.get(dtype, 'gloo')
+    return backends.get(dtype, "gloo")
 
 
 def empty_cache() -> None:
@@ -137,7 +137,7 @@ def empty_cache() -> None:
     dtype = _get_device_type()
     if dtype in _ACCELERATOR_TYPES:
         module = getattr(torch, dtype)
-        fn = getattr(module, 'empty_cache', None)
+        fn = getattr(module, "empty_cache", None)
         if fn is not None:
             fn()
 
@@ -148,7 +148,7 @@ def synchronize(device: torch.device | None = None) -> None:
         device = get_current_device()
     if device.type in _ACCELERATOR_TYPES:
         module = getattr(torch, device.type)
-        fn = getattr(module, 'synchronize', None)
+        fn = getattr(module, "synchronize", None)
         if fn is not None:
             fn(device)
 
@@ -159,7 +159,7 @@ def reset_peak_memory_stats(device: torch.device | None = None) -> None:
         device = get_current_device()
     if device.type in _ACCELERATOR_TYPES:
         module = getattr(torch, device.type)
-        fn = getattr(module, 'reset_peak_memory_stats', None)
+        fn = getattr(module, "reset_peak_memory_stats", None)
         if fn is not None:
             fn(device)
 
@@ -172,7 +172,7 @@ def mem_get_info(device: torch.device | None = None) -> tuple[int, int]:
     device_type = device.type
     if device_type in _ACCELERATOR_TYPES:
         module = getattr(torch, device_type)
-        fn = getattr(module, 'mem_get_info', None)
+        fn = getattr(module, "mem_get_info", None)
         if fn is not None:
             try:
                 return fn(device)
@@ -187,7 +187,7 @@ def mem_get_info(device: torch.device | None = None) -> tuple[int, int]:
         free = psutil.virtual_memory().available
         return (free, total)
     except ImportError:
-        logger.warning('psutil not available, using default memory values')
+        logger.warning("psutil not available, using default memory values")
         return (10**12, 10**12)
 
 
@@ -197,7 +197,7 @@ def memory_stats(device: torch.device | None = None) -> dict[str, Any]:
         device = get_current_device()
     if device.type in _ACCELERATOR_TYPES:
         module = getattr(torch, device.type)
-        fn = getattr(module, 'memory_stats', None)
+        fn = getattr(module, "memory_stats", None)
         if fn is not None:
             try:
                 return fn(device)
@@ -209,26 +209,25 @@ def memory_stats(device: torch.device | None = None) -> dict[str, Any]:
 def supports_cuda_graph() -> bool:
     """Whether current device supports CUDA Graph optimization."""
     dtype = _get_device_type()
-    return dtype in ('cuda', 'npu')
+    return dtype in ("cuda", "npu")
 
 
 # Alias kept for backward compatibility
 supports_device_graph = supports_cuda_graph
 
 
-def get_device_capabilities(
-        device: torch.device | None = None) -> dict[str, Any]:
+def get_device_capabilities(device: torch.device | None = None) -> dict[str, Any]:
     """Get capability dict for device."""
     if device is None:
         device = get_current_device()
     dt = device.type
     is_accel = dt in _ACCELERATOR_TYPES
     return {
-        'device_type': dt,
-        'supports_graph': supports_cuda_graph(),
-        'supports_empty_cache': is_accel,
-        'supports_synchronize': is_accel,
-        'supports_memory_stats': is_accel,
+        "device_type": dt,
+        "supports_graph": supports_cuda_graph(),
+        "supports_empty_cache": is_accel,
+        "supports_synchronize": is_accel,
+        "supports_memory_stats": is_accel,
     }
 
 
@@ -236,29 +235,30 @@ def should_use_pin_memory(device: torch.device | None = None) -> bool:
     """Whether pin_memory is beneficial for device."""
     if device is None:
         device = get_current_device()
-    return device.type in ('cuda', 'npu')
+    return device.type in ("cuda", "npu")
 
 
-def move_tensor_to_device(tensor: torch.Tensor,
-                          device: torch.device,
-                          non_blocking: bool = False) -> torch.Tensor:
+def move_tensor_to_device(
+    tensor: torch.Tensor, device: torch.device, non_blocking: bool = False
+) -> torch.Tensor:
     """Move tensor to device with consistent error handling."""
     try:
         return tensor.to(device, non_blocking=non_blocking)
     except RuntimeError as e:
-        raise RuntimeError(f"Cannot move tensor to device {device}. "
-                           f"Ensure the device is available.") from e
+        raise RuntimeError(
+            f"Cannot move tensor to device {device}. Ensure the device is available."
+        ) from e
 
 
 def is_device_available(device: torch.device) -> bool:
     """Check if a device is available and accessible."""
     dt = device.type
-    if dt == 'cpu':
+    if dt == "cpu":
         return True
     module = getattr(torch, dt, None)
     if module is None:
         return False
-    count_fn = getattr(module, 'device_count', None)
+    count_fn = getattr(module, "device_count", None)
     if count_fn is None:
         return False
     try:
@@ -273,5 +273,7 @@ def is_device_available(device: torch.device) -> bool:
 def validate_device(device: torch.device) -> None:
     """Raise RuntimeError if device is not available."""
     if not is_device_available(device):
-        raise RuntimeError(f"Device {device} is not available. "
-                           f"Check that the device is properly installed.")
+        raise RuntimeError(
+            f"Device {device} is not available. "
+            f"Check that the device is properly installed."
+        )

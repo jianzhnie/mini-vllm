@@ -56,11 +56,11 @@ class ColorfulFormatter(Formatter):
     """
 
     COLORS = {
-        'INFO': Fore.GREEN,
-        'WARNING': Fore.YELLOW,
-        'ERROR': Fore.RED,
-        'CRITICAL': Fore.RED + Style.BRIGHT,
-        'DEBUG': Fore.LIGHTGREEN_EX,
+        "INFO": Fore.GREEN,
+        "WARNING": Fore.YELLOW,
+        "ERROR": Fore.RED,
+        "CRITICAL": Fore.RED + Style.BRIGHT,
+        "DEBUG": Fore.LIGHTGREEN_EX,
     }
 
     def format(self, record: LogRecord) -> str:
@@ -80,7 +80,7 @@ class ColorfulFormatter(Formatter):
         log_message = super().format(record)
 
         # Add color based on log level
-        return self.COLORS.get(record.levelname, '') + log_message + Fore.RESET
+        return self.COLORS.get(record.levelname, "") + log_message + Fore.RESET
 
     def _get_rank(self) -> int:
         """Get the current process rank in a safe way.
@@ -98,14 +98,14 @@ class ColorfulFormatter(Formatter):
             pass
 
         # Fallback to environment variables
-        return int(os.environ.get('RANK', os.environ.get('LOCAL_RANK', '0')))
+        return int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0")))
 
 
 def get_logger(
     name: str,
     log_file: str | Path | None = None,
     log_level: int = logging.INFO,
-    file_mode: str = 'w',
+    file_mode: str = "w",
     force_main_process: bool = False,
 ) -> logging.Logger:
     """Initialize and get a logger by name with optional file output.
@@ -130,7 +130,7 @@ def get_logger(
         >>> logger = get_logger("my_model", "training.log", logging.DEBUG)
         >>> logger.info("Training started")
     """
-    if file_mode not in ('w', 'a'):
+    if file_mode not in ("w", "a"):
         raise ValueError("file_mode must be either 'w' or 'a'")
 
     # Get or create logger instance
@@ -172,13 +172,13 @@ def get_logger(
 
         # Configure formatter with rank information
         if is_main_process:
-            fmt = '%(asctime)s - [Rank %(rank)d] - %(name)s.%(funcName)s:%(lineno)d - %(levelname)s - %(message)s'
+            fmt = "%(asctime)s - [Rank %(rank)d] - %(name)s.%(funcName)s:%(lineno)d - %(levelname)s - %(message)s"
         else:
             fmt = (
-                '%(asctime)s - [Rank %(rank)d] - %(name)s - %(levelname)s - %(message)s'
+                "%(asctime)s - [Rank %(rank)d] - %(name)s - %(levelname)s - %(message)s"
             )
 
-        formatter = ColorfulFormatter(fmt=fmt, datefmt='%Y-%m-%d %H:%M:%S')
+        formatter = ColorfulFormatter(fmt=fmt, datefmt="%Y-%m-%d %H:%M:%S")
 
         # Apply configuration to all handlers
         for handler in handlers:
@@ -188,8 +188,9 @@ def get_logger(
 
     # Set logger level based on rank and configuration
     if force_main_process:
-        logger.setLevel(log_level if is_main_process else logging.CRITICAL +
-                        1)  # Disable logging for non-main processes
+        logger.setLevel(
+            log_level if is_main_process else logging.CRITICAL + 1
+        )  # Disable logging for non-main processes
     else:
         logger.setLevel(log_level if is_main_process else logging.ERROR)
 
@@ -215,11 +216,11 @@ def _get_distributed_rank() -> int:
         pass
 
     # Fallback to environment variables (common distributed training variables)
-    rank = os.environ.get('RANK')
+    rank = os.environ.get("RANK")
     if rank is not None:
         return int(rank)
 
-    local_rank = os.environ.get('LOCAL_RANK')
+    local_rank = os.environ.get("LOCAL_RANK")
     if local_rank is not None:
         return int(local_rank)
 
@@ -250,5 +251,6 @@ def get_outdir(path: str, *paths, inc: bool = False) -> str:
                 os.makedirs(outdir_inc)
                 return outdir_inc
         raise RuntimeError(
-            'Failed to create unique output directory after 100 attempts')
+            "Failed to create unique output directory after 100 attempts"
+        )
     return outdir

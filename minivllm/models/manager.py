@@ -24,7 +24,7 @@ from minivllm.utils.logger_utils import get_logger
 
 logger = get_logger(__name__)
 
-__all__ = ['ModelManager']
+__all__ = ["ModelManager"]
 
 
 class ModelManager:
@@ -70,14 +70,16 @@ class ModelManager:
         self._load_model()
         self._validate_model_compatibility()
 
-        logger.info(f"Model manager initialized successfully. "
-                    f"Model: {self.model_type}, Device: {self.device}")
+        logger.info(
+            f"Model manager initialized successfully. "
+            f"Model: {self.model_type}, Device: {self.device}"
+        )
 
     def _setup_device(self) -> None:
         """Setup and validate the target device."""
         try:
             # Check if config has device specified
-            if hasattr(self.config, 'device'):
+            if hasattr(self.config, "device"):
                 set_device(self.config.device)
 
             # Get current device (handles LOCAL_RANK etc.)
@@ -85,12 +87,12 @@ class ModelManager:
             validate_device(self.device)
             logger.debug(f"Device setup successful: {self.device}")
         except Exception as e:
-            raise RuntimeError(f"Failed to setup device: {e}")
+            raise RuntimeError(f"Failed to setup device: {e}") from e
 
     def _validate_model_path(self) -> None:
         """Validate the model path and configuration."""
         if not self.config.model:
-            raise ValueError('Model path cannot be empty')
+            raise ValueError("Model path cannot be empty")
         # Additional validation can be added here
         logger.debug(f"Model path validation passed: {self.config.model}")
 
@@ -108,8 +110,9 @@ class ModelManager:
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
 
-            logger.debug(f"Tokenizer loaded successfully: "
-                         f"{type(self.tokenizer).__name__}")
+            logger.debug(
+                f"Tokenizer loaded successfully: {type(self.tokenizer).__name__}"
+            )
         except OSError:
             # Fall back to online mode if not cached locally
             self.tokenizer = AutoTokenizer.from_pretrained(
@@ -119,22 +122,26 @@ class ModelManager:
             )
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
-            logger.debug(f"Tokenizer loaded successfully (online): "
-                         f"{type(self.tokenizer).__name__}")
+            logger.debug(
+                f"Tokenizer loaded successfully (online): "
+                f"{type(self.tokenizer).__name__}"
+            )
         except Exception as e:
-            raise RuntimeError(f"Failed to load tokenizer: {e}")
+            raise RuntimeError(f"Failed to load tokenizer: {e}") from e
 
     def _load_model(self) -> None:
         """Load the model based on configuration."""
         try:
             if not self.config.hf_config:
-                logger.warning('HF config missing in Config, loading manually')
+                logger.warning("HF config missing in Config, loading manually")
                 self.config.hf_config = AutoConfig.from_pretrained(
-                    self.config.model, trust_remote_code=True)
+                    self.config.model, trust_remote_code=True
+                )
 
             self.model = create_model(self.config.hf_config)
-            self.model_type = (type(self.model).__name__.replace(
-                'ForCausalLM', '').lower())
+            self.model_type = (
+                type(self.model).__name__.replace("ForCausalLM", "").lower()
+            )
 
             load_model(self.model, self.config.model)
 
@@ -145,17 +152,17 @@ class ModelManager:
             logger.info(f"Model loaded successfully: {self.model_type}")
 
         except Exception as e:
-            logger.exception('Failed to load model')
-            raise RuntimeError(f"Failed to load model: {e}")
+            logger.exception("Failed to load model")
+            raise RuntimeError(f"Failed to load model: {e}") from e
 
     def _validate_model_compatibility(self) -> None:
         """Validate model compatibility with current configuration."""
         if not self.model or not self._model_config:
-            raise RuntimeError('Model not loaded properly')
+            raise RuntimeError("Model not loaded properly")
 
-        vocab_size = getattr(self._model_config, 'vocab_size', 0)
-        hidden_size = getattr(self._model_config, 'hidden_size', 0)
-        num_heads = getattr(self._model_config, 'num_attention_heads', 0)
+        vocab_size = getattr(self._model_config, "vocab_size", 0)
+        hidden_size = getattr(self._model_config, "hidden_size", 0)
+        num_heads = getattr(self._model_config, "num_attention_heads", 0)
 
         if vocab_size <= 0:
             raise ValueError(f"Invalid vocab_size: {vocab_size}")
@@ -164,8 +171,10 @@ class ModelManager:
         if num_heads <= 0:
             raise ValueError(f"Invalid num_attention_heads: {num_heads}")
 
-        logger.debug(f"Model compatibility validated: vocab={vocab_size}, "
-                     f"hidden={hidden_size}, heads={num_heads}")
+        logger.debug(
+            f"Model compatibility validated: vocab={vocab_size}, "
+            f"hidden={hidden_size}, heads={num_heads}"
+        )
 
     def get_model_info(self) -> dict[str, Any]:
         """Get information about the loaded model.
@@ -177,16 +186,14 @@ class ModelManager:
             return {}
 
         return {
-            'model_type': self.model_type,
-            'device': str(self.device),
-            'vocab_size': getattr(self._model_config, 'vocab_size', None),
-            'hidden_size': getattr(self._model_config, 'hidden_size', None),
-            'num_layers': getattr(self._model_config, 'num_hidden_layers',
-                                  None),
-            'num_heads': getattr(self._model_config, 'num_attention_heads',
-                                 None),
-            'dtype': str(self.config.dtype),
-            'tensor_parallel_size': self.config.tensor_parallel_size,
+            "model_type": self.model_type,
+            "device": str(self.device),
+            "vocab_size": getattr(self._model_config, "vocab_size", None),
+            "hidden_size": getattr(self._model_config, "hidden_size", None),
+            "num_layers": getattr(self._model_config, "num_hidden_layers", None),
+            "num_heads": getattr(self._model_config, "num_attention_heads", None),
+            "dtype": str(self.config.dtype),
+            "tensor_parallel_size": self.config.tensor_parallel_size,
         }
 
     def cleanup(self) -> None:
@@ -202,7 +209,7 @@ class ModelManager:
         # Clear cache for the current device (CUDA/NPU/XPU)
         empty_cache()
 
-        logger.debug('Model manager cleanup completed')
+        logger.debug("Model manager cleanup completed")
 
     def __enter__(self):
         """Context manager entry."""

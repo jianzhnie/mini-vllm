@@ -36,8 +36,8 @@ Core Modules:
     engine.model_runner: Model execution and distributed inference
 """
 
-__version__ = '0.1.0'
-__author__ = 'Mini-vLLM Contributors'
+__version__ = "0.1.0"
+__author__ = "Mini-vLLM Contributors"
 
 # Public API - import main classes for convenience
 try:
@@ -47,17 +47,20 @@ try:
     from minivllm.sampling_params import SamplingParams  # noqa: F401
 
     __all__ = [
-        'Config',
-        'SamplingParams',
-        'LLM',
-        'Sequence',
-        'SequenceStatus',
+        "Config",
+        "SamplingParams",
+        "LLM",
+        "Sequence",
+        "SequenceStatus",
     ]
 except ImportError as e:
     import warnings
 
-    warnings.warn(f"Failed to import some modules from minivllm: {e}. "
-                  f"Make sure all required dependencies are installed: "
-                  f"torch, transformers, flash-attn, triton, xxhash. "
-                  f"Some functionality may be unavailable.")
+    warnings.warn(
+        f"Failed to import some modules from minivllm: {e}. "
+        f"Make sure all required dependencies are installed: "
+        f"torch, transformers, flash-attn, triton, xxhash. "
+        f"Some functionality may be unavailable.",
+        stacklevel=2,
+    )
     __all__ = []

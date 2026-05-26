@@ -27,7 +27,7 @@ except ImportError:
 try:
     import torch_npu
 
-    if hasattr(torch_npu, 'npu_fused_infer_attention_score'):
+    if hasattr(torch_npu, "npu_fused_infer_attention_score"):
         npu_fused_infer_attention_score = torch_npu.npu_fused_infer_attention_score
     else:
         npu_fused_infer_attention_score = None
@@ -46,7 +46,7 @@ try:
 
     _TRITON_AVAILABLE = True
 except ImportError:
-    logger.warning('Triton not available. KV cache operations may be slower.')
+    logger.warning("Triton not available. KV cache operations may be slower.")
 
 if _TRITON_AVAILABLE:
 
@@ -177,17 +177,14 @@ class StandardAttentionBackend(AttentionBackend):
         # This is optimized for NPU (and CUDA/CPU) and avoids manual mask creation
         if attention_mask is not None:
             # If custom mask provided, use it (is_causal=False to avoid conflict)
-            output = F.scaled_dot_product_attention(query,
-                                                    key,
-                                                    value,
-                                                    attn_mask=attention_mask,
-                                                    is_causal=False)
+            output = F.scaled_dot_product_attention(
+                query, key, value, attn_mask=attention_mask, is_causal=False
+            )
         else:
             # Use is_causal flag
-            output = F.scaled_dot_product_attention(query,
-                                                    key,
-                                                    value,
-                                                    is_causal=is_causal)
+            output = F.scaled_dot_product_attention(
+                query, key, value, is_causal=is_causal
+            )
 
         # If output is not contiguous, make it contiguous? SDPA returns contiguous?
         # Standard implementation returned matmul result which is contiguous.
@@ -226,7 +223,7 @@ class StandardAttentionBackend(AttentionBackend):
 
             # The kernel expects flat pointers and calculates offsets manually.
             # We need to pass the number of elements per token (hidden_size)
-            store_kvcache_kernel[(batch_size, )](
+            store_kvcache_kernel[(batch_size,)](
                 key,
                 key.stride(0),
                 value,
@@ -246,7 +243,7 @@ class StandardAttentionBackend(AttentionBackend):
 
         valid_slots = slot_mapping[valid_mask]
         # NPU optimization: use int32 indices for better compatibility
-        if k_cache.device.type == 'npu':
+        if k_cache.device.type == "npu":
             valid_slots = valid_slots.to(torch.int32)
 
         # Reshape key/value to [num_valid, hidden_size]
@@ -282,7 +279,7 @@ class FlashAttentionBackend(AttentionBackend):
         self._fallback_backend = StandardAttentionBackend()
         if not self._flash_attn_available:
             logger.warning(
-                'Flash Attention not available, falling back to standard attention'
+                "Flash Attention not available, falling back to standard attention"
             )
 
     def _check_flash_attn(self) -> bool:
@@ -306,8 +303,9 @@ class FlashAttentionBackend(AttentionBackend):
         """Forward pass using Flash Attention."""
         if not self._flash_attn_available:
             # Fallback to standard attention
-            return self._fallback_backend.forward(query, key, value,
-                                                  attention_mask, is_causal)
+            return self._fallback_backend.forward(
+                query, key, value, attention_mask, is_causal
+            )
 
         try:
             # Flash Attention expects (batch, seq_len, num_heads, head_dim)
@@ -332,8 +330,9 @@ class FlashAttentionBackend(AttentionBackend):
             logger.warning(
                 f"Flash Attention failed with error: {e}, falling back to standard attention"
             )
-            return self._fallback_backend.forward(query, key, value,
-                                                  attention_mask, is_causal)
+            return self._fallback_backend.forward(
+                query, key, value, attention_mask, is_causal
+            )
 
     def store_kv_cache(
         self,
@@ -344,8 +343,9 @@ class FlashAttentionBackend(AttentionBackend):
         slot_mapping: Tensor,
     ) -> None:
         """Store KV cache (delegates to standard implementation)."""
-        return self._fallback_backend.store_kv_cache(key, value, k_cache,
-                                                     v_cache, slot_mapping)
+        return self._fallback_backend.store_kv_cache(
+            key, value, k_cache, v_cache, slot_mapping
+        )
 
 
 class NPUAttentionBackend(AttentionBackend):
@@ -363,8 +363,7 @@ class NPUAttentionBackend(AttentionBackend):
         self.npu_fused_infer_attention_score = npu_fused_infer_attention_score
 
         if not self._npu_available:
-            logger.warning(
-                'NPU not available, falling back to standard attention')
+            logger.warning("NPU not available, falling back to standard attention")
 
     def _check_npu_availability(self) -> bool:
         """Check if NPU is available."""
@@ -390,8 +389,9 @@ class NPUAttentionBackend(AttentionBackend):
     ) -> Tensor:
         """Forward pass using NPU optimizations."""
         if not self._npu_available:
-            return self._fallback_backend.forward(query, key, value,
-                                                  attention_mask, is_causal)
+            return self._fallback_backend.forward(
+                query, key, value, attention_mask, is_causal
+            )
 
         try:
             # Only convert to bfloat16 if not already a supported dtype
@@ -414,7 +414,7 @@ class NPUAttentionBackend(AttentionBackend):
                 dropout_p=0.0,
                 softmax_scale=None,
                 causal=is_causal,
-                input_layout='BSND',
+                input_layout="BSND",
             )
 
             if target_dtype is not None:
@@ -425,8 +425,9 @@ class NPUAttentionBackend(AttentionBackend):
             logger.error(
                 f"NPU attention failed: {e}, falling back to standard attention"
             )
-            return self._fallback_backend.forward(query, key, value,
-                                                  attention_mask, is_causal)
+            return self._fallback_backend.forward(
+                query, key, value, attention_mask, is_causal
+            )
 
     def unified_inference(
         self,
@@ -506,16 +507,15 @@ class NPUAttentionBackend(AttentionBackend):
                     end = start + s_len
                     # query[start:end] is (s_len, num_heads, head_dim)
                     # permute to (num_heads, s_len, head_dim)
-                    padded_q[i, :, :s_len, :] = query[start:end].permute(
-                        1, 0, 2)
+                    padded_q[i, :, :s_len, :] = query[start:end].permute(1, 0, 2)
 
                     if key_cache.dim() == 3:
-                        padded_k[
-                            i, :, :s_len, :] = key_cache[start:end].permute(
-                                1, 0, 2)
-                        padded_v[
-                            i, :, :s_len, :] = value_cache[start:end].permute(
-                                1, 0, 2)
+                        padded_k[i, :, :s_len, :] = key_cache[start:end].permute(
+                            1, 0, 2
+                        )
+                        padded_v[i, :, :s_len, :] = value_cache[start:end].permute(
+                            1, 0, 2
+                        )
 
                     start = end
 
@@ -558,10 +558,7 @@ class NPUAttentionBackend(AttentionBackend):
                 # Causal mask for prefill: 1 for mask, 0 for keep (BOOL)
                 # Use upper triangle as mask (standard for NPU FlashAttention)
                 atten_mask = torch.triu(
-                    torch.ones(q_len,
-                               q_len,
-                               device=query.device,
-                               dtype=torch.bool),
+                    torch.ones(q_len, q_len, device=query.device, dtype=torch.bool),
                     diagonal=1,
                 )
                 atten_mask = atten_mask.view(1, 1, q_len, q_len)
@@ -574,7 +571,7 @@ class NPUAttentionBackend(AttentionBackend):
                     atten_mask,
                     seq_len,
                     num_kv_heads,
-                    input_layout='BNSD',
+                    input_layout="BNSD",
                     actual_seq_lengths=q_seq_lens,
                     actual_seq_lengths_kv=kv_seq_lens,
                     num_heads=query.shape[1],
@@ -590,7 +587,7 @@ class NPUAttentionBackend(AttentionBackend):
                     value_cache,
                     num_heads=query.shape[1],
                     num_key_value_heads=num_kv_heads,
-                    input_layout='BNSD',
+                    input_layout="BNSD",
                     actual_seq_lengths=q_seq_lens,
                     actual_seq_lengths_kv=kv_seq_lens,
                     scale=scale,
@@ -635,7 +632,7 @@ class NPUAttentionBackend(AttentionBackend):
             return out
         except RuntimeError as e:
             if self._handle_oom(e):
-                logger.warning('Retrying NPU inference after OOM handling')
+                logger.warning("Retrying NPU inference after OOM handling")
                 try:
                     return self.npu_fused_infer_attention_score(
                         query,
@@ -644,7 +641,7 @@ class NPUAttentionBackend(AttentionBackend):
                         None,
                         seq_len,
                         num_kv_heads,
-                        input_layout='BNSD',
+                        input_layout="BNSD",
                         actual_seq_lengths=q_seq_lens,
                         actual_seq_lengths_kv=kv_seq_lens,
                         num_heads=query.shape[1],
@@ -660,7 +657,7 @@ class NPUAttentionBackend(AttentionBackend):
                         value_cache,
                         num_heads=query.shape[1],
                         num_key_value_heads=num_kv_heads,
-                        input_layout='BNSD',
+                        input_layout="BNSD",
                         actual_seq_lengths=q_seq_lens,
                         actual_seq_lengths_kv=kv_seq_lens,
                         scale=scale,
@@ -676,9 +673,9 @@ class NPUAttentionBackend(AttentionBackend):
         Returns:
             True if OOM was handled (e.g., by clearing cache), False otherwise.
         """
-        if 'out of memory' in str(e).lower():
-            logger.warning('NPU OOM detected. Attempting to clear cache.')
-            if hasattr(torch, 'npu'):
+        if "out of memory" in str(e).lower():
+            logger.warning("NPU OOM detected. Attempting to clear cache.")
+            if hasattr(torch, "npu"):
                 torch.npu.empty_cache()
             return True
         return False
@@ -711,8 +708,11 @@ class NPUAttentionBackend(AttentionBackend):
         if context.block_tables is not None and not context.is_prefill:
             # Decode phase with block tables: gather from cache
             batch_size = k.size(0) if k.dim() > 2 else 1
-            max_seqlen = (context.context_lens.max().item()
-                          if context.context_lens is not None else k.size(-2))
+            max_seqlen = (
+                context.context_lens.max().item()
+                if context.context_lens is not None
+                else k.size(-2)
+            )
 
             # Create empty cache tensors
             k_npu = torch.zeros(
@@ -848,18 +848,18 @@ class NPUAttentionBackend(AttentionBackend):
             valid_value = valid_value.contiguous()
 
         # Ensure indices are int32 for NPU performance/compatibility
-        if k_cache_reshaped.device.type == 'npu' and valid_slots.dtype != torch.int32:
+        if k_cache_reshaped.device.type == "npu" and valid_slots.dtype != torch.int32:
             valid_slots = valid_slots.to(torch.int32)
 
         # Scatter update - Prefer index_copy_ on NPU for stability with bbfloat16
         try:
-            if k_cache_reshaped.device.type == 'npu':
+            if k_cache_reshaped.device.type == "npu":
                 # Use index_copy_ which is verified to work on NPU with bbfloat16
                 k_cache_reshaped.index_copy_(0, valid_slots, valid_key)
                 v_cache_reshaped.index_copy_(0, valid_slots, valid_value)
             else:
-                k_cache_reshaped.index_put_((valid_slots, ), valid_key)
-                v_cache_reshaped.index_put_((valid_slots, ), valid_value)
+                k_cache_reshaped.index_put_((valid_slots,), valid_key)
+                v_cache_reshaped.index_put_((valid_slots,), valid_value)
         except RuntimeError as e:
             # Fallback
             logger.warning(f"KV Cache update failed: {e}")

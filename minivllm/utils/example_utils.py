@@ -5,11 +5,11 @@ from minivllm.utils.logger_utils import get_logger
 logger = get_logger(__name__)
 
 DEFAULT_PROMPTS = [
-    'Hello, who are you?',
-    'What is your name?',
-    'Where are you from?',
-    'Where is the capital of France?',
-    'Tell me a joke.',
+    "Hello, who are you?",
+    "What is your name?",
+    "Where are you from?",
+    "Where is the capital of France?",
+    "Tell me a joke.",
 ]
 
 
@@ -27,19 +27,19 @@ def format_prompts_with_chat_template(
         Formatted prompts with chat template applied, or original prompts
         if no chat template is available.
     """
-    if not getattr(tokenizer, 'chat_template', None):
-        logger.info('Chat template not available, using raw prompts.')
+    if not getattr(tokenizer, "chat_template", None):
+        logger.info("Chat template not available, using raw prompts.")
         return prompts
 
-    if not hasattr(tokenizer, 'apply_chat_template'):
-        logger.info('Chat template not available, using raw prompts.')
+    if not hasattr(tokenizer, "apply_chat_template"):
+        logger.info("Chat template not available, using raw prompts.")
         return prompts
 
-    logger.info('Applying chat template to prompts...')
+    logger.info("Applying chat template to prompts...")
     formatted_prompts: list[str] = []
     try:
         for prompt in prompts:
-            messages = [{'role': 'user', 'content': prompt}]
+            messages = [{"role": "user", "content": prompt}]
             formatted = tokenizer.apply_chat_template(
                 messages,
                 tokenize=False,
@@ -47,8 +47,7 @@ def format_prompts_with_chat_template(
             )
             formatted_prompts.append(formatted)
     except Exception as e:
-        logger.warning(
-            f"Failed to apply chat template ({e}), using raw prompts.")
+        logger.warning(f"Failed to apply chat template ({e}), using raw prompts.")
         return prompts
 
     return formatted_prompts

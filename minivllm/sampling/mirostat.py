@@ -34,8 +34,9 @@ class MirostatSampler(nn.Module):
         """
         super().__init__()
         self.target_perplexity = target_perplexity
-        self.register_buffer('target_surprise',
-                             torch.log(torch.tensor(target_perplexity)))
+        self.register_buffer(
+            "target_surprise", torch.log(torch.tensor(target_perplexity))
+        )
         self.learning_rate = learning_rate
         self.max_temperature = max_temperature
         self.temperature = 1.0
@@ -56,16 +57,13 @@ class MirostatSampler(nn.Module):
         probs = torch.softmax(tempered_logits, dim=-1)
 
         # Sort probabilities in descending order
-        sorted_probs, sorted_indices = torch.sort(probs,
-                                                  descending=True,
-                                                  dim=-1)
+        sorted_probs, sorted_indices = torch.sort(probs, descending=True, dim=-1)
 
         # Calculate cumulative probabilities
         cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
 
         # Find the cutoff point where cumulative probability exceeds threshold
-        cutoff_mask = cumulative_probs > (1.0 - 1.0 /
-                                          (self.temperature * 10.0))
+        cutoff_mask = cumulative_probs > (1.0 - 1.0 / (self.temperature * 10.0))
 
         # Create truncated distribution
         truncated_probs = sorted_probs.clone()
@@ -79,12 +77,10 @@ class MirostatSampler(nn.Module):
         sample_idx = torch.multinomial(truncated_probs, 1).squeeze(-1)
 
         # Get the actual token index
-        token_idx = sorted_indices.gather(-1,
-                                          sample_idx.unsqueeze(-1)).squeeze(-1)
+        token_idx = sorted_indices.gather(-1, sample_idx.unsqueeze(-1)).squeeze(-1)
 
         # Calculate the surprise (negative log probability) of the selected token
-        selected_prob = truncated_probs.gather(
-            -1, sample_idx.unsqueeze(-1)).squeeze(-1)
+        selected_prob = truncated_probs.gather(-1, sample_idx.unsqueeze(-1)).squeeze(-1)
         surprise = -torch.log(selected_prob + 1e-10)
 
         # Update temperature based on the difference between actual and target surprise
@@ -123,8 +119,9 @@ class MirostatV2Sampler(nn.Module):
         """
         super().__init__()
         self.target_perplexity = target_perplexity
-        self.register_buffer('target_surprise',
-                             torch.log(torch.tensor(target_perplexity)))
+        self.register_buffer(
+            "target_surprise", torch.log(torch.tensor(target_perplexity))
+        )
         self.learning_rate = learning_rate
         self.tau = tau
         self.temperature = 1.0
@@ -145,9 +142,7 @@ class MirostatV2Sampler(nn.Module):
         probs = torch.softmax(tempered_logits, dim=-1)
 
         # Sort probabilities in descending order
-        sorted_probs, sorted_indices = torch.sort(probs,
-                                                  descending=True,
-                                                  dim=-1)
+        sorted_probs, sorted_indices = torch.sort(probs, descending=True, dim=-1)
 
         # Calculate cumulative probabilities
         cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
@@ -167,19 +162,17 @@ class MirostatV2Sampler(nn.Module):
         sample_idx = torch.multinomial(truncated_probs, 1).squeeze(-1)
 
         # Get the actual token index
-        token_idx = sorted_indices.gather(-1,
-                                          sample_idx.unsqueeze(-1)).squeeze(-1)
+        token_idx = sorted_indices.gather(-1, sample_idx.unsqueeze(-1)).squeeze(-1)
 
         # Calculate the surprise of the selected token
-        selected_prob = truncated_probs.gather(
-            -1, sample_idx.unsqueeze(-1)).squeeze(-1)
+        selected_prob = truncated_probs.gather(-1, sample_idx.unsqueeze(-1)).squeeze(-1)
         surprise = -torch.log(selected_prob + 1e-10)
 
         # Update mu using the error between actual and target surprise
         error = surprise - self.target_surprise
-        self.mu = torch.clamp(self.mu - self.learning_rate * error,
-                              min=1.0,
-                              max=100.0).item()
+        self.mu = torch.clamp(
+            self.mu - self.learning_rate * error, min=1.0, max=100.0
+        ).item()
 
         # Update temperature based on mu
         self.temperature = self.tau / self.mu

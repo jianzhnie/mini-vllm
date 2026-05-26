@@ -17,8 +17,11 @@ try:
     compile_ops = True
 
     # Disable compile on NPU to avoid backend errors
-    if hasattr(torch, 'npu') and torch.npu.is_available(
-    ) or not torch.cuda.is_available():
+    if (
+        hasattr(torch, "npu")
+        and torch.npu.is_available()
+        or not torch.cuda.is_available()
+    ):
         compile_ops = False
 except ImportError:
     compile_ops = False
@@ -49,13 +52,12 @@ def apply_temperature(logits: Tensor, temperature: Tensor) -> Tensor:
     """
     if logits.dim() != 2:
         raise ValueError(
-            f"logits must be 2D [batch_size, vocab_size], got {logits.shape}")
+            f"logits must be 2D [batch_size, vocab_size], got {logits.shape}"
+        )
     if isinstance(temperature, float):
         if temperature == 1.0:
             return logits
-        temp = torch.tensor(temperature,
-                            device=logits.device,
-                            dtype=logits.dtype)
+        temp = torch.tensor(temperature, device=logits.device, dtype=logits.dtype)
     else:
         temp = temperature.to(logits.dtype)
 
@@ -68,9 +70,9 @@ def apply_temperature(logits: Tensor, temperature: Tensor) -> Tensor:
     return logits / temp
 
 
-def apply_top_k(logits: Tensor,
-                top_k: Tensor,
-                filter_value: float = -float('inf')) -> Tensor:
+def apply_top_k(
+    logits: Tensor, top_k: Tensor, filter_value: float = -float("inf")
+) -> Tensor:
     """
     Apply Top-K filtering.
 
@@ -87,7 +89,8 @@ def apply_top_k(logits: Tensor,
     """
     if logits.dim() != 2:
         raise ValueError(
-            f"logits must be 2D [batch_size, vocab_size], got {logits.shape}")
+            f"logits must be 2D [batch_size, vocab_size], got {logits.shape}"
+        )
 
     vocab_size = logits.size(-1)
 
@@ -95,10 +98,9 @@ def apply_top_k(logits: Tensor,
     if isinstance(top_k, int):
         if top_k <= 0 or top_k >= vocab_size:
             return logits
-        top_k = torch.full((logits.size(0), ),
-                           top_k,
-                           device=logits.device,
-                           dtype=torch.long)
+        top_k = torch.full(
+            (logits.size(0),), top_k, device=logits.device, dtype=torch.long
+        )
 
     # Check if any k is active
     active_mask = (top_k > 0) & (top_k < vocab_size)
@@ -135,9 +137,9 @@ def apply_top_k(logits: Tensor,
 
 
 @compiled
-def apply_top_p(logits: Tensor,
-                top_p: Tensor,
-                filter_value: float = -float('inf')) -> Tensor:
+def apply_top_p(
+    logits: Tensor, top_p: Tensor, filter_value: float = -float("inf")
+) -> Tensor:
     """
     Apply Top-P (Nucleus) filtering.
 
@@ -153,16 +155,16 @@ def apply_top_p(logits: Tensor,
     """
     if logits.dim() != 2:
         raise ValueError(
-            f"logits must be 2D [batch_size, vocab_size], got {logits.shape}")
+            f"logits must be 2D [batch_size, vocab_size], got {logits.shape}"
+        )
 
     # Handle scalar p
     if isinstance(top_p, float):
         if top_p >= 1.0 or top_p <= 0.0:
             return logits
-        top_p = torch.full((logits.size(0), ),
-                           top_p,
-                           device=logits.device,
-                           dtype=logits.dtype)
+        top_p = torch.full(
+            (logits.size(0),), top_p, device=logits.device, dtype=logits.dtype
+        )
 
     # Check if any p is active (< 1.0)
     if not (top_p < 1.0).any():
@@ -179,21 +181,21 @@ def apply_top_p(logits: Tensor,
     sorted_indices_to_remove = cumulative_probs > top_p.unsqueeze(1)
 
     # Shift to right to keep first token above threshold
-    sorted_indices_to_remove[...,
-                             1:] = sorted_indices_to_remove[..., :-1].clone()
+    sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
     sorted_indices_to_remove[..., 0] = 0
 
     # Scatter back to original indexing
     indices_to_remove = sorted_indices_to_remove.scatter(
-        1, sorted_indices, sorted_indices_to_remove)
+        1, sorted_indices, sorted_indices_to_remove
+    )
     logits.masked_fill_(indices_to_remove, filter_value)
 
     return logits
 
 
-def apply_min_p(logits: Tensor,
-                min_p: Tensor,
-                filter_value: float = -float('inf')) -> Tensor:
+def apply_min_p(
+    logits: Tensor, min_p: Tensor, filter_value: float = -float("inf")
+) -> Tensor:
     """
     Apply Min-P filtering.
 
@@ -209,16 +211,16 @@ def apply_min_p(logits: Tensor,
     """
     if logits.dim() != 2:
         raise ValueError(
-            f"logits must be 2D [batch_size, vocab_size], got {logits.shape}")
+            f"logits must be 2D [batch_size, vocab_size], got {logits.shape}"
+        )
 
     # Handle scalar min_p
     if isinstance(min_p, float):
         if min_p <= 0.0:
             return logits
-        min_p = torch.full((logits.size(0), ),
-                           min_p,
-                           device=logits.device,
-                           dtype=logits.dtype)
+        min_p = torch.full(
+            (logits.size(0),), min_p, device=logits.device, dtype=logits.dtype
+        )
 
     if not (min_p > 0.0).any():
         return logits
@@ -233,9 +235,9 @@ def apply_min_p(logits: Tensor,
     return logits
 
 
-def apply_typical_filtering(logits: Tensor,
-                            tau: float = 1.0,
-                            filter_value: float = -float('inf')) -> Tensor:
+def apply_typical_filtering(
+    logits: Tensor, tau: float = 1.0, filter_value: float = -float("inf")
+) -> Tensor:
     """
     Apply Typical Sampling filtering.
 
@@ -286,9 +288,9 @@ def apply_typical_filtering(logits: Tensor,
 
 
 def apply_top_token_restriction(
-        logits: Tensor,
-        avoid_top_k: int,
-        filter_value: float = -float('inf'),
+    logits: Tensor,
+    avoid_top_k: int,
+    filter_value: float = -float("inf"),
 ) -> Tensor:
     """
     Apply Top Token Restriction (avoid top k).
@@ -297,15 +299,14 @@ def apply_top_token_restriction(
         return logits
 
     logits = logits.clone()
-    _, top_k_indices = torch.topk(logits,
-                                  min(avoid_top_k, logits.size(-1)),
-                                  dim=-1)
+    _, top_k_indices = torch.topk(logits, min(avoid_top_k, logits.size(-1)), dim=-1)
     logits.scatter_(-1, top_k_indices, filter_value)
     return logits
 
 
-def apply_repetition_penalty(logits: Tensor, prev_tokens: Tensor,
-                             penalty: float) -> Tensor:
+def apply_repetition_penalty(
+    logits: Tensor, prev_tokens: Tensor, penalty: float
+) -> Tensor:
     """
     Apply repetition penalty.
     """
@@ -330,18 +331,20 @@ def apply_repetition_penalty(logits: Tensor, prev_tokens: Tensor,
         prev_tokens = prev_tokens.long()
 
     # Create a mask of present tokens
-    presence_mask = torch.zeros((batch_size, vocab_size),
-                                dtype=torch.bool,
-                                device=logits.device)
+    presence_mask = torch.zeros(
+        (batch_size, vocab_size), dtype=torch.bool, device=logits.device
+    )
 
     valid_tokens_mask = (prev_tokens >= 0) & (prev_tokens < vocab_size)
 
     if valid_tokens_mask.all():
         presence_mask.scatter_(1, prev_tokens, True)
     else:
-        batch_indices = (torch.arange(
-            batch_size,
-            device=logits.device).unsqueeze(1).expand_as(prev_tokens))
+        batch_indices = (
+            torch.arange(batch_size, device=logits.device)
+            .unsqueeze(1)
+            .expand_as(prev_tokens)
+        )
         valid_batch = batch_indices[valid_tokens_mask]
         valid_toks = prev_tokens[valid_tokens_mask]
         presence_mask[valid_batch, valid_toks] = True
@@ -357,8 +360,7 @@ def apply_repetition_penalty(logits: Tensor, prev_tokens: Tensor,
     return logits
 
 
-def apply_frequency_penalty(logits: Tensor, sequence: Tensor,
-                            alpha: float) -> Tensor:
+def apply_frequency_penalty(logits: Tensor, sequence: Tensor, alpha: float) -> Tensor:
     """Apply frequency penalty."""
     if alpha == 0.0 or sequence is None:
         return logits
@@ -378,9 +380,9 @@ def apply_frequency_penalty(logits: Tensor, sequence: Tensor,
         sequence = sequence.long()
 
     # Count frequencies
-    counts = torch.zeros((batch_size, vocab_size),
-                         dtype=logits.dtype,
-                         device=logits.device)
+    counts = torch.zeros(
+        (batch_size, vocab_size), dtype=logits.dtype, device=logits.device
+    )
 
     valid_mask = (sequence >= 0) & (sequence < vocab_size)
 
@@ -388,8 +390,11 @@ def apply_frequency_penalty(logits: Tensor, sequence: Tensor,
         src = torch.ones_like(sequence, dtype=logits.dtype)
         counts.scatter_add_(1, sequence, src)
     else:
-        batch_indices = (torch.arange(
-            batch_size, device=logits.device).unsqueeze(1).expand_as(sequence))
+        batch_indices = (
+            torch.arange(batch_size, device=logits.device)
+            .unsqueeze(1)
+            .expand_as(sequence)
+        )
         valid_batch = batch_indices[valid_mask]
         valid_toks = sequence[valid_mask]
         values = torch.ones_like(valid_toks, dtype=logits.dtype)
@@ -403,8 +408,7 @@ def apply_frequency_penalty(logits: Tensor, sequence: Tensor,
 
 
 @compiled
-def apply_presence_penalty(logits: Tensor, sequence: Tensor,
-                           penalty: float) -> Tensor:
+def apply_presence_penalty(logits: Tensor, sequence: Tensor, penalty: float) -> Tensor:
     """Apply presence penalty."""
     if penalty == 0.0 or sequence is None:
         return logits
@@ -423,17 +427,20 @@ def apply_presence_penalty(logits: Tensor, sequence: Tensor,
     if sequence.dtype != torch.long:
         sequence = sequence.long()
 
-    presence_mask = torch.zeros((batch_size, vocab_size),
-                                dtype=torch.bool,
-                                device=logits.device)
+    presence_mask = torch.zeros(
+        (batch_size, vocab_size), dtype=torch.bool, device=logits.device
+    )
 
     valid_mask = (sequence >= 0) & (sequence < vocab_size)
 
     if valid_mask.all():
         presence_mask.scatter_(1, sequence, True)
     else:
-        batch_indices = (torch.arange(
-            batch_size, device=logits.device).unsqueeze(1).expand_as(sequence))
+        batch_indices = (
+            torch.arange(batch_size, device=logits.device)
+            .unsqueeze(1)
+            .expand_as(sequence)
+        )
         valid_batch = batch_indices[valid_mask]
         valid_toks = sequence[valid_mask]
         presence_mask[valid_batch, valid_toks] = True
@@ -444,8 +451,9 @@ def apply_presence_penalty(logits: Tensor, sequence: Tensor,
     return logits
 
 
-def sample_from_logits(logits: Tensor,
-                       generator: torch.Generator | None = None) -> Tensor:
+def sample_from_logits(
+    logits: Tensor, generator: torch.Generator | None = None
+) -> Tensor:
     """
     Sample one token from logits using multinomial sampling.
     """
@@ -467,8 +475,7 @@ def sample_from_logits(logits: Tensor,
     probs = probs / sum_probs
 
     num_samples = 1
-    sample_tokens = torch.multinomial(probs,
-                                      num_samples,
-                                      replacement=True,
-                                      generator=generator).squeeze(1)
+    sample_tokens = torch.multinomial(
+        probs, num_samples, replacement=True, generator=generator
+    ).squeeze(1)
     return sample_tokens

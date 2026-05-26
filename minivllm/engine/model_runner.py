@@ -25,7 +25,7 @@ from minivllm.utils.logger_utils import get_logger
 
 logger = get_logger(__name__)
 
-__all__ = ['ModelRunner']
+__all__ = ["ModelRunner"]
 
 
 class ModelRunner:
@@ -42,8 +42,7 @@ class ModelRunner:
     that communicate via distributed backend.
     """
 
-    def __init__(self, config: Config, rank: int,
-                 event: Event | list[Event]) -> None:
+    def __init__(self, config: Config, rank: int, event: Event | list[Event]) -> None:
         """Initialize the model runner.
 
         This method:
@@ -64,12 +63,12 @@ class ModelRunner:
             in the __init__ loop waiting for commands from the main process.
         """
         # Setup distributed environment variables
-        if str(rank) != os.environ.get('RANK'):
-            os.environ['RANK'] = str(rank)
-        if str(rank) != os.environ.get('LOCAL_RANK'):
-            os.environ['LOCAL_RANK'] = str(rank)
-        if str(config.tensor_parallel_size) != os.environ.get('WORLD_SIZE'):
-            os.environ['WORLD_SIZE'] = str(config.tensor_parallel_size)
+        if str(rank) != os.environ.get("RANK"):
+            os.environ["RANK"] = str(rank)
+        if str(rank) != os.environ.get("LOCAL_RANK"):
+            os.environ["LOCAL_RANK"] = str(rank)
+        if str(config.tensor_parallel_size) != os.environ.get("WORLD_SIZE"):
+            os.environ["WORLD_SIZE"] = str(config.tensor_parallel_size)
 
         self.config: Config = config
         self.rank: int = rank
@@ -79,7 +78,8 @@ class ModelRunner:
         # Initialize managers
         self.model_manager: ModelManager = ModelManager(config)
         self.distributed_manager: DistributedManager = DistributedManager(
-            config, rank, event)
+            config, rank, event
+        )
         self.inference_executor: InferenceExecutor | None = None
 
         # Initialize all components
@@ -104,21 +104,20 @@ class ModelRunner:
 
             # Initialize inference executor with loaded model
             self.inference_executor = InferenceExecutor(
-                self.config, self.model_manager.model)
+                self.config, self.model_manager.model
+            )
             self.inference_executor.initialize(
-                self.config.max_num_batched_tokens, self.config.max_num_seqs)
+                self.config.max_num_batched_tokens, self.config.max_num_seqs
+            )
 
             # Capture optimization graphs (only on rank 0)
             if self.rank == 0:
-                self.inference_executor.capture_device_graphs(
-                    self.config.max_num_seqs)
+                self.inference_executor.capture_device_graphs(self.config.max_num_seqs)
 
-            logger.info(
-                f"Rank {self.rank}: ModelRunner initialization completed")
+            logger.info(f"Rank {self.rank}: ModelRunner initialization completed")
 
         except Exception as e:
-            logger.error(
-                f"Rank {self.rank}: ModelRunner initialization failed: {e}")
+            logger.error(f"Rank {self.rank}: ModelRunner initialization failed: {e}")
             self.exit()
             raise
 
@@ -138,13 +137,12 @@ class ModelRunner:
 
                 # Validate command format
                 if not isinstance(cmd, (list, tuple)) or len(cmd) != 3:
-                    logger.error(
-                        f"Rank {self.rank}: Invalid command format: {cmd}")
+                    logger.error(f"Rank {self.rank}: Invalid command format: {cmd}")
                     continue
 
                 method_name, args, kwargs = cmd
 
-                if method_name == 'exit':
+                if method_name == "exit":
                     logger.info(f"Rank {self.rank}: Received exit command")
                     break
 
@@ -199,8 +197,7 @@ class ModelRunner:
         method = getattr(self, method_name)
         return method(*args, **kwargs)
 
-    def run(self, sequences: list[Sequence],
-            is_prefill: bool) -> list[int] | None:
+    def run(self, sequences: list[Sequence], is_prefill: bool) -> list[int] | None:
         """Execute inference on a batch of sequences.
 
         Prepares input tensors, runs the model, samples tokens, and updates
@@ -216,11 +213,12 @@ class ModelRunner:
             Returns None for worker processes (rank > 0).
         """
         if self.inference_executor is None:
-            raise RuntimeError('Inference executor not initialized')
+            raise RuntimeError("Inference executor not initialized")
 
         # Execute inference batch - all ranks participate
         logits, next_tokens = self.inference_executor.execute_batch(
-            sequences, is_prefill)
+            sequences, is_prefill
+        )
 
         # Only rank 0 returns tokens
         if self.rank == 0:
@@ -261,7 +259,6 @@ class ModelRunner:
             errors.append(f"Failed to cleanup model manager: {e}")
 
         if errors:
-            logger.warning(
-                f"Rank {self.rank}: Cleanup completed with errors: {errors}")
+            logger.warning(f"Rank {self.rank}: Cleanup completed with errors: {errors}")
         else:
             logger.info(f"Rank {self.rank}: ModelRunner cleanup completed")

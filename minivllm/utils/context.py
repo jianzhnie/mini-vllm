@@ -63,8 +63,7 @@ class Context:
 
 # Thread-safe context variable
 # Using ContextVar ensures each thread/task has its own context instance
-_CONTEXT_VAR: ContextVar[Context] = ContextVar('inference_context',
-                                               default=Context())
+_CONTEXT_VAR: ContextVar[Context | None] = ContextVar("inference_context", default=None)
 
 
 def get_context() -> Context:
@@ -80,7 +79,10 @@ def get_context() -> Context:
         This function will never return None. If no context has been set,
         it returns a default Context with all fields set to their default values.
     """
-    return _CONTEXT_VAR.get()
+    ctx = _CONTEXT_VAR.get()
+    if ctx is None:
+        ctx = Context()
+    return ctx
 
 
 def set_context(

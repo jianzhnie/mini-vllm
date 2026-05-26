@@ -45,7 +45,7 @@ Performance Tips:
 from minivllm.config import Config
 from minivllm.engine.llm_engine import LLMEngine
 
-__all__ = ['LLM']
+__all__ = ["LLM"]
 
 
 class LLM(LLMEngine):

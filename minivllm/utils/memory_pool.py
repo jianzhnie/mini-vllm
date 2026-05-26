@@ -34,7 +34,7 @@ class MemoryPool:
 
         if self.current_usage_bytes > self.max_pool_size_bytes:
             logger.warning(
-                'Memory pool exceeded limit: %.1fMB > %.1fMB',
+                "Memory pool exceeded limit: %.1fMB > %.1fMB",
                 self.current_usage_bytes / 1024**2,
                 self.max_pool_size_bytes / 1024**2,
             )
@@ -55,12 +55,11 @@ class MemoryPool:
     def get_memory_info(self) -> dict[str, float]:
         """Get memory usage information."""
         return {
-            'current_usage_mb': self.current_usage_bytes / (1024 * 1024),
-            'max_pool_size_mb': self.max_pool_size_bytes / (1024 * 1024),
+            "current_usage_mb": self.current_usage_bytes / (1024 * 1024),
+            "max_pool_size_mb": self.max_pool_size_bytes / (1024 * 1024),
         }
 
 
-def get_memory_pool(device: torch.device,
-                    max_pool_size_mb: float) -> MemoryPool:
+def get_memory_pool(device: torch.device, max_pool_size_mb: float) -> MemoryPool:
     """Factory function to get a memory pool instance."""
     return MemoryPool(device, max_pool_size_mb)

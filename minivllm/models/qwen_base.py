@@ -30,27 +30,32 @@ logger = get_logger(__name__)
 
 def _resolve_rope_theta(config, default: float) -> float:
     """Resolve rope_theta from config, handling nested storage formats."""
-    if hasattr(config, 'rope_theta'):
+    if hasattr(config, "rope_theta"):
         return config.rope_theta
-    rope_params = getattr(config, 'rope_parameters', None) or {}
-    if isinstance(rope_params, dict) and 'rope_theta' in rope_params:
-        return rope_params['rope_theta']
-    rope_scaling = getattr(config, 'rope_scaling', None) or {}
-    if isinstance(rope_scaling, dict) and 'rope_theta' in rope_scaling:
-        return rope_scaling['rope_theta']
+    rope_params = getattr(config, "rope_parameters", None) or {}
+    if isinstance(rope_params, dict) and "rope_theta" in rope_params:
+        return rope_params["rope_theta"]
+    rope_scaling = getattr(config, "rope_scaling", None) or {}
+    if isinstance(rope_scaling, dict) and "rope_theta" in rope_scaling:
+        return rope_scaling["rope_theta"]
     return default
 
 
 def _resolve_rope_scaling(config) -> dict[str, Any] | None:
     """Resolve rope_scaling from config, filtering out non-scaling params."""
-    raw = getattr(config, 'rope_scaling', None)
+    raw = getattr(config, "rope_scaling", None)
     if raw is None:
         return None
     if isinstance(raw, dict):
         # Some configs (e.g. Qwen3) store rope_theta/rope_type alongside scaling params
         scaling_keys = {
-            'factor', 'type', 'low_freq_factor', 'high_freq_factor',
-            'original_max_position_embeddings', 'short_factor', 'long_factor'
+            "factor",
+            "type",
+            "low_freq_factor",
+            "high_freq_factor",
+            "original_max_position_embeddings",
+            "short_factor",
+            "long_factor",
         }
         scaling = {k: v for k, v in raw.items() if k in scaling_keys}
         return scaling or None
@@ -136,14 +141,14 @@ class QwenAttention(nn.Module):
             self.q_norm = None
             self.k_norm = None
 
-    def forward(self, positions: torch.Tensor,
-                hidden_states: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, positions: torch.Tensor, hidden_states: torch.Tensor
+    ) -> torch.Tensor:
         qkv = self.qkv_proj(hidden_states)
 
         if hidden_states.dim() == 3:
             batch_size, seq_len, _ = hidden_states.shape
-            q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size],
-                                dim=-1)
+            q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
 
             q = q.view(batch_size, seq_len, self.num_heads, self.head_dim)
             k = k.view(batch_size, seq_len, self.num_kv_heads, self.head_dim)
@@ -165,8 +170,7 @@ class QwenAttention(nn.Module):
             return output.view(batch_size, seq_len, -1)
         else:
             total_tokens, _ = hidden_states.shape
-            q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size],
-                                dim=-1)
+            q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
 
             q = q.view(total_tokens, self.num_heads, self.head_dim)
             k = k.view(total_tokens, self.num_kv_heads, self.head_dim)
@@ -186,18 +190,20 @@ class QwenAttention(nn.Module):
     def extra_repr(self) -> str:
         return (
             f"num_heads={self.num_heads}, num_kv_heads={self.num_kv_heads}, "
-            f"head_dim={self.head_dim}, qkv_bias={self.qkv_bias}")
+            f"head_dim={self.head_dim}, qkv_bias={self.qkv_bias}"
+        )
 
 
 class QwenMLP(nn.Module):
     """Feed-forward (MLP) block with gated activation."""
 
     _ACTIVATION_FN_MAP = {
-        'silu': SiluAndMul,
+        "silu": SiluAndMul,
     }
 
-    def __init__(self, hidden_size: int, intermediate_size: int,
-                 hidden_act: str) -> None:
+    def __init__(
+        self, hidden_size: int, intermediate_size: int, hidden_act: str
+    ) -> None:
         super().__init__()
         self.gate_up_proj = MergedColumnParallelLinear(
             hidden_size,
@@ -228,9 +234,11 @@ class QwenMLP(nn.Module):
         return x
 
     def extra_repr(self) -> str:
-        return (f"hidden_size={self.hidden_size}, "
-                f"intermediate_size={self.intermediate_size}, "
-                f"hidden_act={self.hidden_act}")
+        return (
+            f"hidden_size={self.hidden_size}, "
+            f"intermediate_size={self.intermediate_size}, "
+            f"hidden_act={self.hidden_act}"
+        )
 
 
 class QwenDecoderLayer(nn.Module):
@@ -246,11 +254,13 @@ class QwenDecoderLayer(nn.Module):
             num_kv_heads=config.num_key_value_heads,
             max_position=config.max_position_embeddings,
             rms_norm_eps=config.rms_norm_eps,
-            qkv_bias=getattr(config, 'attention_bias',
-                             self.attention_cls.default_qkv_bias),
-            head_dim=getattr(config, 'head_dim', None),
+            qkv_bias=getattr(
+                config, "attention_bias", self.attention_cls.default_qkv_bias
+            ),
+            head_dim=getattr(config, "head_dim", None),
             rope_theta=_resolve_rope_theta(
-                config, self.attention_cls.default_rope_theta),
+                config, self.attention_cls.default_rope_theta
+            ),
             rope_scaling=_resolve_rope_scaling(config),
         )
         self.mlp = QwenMLP(
@@ -258,10 +268,10 @@ class QwenDecoderLayer(nn.Module):
             intermediate_size=config.intermediate_size,
             hidden_act=config.hidden_act,
         )
-        self.input_layernorm = RMSNorm(config.hidden_size,
-                                       eps=config.rms_norm_eps)
-        self.post_attention_layernorm = RMSNorm(config.hidden_size,
-                                                eps=config.rms_norm_eps)
+        self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.post_attention_layernorm = RMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps
+        )
 
     def forward(
         self,
@@ -273,13 +283,11 @@ class QwenDecoderLayer(nn.Module):
             residual = hidden_states
             hidden_states, _ = self.input_layernorm(hidden_states)
         else:
-            hidden_states, residual = self.input_layernorm(
-                hidden_states, residual)
+            hidden_states, residual = self.input_layernorm(hidden_states, residual)
 
         hidden_states = self.self_attn(positions, hidden_states)
 
-        hidden_states, residual = self.post_attention_layernorm(
-            hidden_states, residual)
+        hidden_states, residual = self.post_attention_layernorm(hidden_states, residual)
 
         hidden_states = self.mlp(hidden_states)
         return hidden_states, residual
@@ -293,16 +301,15 @@ class QwenModel(nn.Module):
     def __init__(self, config) -> None:
         super().__init__()
         self.config = config
-        self.embed_tokens = VocabParallelEmbedding(config.vocab_size,
-                                                   config.hidden_size)
-        self.layers = nn.ModuleList([
-            self.decoder_layer_cls(config)
-            for _ in range(config.num_hidden_layers)
-        ])
+        self.embed_tokens = VocabParallelEmbedding(
+            config.vocab_size, config.hidden_size
+        )
+        self.layers = nn.ModuleList(
+            [self.decoder_layer_cls(config) for _ in range(config.num_hidden_layers)]
+        )
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
-    def forward(self, input_ids: torch.Tensor,
-                positions: torch.Tensor) -> torch.Tensor:
+    def forward(self, input_ids: torch.Tensor, positions: torch.Tensor) -> torch.Tensor:
         hidden_states = self.embed_tokens(input_ids)
         residual = None
         for layer in self.layers:
@@ -316,11 +323,11 @@ class QwenForCausalLM(nn.Module):
 
     model_cls = QwenModel
     packed_modules_mapping = {
-        'q_proj': ('qkv_proj', 'q'),
-        'k_proj': ('qkv_proj', 'k'),
-        'v_proj': ('qkv_proj', 'v'),
-        'gate_proj': ('gate_up_proj', 0),
-        'up_proj': ('gate_up_proj', 1),
+        "q_proj": ("qkv_proj", "q"),
+        "k_proj": ("qkv_proj", "k"),
+        "v_proj": ("qkv_proj", "v"),
+        "gate_proj": ("gate_up_proj", 0),
+        "up_proj": ("gate_up_proj", 1),
     }
 
     def __init__(self, config) -> None:
@@ -328,15 +335,13 @@ class QwenForCausalLM(nn.Module):
         self.config = config
         self.model = self.model_cls(config)
         self.lm_head = ParallelLMHead(config.vocab_size, config.hidden_size)
-        if getattr(config, 'tie_word_embeddings', False):
+        if getattr(config, "tie_word_embeddings", False):
             self.lm_head.weight = self.model.embed_tokens.weight
 
-    def forward(self, input_ids: torch.Tensor,
-                positions: torch.Tensor) -> torch.Tensor:
+    def forward(self, input_ids: torch.Tensor, positions: torch.Tensor) -> torch.Tensor:
         return self.model(input_ids, positions)
 
-    def set_kv_cache(
-            self, kv_cache: list[tuple[torch.Tensor, torch.Tensor]]) -> None:
+    def set_kv_cache(self, kv_cache: list[tuple[torch.Tensor, torch.Tensor]]) -> None:
         for layer_idx, layer in enumerate(self.model.layers):
             if layer_idx < len(kv_cache):
                 k_cache, v_cache = kv_cache[layer_idx]
@@ -350,31 +355,28 @@ class QwenForCausalLM(nn.Module):
         params_dict = dict(self.named_parameters())
 
         for name, loaded_weight in weights.items():
-            if 'rotary_emb.inv_freq' in name:
+            if "rotary_emb.inv_freq" in name:
                 continue
 
             param = None
             loaded_shard_id = None
 
-            for key, (new_key,
-                      shard_id) in self.packed_modules_mapping.items():
-                if name.endswith(f"{key}.weight") or name.endswith(
-                        f"{key}.bias"):
-                    parts = name.split('.')
+            for key, (new_key, shard_id) in self.packed_modules_mapping.items():
+                if name.endswith(f"{key}.weight") or name.endswith(f"{key}.bias"):
+                    parts = name.split(".")
                     if len(parts) >= 2 and parts[-2] == key:
                         parts[-2] = new_key
-                        internal_name = '.'.join(parts)
+                        internal_name = ".".join(parts)
                         if internal_name in params_dict:
                             param = params_dict[internal_name]
                             loaded_shard_id = shard_id
                         break
 
-            if param is None:
-                if name in params_dict:
-                    param = params_dict[name]
+            if param is None and name in params_dict:
+                param = params_dict[name]
 
             if param is not None:
-                if hasattr(param, 'weight_loader'):
+                if hasattr(param, "weight_loader"):
                     param.weight_loader(param, loaded_weight, loaded_shard_id)
                 else:
                     param.data.copy_(loaded_weight)

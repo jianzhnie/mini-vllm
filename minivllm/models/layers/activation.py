@@ -21,13 +21,13 @@ if is_torch_npu_available():
     try:
         import torch_npu
 
-        if hasattr(torch_npu, 'npu_swiglu'):
+        if hasattr(torch_npu, "npu_swiglu"):
             _NPU_SWIGLU_AVAILABLE = True
-            logger.info('NPU SwiGLU kernel available')
+            logger.info("NPU SwiGLU kernel available")
     except ImportError:
         pass
 
-__all__ = ['SiluAndMul']
+__all__ = ["SiluAndMul"]
 
 
 class SiluAndMul(nn.Module):
@@ -65,7 +65,7 @@ class SiluAndMul(nn.Module):
         super().__init__()
 
     def extra_repr(self) -> str:
-        return ''
+        return ""
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Apply gated SiLU activation.
@@ -81,7 +81,7 @@ class SiluAndMul(nn.Module):
             ValueError: If the last dimension of x is not even.
         """
         # NPU optimization
-        if _NPU_SWIGLU_AVAILABLE and x.device.type == 'npu':
+        if _NPU_SWIGLU_AVAILABLE and x.device.type == "npu":
             import torch_npu
 
             return torch_npu.npu_swiglu(x, dim=-1)

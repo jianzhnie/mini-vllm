@@ -20,10 +20,10 @@ from minivllm.utils.logger_utils import get_logger
 logger = get_logger(__name__)
 
 __all__ = [
-    'OPTAttention',
-    'OPTDecoderLayer',
-    'OPTModel',
-    'OPTForCausalLM',
+    "OPTAttention",
+    "OPTDecoderLayer",
+    "OPTModel",
+    "OPTForCausalLM",
 ]
 
 
@@ -58,7 +58,8 @@ class OPTAttention(nn.Module):
         if self.head_dim * num_heads != self.embed_dim:
             raise ValueError(
                 f"embed_dim must be divisible by num_heads (got 'embed_dim': {self.embed_dim}"
-                f" and 'num_heads': {num_heads}).")
+                f" and 'num_heads': {num_heads})."
+            )
 
         self.qkv_proj = QKVParallelLinear(
             embed_dim,
@@ -229,12 +230,12 @@ class OPTDecoder(nn.Module):
         )
 
         if config.word_embed_proj_dim != config.hidden_size:
-            self.project_in = nn.Linear(config.word_embed_proj_dim,
-                                        config.hidden_size,
-                                        bias=False)
-            self.project_out = nn.Linear(config.hidden_size,
-                                         config.word_embed_proj_dim,
-                                         bias=False)
+            self.project_in = nn.Linear(
+                config.word_embed_proj_dim, config.hidden_size, bias=False
+            )
+            self.project_out = nn.Linear(
+                config.hidden_size, config.word_embed_proj_dim, bias=False
+            )
         else:
             self.project_in = None
             self.project_out = None
@@ -245,7 +246,8 @@ class OPTDecoder(nn.Module):
             self.final_layer_norm = None
 
         self.layers = nn.ModuleList(
-            [OPTDecoderLayer(config) for _ in range(config.num_hidden_layers)])
+            [OPTDecoderLayer(config) for _ in range(config.num_hidden_layers)]
+        )
 
     def forward(
         self,
@@ -281,9 +283,9 @@ class OPTModel(nn.Module):
 
         # Mapping for weight loading
         self.packed_modules_mapping = {
-            'q_proj': ('qkv_proj', 'q'),
-            'k_proj': ('qkv_proj', 'k'),
-            'v_proj': ('qkv_proj', 'v'),
+            "q_proj": ("qkv_proj", "q"),
+            "k_proj": ("qkv_proj", "k"),
+            "v_proj": ("qkv_proj", "v"),
         }
 
     def forward(
@@ -322,13 +324,12 @@ class OPTForCausalLM(nn.Module):
         hidden_states = self.model(input_ids, positions)
         return hidden_states
 
-    def set_kv_cache(
-            self, kv_cache: list[tuple[torch.Tensor, torch.Tensor]]) -> None:
+    def set_kv_cache(self, kv_cache: list[tuple[torch.Tensor, torch.Tensor]]) -> None:
         """Set KV cache for all attention layers."""
         for layer_idx, layer in enumerate(self.model.decoder.layers):
             if layer_idx < len(kv_cache):
                 k_cache, v_cache = kv_cache[layer_idx]
-                if hasattr(layer.self_attn, 'attn'):
+                if hasattr(layer.self_attn, "attn"):
                     layer.self_attn.attn.k_cache = k_cache
                     layer.self_attn.attn.v_cache = v_cache
 

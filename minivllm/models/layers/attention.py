@@ -82,7 +82,7 @@ try:
     _FLASH_ATTN_AVAILABLE = True
 except ImportError:
     logger.warning(
-        'GPU FlashAttention not available. Falling back to standard attention.'
+        "GPU FlashAttention not available. Falling back to standard attention."
     )
 
 # Try to import native torch_npu functions
@@ -93,9 +93,9 @@ if is_torch_npu_available():
         npu_incre_flash_attention = torch_npu.npu_incre_flash_attention
 
         _NPU_FLASH_ATTN_AVAILABLE = True
-        logger.info('NPU Flash Attention available')
+        logger.info("NPU Flash Attention available")
     except ImportError:
-        logger.warning('Native NPU functions not available')
+        logger.warning("Native NPU functions not available")
 
 
 class Attention(nn.Module):
@@ -149,20 +149,19 @@ class Attention(nn.Module):
         super().__init__()
         self.num_heads: int = num_heads
         self.head_dim: int = head_dim
-        self.scale: float = float(
-            scale) if scale else 1.0 / math.sqrt(head_dim)
+        self.scale: float = float(scale) if scale else 1.0 / math.sqrt(head_dim)
         self.num_kv_heads: int = num_kv_heads
 
         # Initialize appropriate backend
         self.backend: AttentionBackend
-        use_npu_fa = os.getenv('MINIVLLM_USE_NPU_FA', '0').lower() in {
-            '1',
-            'true',
-            'yes',
+        use_npu_fa = os.getenv("MINIVLLM_USE_NPU_FA", "0").lower() in {
+            "1",
+            "true",
+            "yes",
         }
         if _NPU_FLASH_ATTN_AVAILABLE and use_npu_fa:
             self.backend = NPUAttentionBackend()
-            logger.info('NPU Flash Attention backend initialized')
+            logger.info("NPU Flash Attention backend initialized")
         elif _FLASH_ATTN_AVAILABLE:
             self.backend = FlashAttentionBackend()
         else:
@@ -176,12 +175,15 @@ class Attention(nn.Module):
         self._cache_initialized: bool = False
 
     def extra_repr(self) -> str:
-        return (f"num_heads={self.num_heads}, head_dim={self.head_dim}, "
-                f"num_kv_heads={self.num_kv_heads}, scale={self.scale}, "
-                f"backend={self.backend.__class__.__name__}")
+        return (
+            f"num_heads={self.num_heads}, head_dim={self.head_dim}, "
+            f"num_kv_heads={self.num_kv_heads}, scale={self.scale}, "
+            f"backend={self.backend.__class__.__name__}"
+        )
 
-    def forward(self, q: torch.Tensor, k: torch.Tensor,
-                v: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
+    ) -> torch.Tensor:
         """Apply attention computation with KV-cache management.
 
         This method handles both prefill and decode phases, automatically
@@ -225,22 +227,26 @@ class Attention(nn.Module):
         if k_cache.numel() and v_cache.numel():
             self._cache_initialized = True
             # Only store if slot_mapping is available and valid
-            if context.slot_mapping is not None and context.slot_mapping.numel(
-            ) > 0:
-                self.backend.store_kv_cache(k, v, k_cache, v_cache,
-                                            context.slot_mapping)
+            if context.slot_mapping is not None and context.slot_mapping.numel() > 0:
+                self.backend.store_kv_cache(
+                    k, v, k_cache, v_cache, context.slot_mapping
+                )
         elif not context.is_prefill and not self._cache_initialized:
             # In decode phase, KV cache must be initialized
             raise RuntimeError(
-                'KV cache has not been initialized. Ensure ModelRunner.allocate_kv_cache() '
-                'is called before inference.')
+                "KV cache has not been initialized. Ensure ModelRunner.allocate_kv_cache() "
+                "is called before inference."
+            )
 
         # Priority 1: NPU unified inference API (most optimized)
         if isinstance(self.backend, NPUAttentionBackend):
             try:
                 # Use NPU unified inference engine with BNSD layout
-                seq_length = (context.context_lens.max().item() if
-                              context.context_lens is not None else q.shape[0])
+                seq_length = (
+                    context.context_lens.max().item()
+                    if context.context_lens is not None
+                    else q.shape[0]
+                )
 
                 # Prepare tensors for NPU format
                 npu_k_cache, npu_v_cache = self.backend.prepare_npu_cache(
@@ -267,10 +273,14 @@ class Attention(nn.Module):
                 # Reshape output back to expected format [N, num_heads, head_dim]
                 if attn_out.dim() == 4 and attn_out.shape[2] == 1:
                     attn_out = attn_out.squeeze(
-                        2)  # Remove seq_len dimension if present
+                        2
+                    )  # Remove seq_len dimension if present
                 elif attn_out.dim() == 4:
-                    attn_out = (attn_out.transpose(1, 2).contiguous().view(
-                        -1, self.num_heads, self.head_dim))
+                    attn_out = (
+                        attn_out.transpose(1, 2)
+                        .contiguous()
+                        .view(-1, self.num_heads, self.head_dim)
+                    )
 
                 return attn_out.contiguous()
 
@@ -290,13 +300,22 @@ class Attention(nn.Module):
                 if flash_attn_varlen_func is not None:
                     # Flatten BNSD to (total_tokens, num_heads, head_dim) if needed
                     if q.dim() == 4:
-                        q = (q.transpose(1, 2).contiguous().view(
-                            -1, self.num_heads, self.head_dim))
+                        q = (
+                            q.transpose(1, 2)
+                            .contiguous()
+                            .view(-1, self.num_heads, self.head_dim)
+                        )
                         if k.dim() == 4:
-                            k = (k.transpose(1, 2).contiguous().view(
-                                -1, self.num_kv_heads, self.head_dim))
-                            v = (v.transpose(1, 2).contiguous().view(
-                                -1, self.num_kv_heads, self.head_dim))
+                            k = (
+                                k.transpose(1, 2)
+                                .contiguous()
+                                .view(-1, self.num_kv_heads, self.head_dim)
+                            )
+                            v = (
+                                v.transpose(1, 2)
+                                .contiguous()
+                                .view(-1, self.num_kv_heads, self.head_dim)
+                            )
 
                     attn_out: torch.Tensor = flash_attn_varlen_func(
                         q,
@@ -324,13 +343,15 @@ class Attention(nn.Module):
                         softmax_scale=self.scale,
                         causal=True,
                     )
-                elif (_NPU_FLASH_ATTN_AVAILABLE
-                      and npu_incre_flash_attention is not None):
+                elif (
+                    _NPU_FLASH_ATTN_AVAILABLE and npu_incre_flash_attention is not None
+                ):
                     # Legacy NPU incremental FlashAttention
                     # Reshape tensors for NPU format
                     batch_size = q.size(0)
-                    q_npu = q.view(batch_size, self.num_heads,
-                                   self.head_dim)  # [B, H, D]
+                    q_npu = q.view(
+                        batch_size, self.num_heads, self.head_dim
+                    )  # [B, H, D]
 
                     # Prepare KV cache in NPU format
                     k_cache_npu = k_cache  # Should be in correct format already
@@ -342,15 +363,14 @@ class Attention(nn.Module):
                         v_cache_npu,
                         num_heads=self.num_heads,
                         num_key_value_heads=self.num_kv_heads,
-                        input_layout='BNSD',  # Use optimal layout
+                        input_layout="BNSD",  # Use optimal layout
                         scale_value=self.scale,
                         actual_seq_lengths=context.context_lens,
                         block_table=context.block_tables,
                     )
 
                     # Reshape back to original format [batch, num_heads, head_dim]
-                    attn_out = attn_out.view(batch_size, self.num_heads,
-                                             self.head_dim)
+                    attn_out = attn_out.view(batch_size, self.num_heads, self.head_dim)
                 else:
                     attn_out = self._fallback_attention(q, k, v, context)
         else:
@@ -385,8 +405,8 @@ class Attention(nn.Module):
         import warnings
 
         warnings.warn(
-            'FlashAttention not available. Using fallback implementation. '
-            'Install flash-attn for optimal performance: pip install flash-attn',
+            "FlashAttention not available. Using fallback implementation. "
+            "Install flash-attn for optimal performance: pip install flash-attn",
             RuntimeWarning,
             stacklevel=2,
         )
@@ -396,8 +416,9 @@ class Attention(nn.Module):
             # Split concatenated batch by cumulative sequence lengths
             if context.cum_seqlens_q is None or context.cum_seqlens_k is None:
                 raise RuntimeError(
-                    'Cumulative sequence lengths not set in context for prefill phase. '
-                    'This is a bug in the inference pipeline.')
+                    "Cumulative sequence lengths not set in context for prefill phase. "
+                    "This is a bug in the inference pipeline."
+                )
 
             batch_size = context.cum_seqlens_q.size(0) - 1
             outputs = []
@@ -422,8 +443,7 @@ class Attention(nn.Module):
                 k_seq, v_seq = self._repeat_kv_heads(k_seq, v_seq)
 
                 # Compute attention for this sequence
-                out_seq = self._compute_attention_weights(
-                    q_seq, k_seq, v_seq, q.device)
+                out_seq = self._compute_attention_weights(q_seq, k_seq, v_seq, q.device)
                 outputs.append(out_seq)
 
             # Concatenate outputs from all sequences
@@ -433,16 +453,18 @@ class Attention(nn.Module):
             # For decode, use cached k/v for efficient single-token generation
             if not self._cache_initialized:
                 raise RuntimeError(
-                    'KV cache must be initialized before decode phase. '
-                    'This indicates a problem with the inference pipeline.')
+                    "KV cache must be initialized before decode phase. "
+                    "This indicates a problem with the inference pipeline."
+                )
 
             batch_size = q.size(0)
 
             # Validate context information
             if context.context_lens is None or context.block_tables is None:
                 raise RuntimeError(
-                    'Context lengths or block tables not set for decode phase. '
-                    'This is a bug in the inference pipeline.')
+                    "Context lengths or block tables not set for decode phase. "
+                    "This is a bug in the inference pipeline."
+                )
 
             # Collect cached k/v for all sequences in batch
             max_seqlen = context.context_lens.max().item()
@@ -480,17 +502,16 @@ class Attention(nn.Module):
                     tokens_in_block = min(block_size, seqlen - token_idx)
                     if tokens_in_block > 0:
                         try:
-                            cached_k[i, token_idx:token_idx +
-                                     tokens_in_block] = self.k_cache[
-                                         block_id, :tokens_in_block]
-                            cached_v[i, token_idx:token_idx +
-                                     tokens_in_block] = self.v_cache[
-                                         block_id, :tokens_in_block]
+                            cached_k[i, token_idx : token_idx + tokens_in_block] = (
+                                self.k_cache[block_id, :tokens_in_block]
+                            )
+                            cached_v[i, token_idx : token_idx + tokens_in_block] = (
+                                self.v_cache[block_id, :tokens_in_block]
+                            )
                         except RuntimeError as e:
+                            logger.error("Shape mismatch in _fallback_attention:")
                             logger.error(
-                                'Shape mismatch in _fallback_attention:')
-                            logger.error(
-                                f"cached_k slice shape: {cached_k[i, token_idx:token_idx + tokens_in_block].shape}"
+                                f"cached_k slice shape: {cached_k[i, token_idx : token_idx + tokens_in_block].shape}"
                             )
                             logger.error(
                                 f"k_cache slice shape: {self.k_cache[block_id, :tokens_in_block].shape}"
@@ -498,22 +519,21 @@ class Attention(nn.Module):
                             logger.error(
                                 f"num_kv_heads: {self.num_kv_heads}, head_dim: {self.head_dim}"
                             )
-                            logger.error(
-                                f"k_cache total shape: {self.k_cache.shape}")
+                            logger.error(f"k_cache total shape: {self.k_cache.shape}")
                             raise e
                     token_idx += tokens_in_block
                     if token_idx >= seqlen:
                         break
 
             # Handle GQA/MQA: repeat k/v heads to match q heads
-            cached_k, cached_v = self._repeat_kv_heads(cached_k.unsqueeze(0),
-                                                       cached_v.unsqueeze(0))
+            cached_k, cached_v = self._repeat_kv_heads(
+                cached_k.unsqueeze(0), cached_v.unsqueeze(0)
+            )
             cached_k = cached_k.squeeze(0)
             cached_v = cached_v.squeeze(0)
 
             # DEBUG: Check if cached_k contains valid data
-            if logger.isEnabledFor(
-                    logging.DEBUG) and cached_k.abs().sum() == 0:
+            if logger.isEnabledFor(logging.DEBUG) and cached_k.abs().sum() == 0:
                 logger.debug(
                     f"Decode Step: cached_k is all zeros! Batch size: {batch_size}"
                 )
@@ -536,22 +556,21 @@ class Attention(nn.Module):
             # [batch, num_heads, 1, head_dim] @ [batch, num_heads, head_dim, seqlen]
             # -> [batch, num_heads, 1, seqlen]
             attn_weights = (
-                torch.matmul(q_expanded,
-                             cached_k.transpose(1, 2).transpose(-2, -1)) *
-                self.scale)
+                torch.matmul(q_expanded, cached_k.transpose(1, 2).transpose(-2, -1))
+                * self.scale
+            )
 
             # Create attention mask based on actual sequence lengths
-            seqlen_mask = self._create_seqlen_mask(max_seqlen, batch_size,
-                                                   context.context_lens,
-                                                   device)
-            attn_weights = attn_weights.masked_fill(seqlen_mask, float('-inf'))
+            seqlen_mask = self._create_seqlen_mask(
+                max_seqlen, batch_size, context.context_lens, device
+            )
+            attn_weights = attn_weights.masked_fill(seqlen_mask, float("-inf"))
 
             # Softmax and weighted sum
             attn_probs = torch.softmax(attn_weights, dim=-1)
             # [batch, num_heads, 1, seqlen] @ [batch, num_heads, seqlen, head_dim]
             # -> [batch, num_heads, 1, head_dim]
-            attn_out = torch.matmul(attn_probs,
-                                    cached_v.transpose(1, 2)).squeeze(2)
+            attn_out = torch.matmul(attn_probs, cached_v.transpose(1, 2)).squeeze(2)
 
         return attn_out
 
@@ -600,20 +619,20 @@ class Attention(nn.Module):
         # Compute attention: [1, num_heads, seqlen_q, seqlen_k]
         # [1, num_heads, seqlen_q, head_dim] @ [1, num_heads, seqlen_k, head_dim]
         # -> [1, num_heads, seqlen_q, seqlen_k]
-        attn_weights = (torch.matmul(q.transpose(1, 2),
-                                     k.transpose(1, 2).transpose(-2, -1)) *
-                        self.scale)
+        attn_weights = (
+            torch.matmul(q.transpose(1, 2), k.transpose(1, 2).transpose(-2, -1))
+            * self.scale
+        )
         # Apply causal mask (lower triangular)
         seqlen_q = q.size(1)
         seqlen_k = k.size(1)
         if seqlen_q > 1:
             # Create causal mask: allow attending to all keys up to current position
             causal_mask = torch.triu(
-                torch.ones(seqlen_q, seqlen_k, device=device,
-                           dtype=torch.bool),
+                torch.ones(seqlen_q, seqlen_k, device=device, dtype=torch.bool),
                 diagonal=seqlen_k - seqlen_q + 1,
             )
-            attn_weights = attn_weights.masked_fill(causal_mask, float('-inf'))
+            attn_weights = attn_weights.masked_fill(causal_mask, float("-inf"))
 
         # Softmax and weighted sum
         attn_probs = torch.softmax(attn_weights, dim=-1)
@@ -621,8 +640,7 @@ class Attention(nn.Module):
         # -> [1, num_heads, seqlen_q, head_dim]
         out_seq = torch.matmul(attn_probs, v.transpose(1, 2))
         # Reshape back to original format
-        out_seq = out_seq.squeeze(0).transpose(
-            0, 1)  # [seqlen_q, num_heads, head_dim]
+        out_seq = out_seq.squeeze(0).transpose(0, 1)  # [seqlen_q, num_heads, head_dim]
         return out_seq
 
     def _create_seqlen_mask(
@@ -643,9 +661,9 @@ class Attention(nn.Module):
         Returns:
             Mask tensor of shape [batch, 1, 1, seqlen]
         """
-        seqlen_mask = torch.arange(max_seqlen, device=device,
-                                   dtype=torch.long).expand(
-                                       batch_size, max_seqlen)
+        seqlen_mask = torch.arange(max_seqlen, device=device, dtype=torch.long).expand(
+            batch_size, max_seqlen
+        )
         seqlen_mask = seqlen_mask >= context_lens.unsqueeze(1)
         seqlen_mask = seqlen_mask.unsqueeze(1).unsqueeze(2)
         # [batch, 1, 1, seqlen]

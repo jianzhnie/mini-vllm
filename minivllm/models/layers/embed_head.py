@@ -33,10 +33,10 @@ from minivllm.models.layers.linear import (
 from minivllm.utils.context import get_context
 
 __all__ = [
-    'get_tensor_parallel_rank',
-    'get_tensor_parallel_world_size',
-    'VocabParallelEmbedding',
-    'ParallelLMHead',
+    "get_tensor_parallel_rank",
+    "get_tensor_parallel_world_size",
+    "VocabParallelEmbedding",
+    "ParallelLMHead",
 ]
 
 
@@ -87,21 +87,25 @@ class VocabParallelEmbedding(nn.Module):
         if num_embeddings % self.tp_size != 0:
             raise ValueError(
                 f"num_embeddings ({num_embeddings}) must be divisible by "
-                f"tensor-parallel size ({self.tp_size})")
+                f"tensor-parallel size ({self.tp_size})"
+            )
 
         self.num_embeddings: int = num_embeddings
         self.num_embeddings_per_partition: int = self.num_embeddings // self.tp_size
         self.vocab_start_idx: int = self.num_embeddings_per_partition * self.tp_rank
-        self.vocab_end_idx: int = (self.vocab_start_idx +
-                                   self.num_embeddings_per_partition)
+        self.vocab_end_idx: int = (
+            self.vocab_start_idx + self.num_embeddings_per_partition
+        )
 
         # Initialize weight for this rank's vocabulary partition
         self.weight: nn.Parameter = nn.Parameter(
-            torch.empty(self.num_embeddings_per_partition, embedding_dim))
+            torch.empty(self.num_embeddings_per_partition, embedding_dim)
+        )
         self.weight.weight_loader = self.weight_loader
 
-    def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor,
-                      *args, **kwargs) -> None:
+    def weight_loader(
+        self, param: nn.Parameter, loaded_weight: torch.Tensor, *args, **kwargs
+    ) -> None:
         """Load weights for the vocabulary partition.
 
         Args:
@@ -115,9 +119,11 @@ class VocabParallelEmbedding(nn.Module):
         param_data.copy_(loaded_weight)
 
     def extra_repr(self) -> str:
-        return (f"num_embeddings={self.num_embeddings}, "
-                f"embedding_dim={self.weight.shape[1]}, "
-                f"tp_size={self.tp_size}, tp_rank={self.tp_rank}")
+        return (
+            f"num_embeddings={self.num_embeddings}, "
+            f"embedding_dim={self.weight.shape[1]}, "
+            f"tp_size={self.tp_size}, tp_rank={self.tp_rank}"
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Look up embeddings with optional tensor-parallel aggregation.
@@ -182,7 +188,7 @@ class ParallelLMHead(VocabParallelEmbedding):
         bias: bool = False,
     ) -> None:
         if bias:
-            raise ValueError('bias for ParallelLMHead is not supported')
+            raise ValueError("bias for ParallelLMHead is not supported")
         super().__init__(num_embeddings, embedding_dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor | None:
@@ -213,8 +219,10 @@ class ParallelLMHead(VocabParallelEmbedding):
         if self.tp_size > 1:
             # Gather logits from all ranks onto rank 0
             all_logits = (
-                [torch.empty_like(logits)
-                 for _ in range(self.tp_size)] if self.tp_rank == 0 else None)
+                [torch.empty_like(logits) for _ in range(self.tp_size)]
+                if self.tp_rank == 0
+                else None
+            )
             dist.gather(logits, all_logits, 0)
 
             # Concatenate logits from all ranks on rank 0

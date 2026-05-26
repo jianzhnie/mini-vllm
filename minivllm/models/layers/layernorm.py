@@ -25,13 +25,13 @@ if is_torch_npu_available():
     try:
         import torch_npu
 
-        if hasattr(torch_npu, 'npu_rms_norm'):
+        if hasattr(torch_npu, "npu_rms_norm"):
             _NPU_RMS_NORM_AVAILABLE = True
-            logger.info('NPU RMSNorm kernel available')
+            logger.info("NPU RMSNorm kernel available")
     except ImportError:
         pass
 
-__all__ = ['RMSNorm']
+__all__ = ["RMSNorm"]
 
 
 class RMSNorm(nn.Module):
@@ -88,7 +88,7 @@ class RMSNorm(nn.Module):
             Normalized tensor with same shape as input
         """
         # NPU optimization
-        if _NPU_RMS_NORM_AVAILABLE and x.device.type == 'npu':
+        if _NPU_RMS_NORM_AVAILABLE and x.device.type == "npu":
             import torch_npu
 
             return torch_npu.npu_rms_norm(x, self.weight, epsilon=self.eps)[0]
@@ -104,8 +104,8 @@ class RMSNorm(nn.Module):
         return x.to(orig_dtype) * self.weight
 
     def add_rms_forward(
-            self, x: torch.Tensor,
-            residual: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        self, x: torch.Tensor, residual: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Apply RMS normalization with residual addition.
 
         This method efficiently combines the residual connection with
@@ -119,13 +119,12 @@ class RMSNorm(nn.Module):
             Tuple of (normalized tensor, updated residual)
         """
         # NPU optimization
-        if _NPU_RMS_NORM_AVAILABLE and x.device.type == 'npu':
+        if _NPU_RMS_NORM_AVAILABLE and x.device.type == "npu":
             import torch_npu
 
             x = x + residual
             residual = x
-            return torch_npu.npu_rms_norm(x, self.weight,
-                                          epsilon=self.eps)[0], residual
+            return torch_npu.npu_rms_norm(x, self.weight, epsilon=self.eps)[0], residual
 
         orig_dtype = x.dtype
         # Add residual to input and convert to float

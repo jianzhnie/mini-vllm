@@ -62,14 +62,17 @@ class Sampler(nn.Module):
         # Note: Penalties are typically applied before other transformations
         if prev_tokens is not None:
             if cfg.repetition_penalty != 1.0:
-                logits = F.apply_repetition_penalty(logits, prev_tokens,
-                                                    cfg.repetition_penalty)
+                logits = F.apply_repetition_penalty(
+                    logits, prev_tokens, cfg.repetition_penalty
+                )
             if cfg.frequency_penalty != 0.0:
-                logits = F.apply_frequency_penalty(logits, prev_tokens,
-                                                   cfg.frequency_penalty)
+                logits = F.apply_frequency_penalty(
+                    logits, prev_tokens, cfg.frequency_penalty
+                )
             if cfg.presence_penalty != 0.0:
-                logits = F.apply_presence_penalty(logits, prev_tokens,
-                                                  cfg.presence_penalty)
+                logits = F.apply_presence_penalty(
+                    logits, prev_tokens, cfg.presence_penalty
+                )
 
         # 2. Apply Top Token Restriction (Avoid Top-K)
         # Useful for watermarking or specific constraints
