@@ -118,7 +118,7 @@ def format_output_box(
 def run_inference() -> None:
     """Run the inference pipeline."""
     config = Config(
-        model="facebook/opt-125m",
+        model="/home/jianzhnie/llmtuner/hfhub/models/facebook/opt-125m",
         max_num_seqs=8,
         max_model_len=1024,
         enforce_eager=True,
