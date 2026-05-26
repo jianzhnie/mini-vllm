@@ -9,6 +9,7 @@ This module provides the ModelManager class which is responsible for:
 
 from typing import Any
 
+import torch
 from transformers import AutoConfig, AutoTokenizer
 
 from minivllm.config import Config
@@ -144,6 +145,17 @@ class ModelManager:
             )
 
             load_model(self.model, self.config.model)
+
+            # Apply configured dtype if not auto
+            if self.config.dtype != "auto":
+                dtype_map = {
+                    "float16": torch.float16,
+                    "bfloat16": torch.bfloat16,
+                    "float32": torch.float32,
+                }
+                target_dtype = dtype_map.get(str(self.config.dtype).lower())
+                if target_dtype is not None:
+                    self.model = self.model.to(target_dtype)
 
             if self.device:
                 self.model.to(self.device)

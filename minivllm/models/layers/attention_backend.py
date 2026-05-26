@@ -568,13 +568,12 @@ class NPUAttentionBackend(AttentionBackend):
                     query,
                     key_cache,
                     value_cache,
-                    atten_mask,
-                    seq_len,
-                    num_kv_heads,
-                    input_layout="BNSD",
+                    atten_mask=atten_mask,
                     actual_seq_lengths=q_seq_lens,
                     actual_seq_lengths_kv=kv_seq_lens,
                     num_heads=query.shape[1],
+                    num_key_value_heads=num_kv_heads,
+                    input_layout="BNSD",
                     sparse_mode=0 if is_prefill else SPARSE_MODE,
                     pre_tokens=65535,
                     next_tokens=0,
@@ -638,13 +637,12 @@ class NPUAttentionBackend(AttentionBackend):
                         query,
                         key_cache,
                         value_cache,
-                        None,
-                        seq_len,
-                        num_kv_heads,
-                        input_layout="BNSD",
+                        atten_mask=None,
                         actual_seq_lengths=q_seq_lens,
                         actual_seq_lengths_kv=kv_seq_lens,
                         num_heads=query.shape[1],
+                        num_key_value_heads=num_kv_heads,
+                        input_layout="BNSD",
                         sparse_mode=SPARSE_MODE,
                         pre_tokens=65535,
                         next_tokens=0,
@@ -705,7 +703,12 @@ class NPUAttentionBackend(AttentionBackend):
             Tuple of (k_cache, v_cache) in NPU-optimized format
         """
         # If we have block tables, use page attention format
-        if context.block_tables is not None and not context.is_prefill:
+        if (
+            context.block_tables is not None
+            and not context.is_prefill
+            and context.block_tables.numel() > 0
+            and context.block_tables.shape[1] > 0
+        ):
             # Decode phase with block tables: gather from cache
             batch_size = k.size(0) if k.dim() > 2 else 1
             max_seqlen = (

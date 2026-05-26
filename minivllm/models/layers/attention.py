@@ -239,7 +239,14 @@ class Attention(nn.Module):
             )
 
         # Priority 1: NPU unified inference API (most optimized)
-        if isinstance(self.backend, NPUAttentionBackend):
+        # Skip NPU path during warmup (empty block tables) to avoid NPU gather errors
+        is_warmup = (
+            not context.is_prefill
+            and context.block_tables is not None
+            and context.block_tables.numel() > 0
+            and context.block_tables.shape[1] == 0
+        )
+        if isinstance(self.backend, NPUAttentionBackend) and not is_warmup:
             try:
                 # Use NPU unified inference engine with BNSD layout
                 seq_length = (
@@ -286,10 +293,95 @@ class Attention(nn.Module):
 
             except Exception as e:
                 logger.warning(
-                    f"NPU Flash Attention failed: {e}, falling back to CUDA/PyTorch implementation"
+                    f"NPU unified inference failed: {e}, trying NPU fallback paths"
                 )
 
-        # Priority 2: CUDA FlashAttention
+        # Priority 2: NPU-specific prefill/decode paths
+        # Only active when NPU backend is selected (opt-in via MINIVLLM_USE_NPU_FA)
+        if _NPU_FLASH_ATTN_AVAILABLE and isinstance(self.backend, NPUAttentionBackend):
+            if context.is_prefill:
+                # Prefill: use npu_flash_attn_func through the backend.forward
+                if isinstance(self.backend, NPUAttentionBackend):
+                    try:
+                        # Prepare query: convert from [N, heads, dim] to [B, heads, S, dim]
+                        if q.dim() == 3 and context.cum_seqlens_q is not None:
+                            batch_size = context.cum_seqlens_q.size(0) - 1
+                            max_seq = context.max_seqlen_q
+                            padded_q = torch.zeros(
+                                batch_size,
+                                self.num_heads,
+                                max_seq,
+                                self.head_dim,
+                                dtype=q.dtype,
+                                device=q.device,
+                            )
+                            padded_k = torch.zeros(
+                                batch_size,
+                                self.num_kv_heads,
+                                max_seq,
+                                self.head_dim,
+                                dtype=k.dtype,
+                                device=k.device,
+                            )
+                            padded_v = torch.zeros(
+                                batch_size,
+                                self.num_kv_heads,
+                                max_seq,
+                                self.head_dim,
+                                dtype=v.dtype,
+                                device=v.device,
+                            )
+                            for i in range(batch_size):
+                                start = context.cum_seqlens_q[i].item()
+                                end = context.cum_seqlens_q[i + 1].item()
+                                s_len = end - start
+                                padded_q[i, :, :s_len] = q[start:end].transpose(0, 1)
+                                padded_k[i, :, :s_len] = k[start:end].transpose(0, 1)
+                                padded_v[i, :, :s_len] = v[start:end].transpose(0, 1)
+
+                            attn_out = self.backend.forward(
+                                padded_q, padded_k, padded_v, is_causal=True
+                            )
+                            attn_out = attn_out[:, :, :max_seq].contiguous()
+                            # Flatten back: BNSD → [total_N, num_heads, head_dim]
+                            attn_out = (
+                                attn_out.transpose(1, 2)
+                                .contiguous()
+                                .view(-1, self.num_heads, self.head_dim)
+                            )
+                            # Trim to exact total tokens
+                            total_tokens = context.cum_seqlens_q[-1].item()
+                            attn_out = attn_out[:total_tokens]
+                            return attn_out.contiguous()
+                    except Exception as e:
+                        logger.warning(f"NPU prefill fallback failed: {e}")
+            else:
+                # Decode: use legacy npu_incre_flash_attention
+                if npu_incre_flash_attention is not None and k_cache.numel() > 0:
+                    try:
+                        batch_size = q.size(0)
+                        target_dtype = torch.float16
+                        # NPU API expects BNSD layout: [B, N, S=1, D] for decode
+                        q_npu = q.to(target_dtype).unsqueeze(2)
+                        k_cache_f16 = k_cache.to(target_dtype)
+                        v_cache_f16 = v_cache.to(target_dtype)
+                        attn_out = npu_incre_flash_attention(
+                            q_npu,
+                            k_cache_f16,
+                            v_cache_f16,
+                            num_heads=self.num_heads,
+                            num_key_value_heads=self.num_kv_heads,
+                            input_layout="BNSD",
+                            scale_value=self.scale,
+                            actual_seq_lengths=context.context_lens,
+                            block_table=context.block_tables,
+                        )
+                        attn_out = attn_out.to(q.dtype).squeeze(2)
+                        return attn_out
+                    except Exception as e:
+                        logger.warning(f"NPU decode fallback failed: {e}")
+
+        # Priority 3: CUDA FlashAttention
         if _FLASH_ATTN_AVAILABLE:
             if context.is_prefill:
                 # Prefill phase: process entire prompt sequence
@@ -387,29 +479,8 @@ class Attention(nn.Module):
         v: torch.Tensor,
         context: Any,
     ) -> torch.Tensor:
-        """Fallback attention implementation when FlashAttention is not available.
-
-        This method provides a standard PyTorch implementation of attention
-        computation. It is significantly slower than FlashAttention but ensures
-        compatibility across all devices.
-
-        Args:
-            q: Query tensor of shape (N, num_heads, head_dim)
-            k: Key tensor of shape (N, num_kv_heads, head_dim)
-            v: Value tensor of shape (N, num_kv_heads, head_dim)
-            context: Inference context containing sequence information
-
-        Returns:
-            Attention output tensor of shape (N, num_heads, head_dim)
-        """
-        import warnings
-
-        warnings.warn(
-            "FlashAttention not available. Using fallback implementation. "
-            "Install flash-attn for optimal performance: pip install flash-attn",
-            RuntimeWarning,
-            stacklevel=2,
-        )
+        """Standard PyTorch attention fallback for all devices."""
+        # No warning here — fallback is the expected path on NPU and other non-CUDA devices
 
         if context.is_prefill:
             # For prefill, process complete sequences with causal masking

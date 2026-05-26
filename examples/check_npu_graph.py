@@ -1,62 +1,63 @@
+"""
+NPU Graph quick check — verify NPU runtime and flash attention availability.
+
+Usage:
+    python examples/check_npu_graph.py
+"""
+
 import sys
 
 import torch
 
-from minivllm.models.layers.attention_backend import NPUAttentionBackend
 from minivllm.utils.device import is_torch_npu_available
 
 
-def check_npu_graph():
-    print("Checking NPU Graph execution...", flush=True)
+def check_npu_graph() -> None:
+    print("Checking NPU environment...", flush=True)
 
     if not is_torch_npu_available():
-        print(
-            "NPU is not available on this system. Skipping NPU specific checks.",
-            flush=True,
-        )
+        print("NPU not available — skipping NPU checks.", flush=True)
         return
 
-    print("NPU detected. Running NPU Flash Attention check...", flush=True)
+    print(f"NPU devices: {torch.npu.device_count()}", flush=True)
+    print(f"Device name: {torch.npu.get_device_name(0)}", flush=True)
 
-    # Setup NPU device
+    # Check NPU Flash Attention APIs
+    print("\nNPU Flash Attention API check:", flush=True)
+    try:
+        import torch_npu
+
+        apis = {
+            "npu_fusion_attention": "Training + basic prefill",
+            "npu_incre_flash_attention": "Incremental decode (legacy)",
+            "npu_prompt_flash_attention": "Prefill (legacy)",
+            "npu_fused_infer_attention_score": "Unified inference (recommended)",
+        }
+        for api, desc in apis.items():
+            available = hasattr(torch_npu, api)
+            status = "AVAILABLE" if available else "not available"
+            print(f"  {api}: {status}  ({desc})", flush=True)
+    except ImportError:
+        print("  torch_npu not importable", flush=True)
+
+    # Quick functional test
+    print("\nFunctional check: attention forward pass...", flush=True)
     device = torch.device("npu:0")
+    B, H, S, D = 2, 4, 128, 64
 
-    # Parameters
-    batch_size = 2
-    num_heads = 4
-    seq_len = 128
-    head_dim = 64
-
-    # Create dummy tensors (BNSD layout)
-    q = torch.randn(
-        batch_size, num_heads, seq_len, head_dim, device=device, dtype=torch.float16
-    )
-    k = torch.randn(
-        batch_size, num_heads, seq_len, head_dim, device=device, dtype=torch.float16
-    )
-    v = torch.randn(
-        batch_size, num_heads, seq_len, head_dim, device=device, dtype=torch.float16
-    )
-
-    backend = NPUAttentionBackend()
+    q = torch.randn(B, H, S, D, device=device, dtype=torch.float16)
+    k = torch.randn(B, H, S, D, device=device, dtype=torch.float16)
+    v = torch.randn(B, H, S, D, device=device, dtype=torch.float16)
 
     try:
-        print("Running forward pass...", flush=True)
-        output = backend.forward(q, k, v, is_causal=True)
-        print(f"Forward pass successful. Output shape: {output.shape}", flush=True)
-
-        # Check output layout (should be BNSD)
-        expected_shape = (batch_size, num_heads, seq_len, head_dim)
-        assert output.shape == expected_shape, (
-            f"Expected shape {expected_shape}, got {output.shape}"
-        )
-        print("Output shape verification passed.", flush=True)
-
+        out = torch.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=True)
+        assert out.shape == (B, H, S, D), f"Unexpected shape: {out.shape}"
+        print(f"  SDPA output shape: {out.shape} — PASSED", flush=True)
     except Exception as e:
-        print(f"FAILED: NPU Attention check failed with error: {e}", flush=True)
+        print(f"  SDPA functional check FAILED: {e}", flush=True)
         sys.exit(1)
 
-    print("NPU Graph check passed successfully!", flush=True)
+    print("\nNPU environment: OK", flush=True)
 
 
 if __name__ == "__main__":

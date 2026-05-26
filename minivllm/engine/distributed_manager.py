@@ -90,6 +90,11 @@ class DistributedManager:
         try:
             self.backend = get_distributed_backend()
             if not dist.is_initialized():
+                # Set device before initializing process group (required for HCCL/NCCL)
+                if self.backend == "hccl":
+                    torch.npu.set_device(self.rank)
+                elif self.backend == "nccl":
+                    torch.cuda.set_device(self.rank)
                 dist.init_process_group(
                     backend=self.backend, rank=self.rank, world_size=self.world_size
                 )
