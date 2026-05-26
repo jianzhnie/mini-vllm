@@ -17,7 +17,6 @@ from minivllm.models.registry import create_model
 from minivllm.utils.device import (
     empty_cache,
     get_current_device,
-    set_device,
     validate_device,
 )
 from minivllm.utils.loader import load_model
@@ -79,11 +78,6 @@ class ModelManager:
     def _setup_device(self) -> None:
         """Setup and validate the target device."""
         try:
-            # Check if config has device specified
-            if hasattr(self.config, "device"):
-                set_device(self.config.device)
-
-            # Get current device (handles LOCAL_RANK etc.)
             self.device = get_current_device()
             validate_device(self.device)
             logger.debug(f"Device setup successful: {self.device}")
@@ -223,11 +217,11 @@ class ModelManager:
 
         logger.debug("Model manager cleanup completed")
 
-    def __enter__(self):
+    def __enter__(self) -> "ModelManager":
         """Context manager entry."""
         self.initialize()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Context manager exit."""
         self.cleanup()

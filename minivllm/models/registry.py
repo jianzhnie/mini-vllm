@@ -5,6 +5,8 @@ models/__init__.py and models/manager.py can share the same logic
 without creating circular imports.
 """
 
+from typing import Any
+
 from minivllm.models.opt import OPTForCausalLM
 from minivllm.models.qwen2 import Qwen2ForCausalLM
 from minivllm.models.qwen3 import Qwen3ForCausalLM
@@ -22,7 +24,7 @@ TYPE_TO_ARCH = {
 }
 
 
-def create_model(hf_config):
+def create_model(hf_config: Any) -> Any:
     """Instantiate a model from an HuggingFace config object.
 
     Detects the architecture from ``hf_config.architectures`` or

@@ -335,7 +335,11 @@ class InferenceExecutor:
 
         # Create dummy sequences for warmup
         dummy_sequences = [
-            Sequence([0] * min(16, max_model_len)) for _ in range(num_seqs)
+            Sequence(
+                [0] * min(16, max_model_len),
+                block_size=self.config.kvcache_block_size,
+            )
+            for _ in range(num_seqs)
         ]
 
         # Warmup prefill

@@ -16,12 +16,11 @@ from torch import Tensor
 try:
     from minivllm.models.layers.npu_flash_attention import (
         SPARSE_MODE,
-        get_attn_mask_npu,
         npu_flash_attn_func,
     )
+
 except ImportError:
     SPARSE_MODE = 0
-    get_attn_mask_npu = None
 
 # Optional imports for NPU unified inference
 try:
@@ -231,7 +230,7 @@ class StandardAttentionBackend(AttentionBackend):
                 k_cache,
                 v_cache,
                 slot_mapping,
-                hidden_size,
+                D=hidden_size,
             )
             return
 

@@ -55,13 +55,13 @@ class Sequence:
         ignore_eos: Whether to ignore end-of-sequence tokens.
     """
 
-    block_size: int = 64
     counter: Iterator[int] = count()
 
     def __init__(
         self,
         token_ids: list[int],
         sampling_params: SamplingParams | None = None,
+        block_size: int = 64,
     ) -> None:
         """Initialize a new sequence.
 
@@ -84,6 +84,7 @@ class Sequence:
         self.num_prompt_tokens: int = len(self.token_ids)
         self.num_cached_tokens: int = 0
         self.block_table: list[int] = []
+        self.block_size: int = block_size
         self.sampling_params: SamplingParams = sampling_params
         self.temperature: float = sampling_params.temperature
         self.top_p: float = sampling_params.top_p
@@ -242,6 +243,7 @@ class Sequence:
         int,
         int,
         list[int],
+        int,
         list[int] | int,
         float,
         float,
@@ -276,6 +278,7 @@ class Sequence:
             self.num_prompt_tokens,
             self.num_cached_tokens,
             self.block_table,
+            self.block_size,
             self.token_ids if self.num_completion_tokens == 0 else self.last_token,
             self.temperature,
             self.top_p,
@@ -292,6 +295,7 @@ class Sequence:
             int,
             int,
             list[int],
+            int,
             list[int] | int,
             float,
             float,
@@ -315,6 +319,7 @@ class Sequence:
             self.num_prompt_tokens,
             self.num_cached_tokens,
             self.block_table,
+            self.block_size,
             token_data,
             self.temperature,
             self.top_p,

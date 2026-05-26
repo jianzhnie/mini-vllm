@@ -135,12 +135,12 @@ class Scheduler:
             raise RuntimeError("No sequences scheduled")
 
         # Phase 1: Prefill phase for waiting sequences
-        scheduled_sequences, is_prefill = self._schedule_prefill()
+        scheduled_sequences = self._schedule_prefill()
         if scheduled_sequences:
             return scheduled_sequences, True
 
         # Phase 2: Decode phase for running sequences
-        scheduled_sequences, is_decode = self._schedule_decode()
+        scheduled_sequences = self._schedule_decode()
         if scheduled_sequences:
             return scheduled_sequences, False
 
@@ -164,7 +164,7 @@ class Scheduler:
 
         return [], False
 
-    def _schedule_prefill(self) -> tuple[list[Sequence], bool]:
+    def _schedule_prefill(self) -> list[Sequence]:
         """Schedule waiting sequences for prefill."""
         # Phase 1: Prefill phase for waiting sequences
         # Process new sequences with their full prompt to compute initial KV cache
@@ -204,9 +204,9 @@ class Scheduler:
             self.running.append(sequence)
             scheduled_sequences.append(sequence)
 
-        return scheduled_sequences, bool(scheduled_sequences)
+        return scheduled_sequences
 
-    def _schedule_decode(self) -> tuple[list[Sequence], bool]:
+    def _schedule_decode(self) -> list[Sequence]:
         """Schedule running sequences for decode."""
         # Phase 2: Decode phase for running sequences
         # Generate one token per sequence while managing cache constraints
@@ -245,7 +245,7 @@ class Scheduler:
         if scheduled_sequences:
             self.running.extendleft(reversed(scheduled_sequences))
 
-        return scheduled_sequences, bool(scheduled_sequences)
+        return scheduled_sequences
 
     def preempt(self, sequence: Sequence) -> None:
         """Preempt a sequence due to cache memory constraints.

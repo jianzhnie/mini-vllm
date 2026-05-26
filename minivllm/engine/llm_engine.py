@@ -73,6 +73,8 @@ class LLMEngine:
                 f"config must be a Config instance, got {type(config).__name__}"
             )
 
+        self.config = config
+
         # Initialize distributed processes for tensor parallelism
         self.ps: list[mp.Process] = []
         self.events: list[mp.Event] = []
@@ -190,7 +192,9 @@ class LLMEngine:
             prompt_tokens = prompt
 
         # Create sequence and add to scheduler
-        sequence: Sequence = Sequence(prompt_tokens, sampling_params)
+        sequence: Sequence = Sequence(
+            prompt_tokens, sampling_params, block_size=self.config.kvcache_block_size
+        )
         self.scheduler.add(sequence)
         return sequence.seq_id
 

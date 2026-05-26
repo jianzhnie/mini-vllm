@@ -149,7 +149,7 @@ class Attention(nn.Module):
         super().__init__()
         self.num_heads: int = num_heads
         self.head_dim: int = head_dim
-        self.scale: float = float(scale) if scale else 1.0 / math.sqrt(head_dim)
+        self.scale: float = float(scale) if scale != 0.0 else 1.0 / math.sqrt(head_dim)
         self.num_kv_heads: int = num_kv_heads
 
         # Initialize appropriate backend

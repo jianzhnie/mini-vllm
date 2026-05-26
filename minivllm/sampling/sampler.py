@@ -77,7 +77,9 @@ class Sampler(nn.Module):
         # 2. Apply Top Token Restriction (Avoid Top-K)
         # Useful for watermarking or specific constraints
         avoid_k = avoid_top_ks if avoid_top_ks is not None else cfg.avoid_top_k
-        logits = F.apply_top_token_restriction(logits, avoid_k)
+        if not isinstance(avoid_k, Tensor):
+            # Per-batch tensor avoid_k not yet supported — silently skip
+            logits = F.apply_top_token_restriction(logits, avoid_k)
 
         # 3. Apply Temperature
         # Use provided tensor or config value

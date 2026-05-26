@@ -18,10 +18,8 @@ try:
 
     # Disable compile on NPU to avoid backend errors
     if (
-        hasattr(torch, "npu")
-        and torch.npu.is_available()
-        or not torch.cuda.is_available()
-    ):
+        hasattr(torch, "npu") and torch.npu.is_available()
+    ) or not torch.cuda.is_available():
         compile_ops = False
 except ImportError:
     compile_ops = False

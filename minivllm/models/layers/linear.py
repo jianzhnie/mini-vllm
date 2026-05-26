@@ -151,7 +151,8 @@ class ColumnParallelLinear(LinearBase):
     ) -> None:
         """Load column-sharded weights."""
         param_data = param.data
-        assert self.tp_dim is not None, "tp_dim must be set for column-parallel layers"
+        if self.tp_dim is None:
+            raise ValueError("tp_dim must be set for column-parallel layers")
         shard_size = param_data.size(self.tp_dim)
         start_idx = self.tp_rank * shard_size
         loaded_weight = loaded_weight.narrow(self.tp_dim, start_idx, shard_size)
@@ -192,7 +193,8 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
             loaded_shard_id: The index of the shard to load (default: 0).
         """
         param_data = param.data
-        assert self.tp_dim is not None, "tp_dim must be set for column-parallel layers"
+        if self.tp_dim is None:
+            raise ValueError("tp_dim must be set for column-parallel layers")
         shard_offset = sum(self.output_sizes[:loaded_shard_id]) // self.tp_size
         shard_size = self.output_sizes[loaded_shard_id] // self.tp_size
         param_data = param_data.narrow(self.tp_dim, shard_offset, shard_size)
@@ -261,7 +263,8 @@ class QKVParallelLinear(ColumnParallelLinear):
                 self.num_heads * self.head_size + self.num_kv_heads * self.head_size
             )
 
-        assert self.tp_dim is not None, "tp_dim must be set for column-parallel layers"
+        if self.tp_dim is None:
+            raise ValueError("tp_dim must be set for column-parallel layers")
         param_data = param_data.narrow(self.tp_dim, shard_offset, shard_size)
         loaded_weight = loaded_weight.chunk(self.tp_size, self.tp_dim)[self.tp_rank]
         param_data.copy_(loaded_weight)
@@ -301,7 +304,8 @@ class RowParallelLinear(LinearBase):
             return
 
         param_data = param.data
-        assert self.tp_dim is not None, "tp_dim must be set for row-parallel layers"
+        if self.tp_dim is None:
+            raise ValueError("tp_dim must be set for row-parallel layers")
         shard_size = param_data.size(self.tp_dim)
         start_idx = self.tp_rank * shard_size
         loaded_weight = loaded_weight.narrow(self.tp_dim, start_idx, shard_size)
