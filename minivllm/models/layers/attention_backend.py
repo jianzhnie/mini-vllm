@@ -389,8 +389,19 @@ class NPUAttentionBackend(AttentionBackend):
         attention_mask: Tensor | None = None,
         is_causal: bool = True,
     ) -> Tensor:
-        """Forward pass using NPU optimizations."""
+        """Forward pass using NPU optimizations.
+
+        For 3D packed prefill inputs, falls back to standard attention since
+        npu_fusion_attention requires 4D BSND layout and does not support
+        variable-length sequences.
+        """
         if not self._npu_available:
+            return self._fallback_backend.forward(
+                query, key, value, attention_mask, is_causal
+            )
+
+        # 3D packed prefill is not supported by NPU FA — use SDPA fallback
+        if query.dim() == 3:
             return self._fallback_backend.forward(
                 query, key, value, attention_mask, is_causal
             )
@@ -423,8 +434,8 @@ class NPUAttentionBackend(AttentionBackend):
             return output.transpose(1, 2)
 
         except Exception as e:
-            logger.error(
-                f"NPU attention failed: {e}, falling back to standard attention"
+            logger.warning(
+                "NPU FA failed, falling back to standard attention: %s", e
             )
             return self._fallback_backend.forward(
                 _query_orig, _key_orig, _value_orig, attention_mask, is_causal
@@ -694,12 +705,11 @@ class NPUAttentionBackend(AttentionBackend):
             # Vectorized gather implementation
 
             # 1. Create grid of sequence positions [1, max_seqlen]
-            seq_pos = torch.arange(max_seqlen, device=k.device).unsqueeze(0)
+            seq_pos = torch.arange(max_seqlen, dtype=torch.int64, device=k.device).unsqueeze(0)
 
             # 2. Map to block indices and offsets
-            # Ensure indices are long for indexing
-            block_table_indices = (seq_pos // block_size).long()
-            block_offsets = (seq_pos % block_size).long()
+            block_table_indices = seq_pos // block_size
+            block_offsets = seq_pos % block_size
 
             # 3. Create validity mask [batch_size, max_seqlen]
             # Handle context_lens device mismatch if any

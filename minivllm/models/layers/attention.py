@@ -154,6 +154,9 @@ class Attention(nn.Module):
 
         # Initialize appropriate backend
         self.backend: AttentionBackend
+        # NPU FA is opt-in via MINIVLLM_USE_NPU_FA=1 (known compatibility issues
+        # with packed prefill 3D inputs on CANN 8.2.RC1). SDPA is well-optimized
+        # on NPU and is the safe default.
         use_npu_fa = os.getenv("MINIVLLM_USE_NPU_FA", "0").lower() in {
             "1",
             "true",
@@ -161,7 +164,7 @@ class Attention(nn.Module):
         }
         if _NPU_FLASH_ATTN_AVAILABLE and use_npu_fa:
             self.backend = NPUAttentionBackend()
-            logger.info("NPU Flash Attention backend initialized")
+            logger.debug("NPU Flash Attention backend initialized")
         elif _FLASH_ATTN_AVAILABLE:
             self.backend = FlashAttentionBackend()
         else:
@@ -565,11 +568,11 @@ class Attention(nn.Module):
             block_size = self.k_cache.size(1)
 
             # Position grid: [1, max_seqlen] → which token position we're at
-            seq_pos = torch.arange(max_seqlen, device=device).unsqueeze(0)
+            seq_pos = torch.arange(max_seqlen, dtype=torch.int64, device=device).unsqueeze(0)
 
             # Map token positions to block index and intra-block offset
-            block_indices = (seq_pos // block_size).long()
-            block_offsets = (seq_pos % block_size).long()
+            block_indices = seq_pos // block_size
+            block_offsets = seq_pos % block_size
 
             # Ensure context tensors are on the right device
             context_lens = context.context_lens

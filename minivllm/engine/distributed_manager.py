@@ -99,7 +99,20 @@ class DistributedManager:
                     backend=self.backend, rank=self.rank, world_size=self.world_size
                 )
             logger.debug("Distributed backend setup: %s", self.backend)
-        except Exception as e:
+        except RuntimeError as e:
+            error_msg = str(e)
+            if self.backend == "hccl" and "error code is 7" in error_msg:
+                raise RuntimeError(
+                    f"HCCL multi-process init failed (error code 7): HCCL P2P "
+                    f"networking is not configured on this machine. NPU devices "
+                    f"have P2P access but HCCL requires additional network setup.\n"
+                    f"Workarounds:\n"
+                    f"  1. Set MINIVLLM_TP_BACKEND=gloo for CPU-based TP "
+                    f"(slow, testing only)\n"
+                    f"  2. Use TP=1 (single-device inference)\n"
+                    f"  3. Configure HCCL networking (HCCL_IF_IP, etc.)\n"
+                    f"Original error: {e}"
+                ) from e
             raise RuntimeError(f"Failed to setup distributed backend: {e}") from e
 
     def _validate_setup(self) -> None:
@@ -112,10 +125,8 @@ class DistributedManager:
             tensor = torch.ones(1) * self.rank
 
             # Move to appropriate device based on backend
-            if self.backend == "nccl":
-                tensor = tensor.cuda()
-            elif self.backend == "hccl":
-                tensor = tensor.npu()
+            if self.backend in ("nccl", "hccl", "ccl"):
+                tensor = self._move_to_device(tensor)
 
             dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
             expected = sum(range(self.world_size))
