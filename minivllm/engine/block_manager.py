@@ -164,6 +164,13 @@ class BlockManager:
             self.free_block_ids.popleft()
         raise RuntimeError("No free blocks available")
 
+    def _validate_block_id(self, block_id: int) -> None:
+        """Raise RuntimeError if block_id is out of valid range."""
+        if block_id < 0 or block_id >= len(self.blocks):
+            raise RuntimeError(
+                f"Invalid block_id: {block_id}. Valid range: [0, {len(self.blocks)})"
+            )
+
     def _allocate_block(self, block_id: int, reset: bool = True) -> Block:
         """Allocate a block from the free pool.
 
@@ -178,10 +185,7 @@ class BlockManager:
         Raises:
             RuntimeError: If block is already allocated or block_id is invalid.
         """
-        if block_id < 0 or block_id >= len(self.blocks):
-            raise RuntimeError(
-                f"Invalid block_id: {block_id}. Valid range: [0, {len(self.blocks)})"
-            )
+        self._validate_block_id(block_id)
         if block_id not in self._free_set:
             raise RuntimeError(f"Block {block_id} not in free blocks")
 
@@ -218,10 +222,7 @@ class BlockManager:
         Raises:
             RuntimeError: If block is still in use (ref_count > 0) or invalid.
         """
-        if block_id < 0 or block_id >= len(self.blocks):
-            raise RuntimeError(
-                f"Invalid block_id: {block_id}. Valid range: [0, {len(self.blocks)})"
-            )
+        self._validate_block_id(block_id)
 
         block: Block = self.blocks[block_id]
         if block.ref_count != 0:

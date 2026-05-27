@@ -92,6 +92,14 @@ class InferenceExecutor:
 
         self._init_attributes()
 
+    def _list_to_device_tensor(
+        self, data: list[int], dtype: torch.dtype, pin_mem: bool | None = None
+    ) -> torch.Tensor:
+        if pin_mem is None:
+            pin_mem = should_use_pin_memory(self.device)
+        t = torch.tensor(data, dtype=dtype, pin_memory=pin_mem)
+        return move_tensor_to_device(t, self.device, non_blocking=True)
+
     def _resolve_dtype(self) -> torch.dtype:
         """Resolve the correct dtype for model inference.
 
@@ -478,38 +486,21 @@ class InferenceExecutor:
         # Convert to tensors
         pin_mem = should_use_pin_memory(self.device)
 
-        input_ids_tensor = torch.tensor(input_ids, dtype=torch.long, pin_memory=pin_mem)
-        input_ids_tensor = move_tensor_to_device(
-            input_ids_tensor, self.device, non_blocking=True
-        )
-
-        positions_tensor = torch.tensor(positions, dtype=torch.long, pin_memory=pin_mem)
-        positions_tensor = move_tensor_to_device(
-            positions_tensor, self.device, non_blocking=True
-        )
+        input_ids_tensor = self._list_to_device_tensor(input_ids, torch.long, pin_mem)
+        positions_tensor = self._list_to_device_tensor(positions, torch.long, pin_mem)
 
         # Prepare context tensors
-        cum_seqlens_q_tensor = torch.tensor(
-            cum_seqlens_q, dtype=torch.int32, pin_memory=pin_mem
+        cum_seqlens_q_tensor = self._list_to_device_tensor(
+            cum_seqlens_q, torch.int32, pin_mem
         )
-        cum_seqlens_q_tensor = move_tensor_to_device(
-            cum_seqlens_q_tensor, self.device, non_blocking=True
-        )
-
-        cum_seqlens_k_tensor = torch.tensor(
-            cum_seqlens_k, dtype=torch.int32, pin_memory=pin_mem
-        )
-        cum_seqlens_k_tensor = move_tensor_to_device(
-            cum_seqlens_k_tensor, self.device, non_blocking=True
+        cum_seqlens_k_tensor = self._list_to_device_tensor(
+            cum_seqlens_k, torch.int32, pin_mem
         )
 
         slot_mapping_tensor = None
         if slot_mapping:
-            slot_mapping_tensor = torch.tensor(
-                slot_mapping, dtype=torch.int32, pin_memory=pin_mem
-            )
-            slot_mapping_tensor = move_tensor_to_device(
-                slot_mapping_tensor, self.device, non_blocking=True
+            slot_mapping_tensor = self._list_to_device_tensor(
+                slot_mapping, torch.int32, pin_mem
             )
 
         # Prepare block tables for prefix caching
@@ -571,28 +562,15 @@ class InferenceExecutor:
 
         pin_mem = should_use_pin_memory(self.device)
 
-        input_ids_tensor = torch.tensor(input_ids, dtype=torch.long, pin_memory=pin_mem)
-        input_ids_tensor = move_tensor_to_device(
-            input_ids_tensor, self.device, non_blocking=True
+        input_ids_tensor = self._list_to_device_tensor(input_ids, torch.long, pin_mem)
+        positions_tensor = self._list_to_device_tensor(positions, torch.long, pin_mem)
+
+        slot_mapping_tensor = self._list_to_device_tensor(
+            slot_mapping, torch.int32, pin_mem
         )
 
-        positions_tensor = torch.tensor(positions, dtype=torch.long, pin_memory=pin_mem)
-        positions_tensor = move_tensor_to_device(
-            positions_tensor, self.device, non_blocking=True
-        )
-
-        slot_mapping_tensor = torch.tensor(
-            slot_mapping, dtype=torch.int32, pin_memory=pin_mem
-        )
-        slot_mapping_tensor = move_tensor_to_device(
-            slot_mapping_tensor, self.device, non_blocking=True
-        )
-
-        context_lens_tensor = torch.tensor(
-            context_lens, dtype=torch.int32, pin_memory=pin_mem
-        )
-        context_lens_tensor = move_tensor_to_device(
-            context_lens_tensor, self.device, non_blocking=True
+        context_lens_tensor = self._list_to_device_tensor(
+            context_lens, torch.int32, pin_mem
         )
 
         block_tables = self._prepare_block_tables(sequences)

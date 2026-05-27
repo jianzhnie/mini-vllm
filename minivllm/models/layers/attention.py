@@ -246,174 +246,157 @@ class Attention(nn.Module):
         # for GQA models to avoid garbled output.
         _npu_fa_safe = self.num_heads == self.num_kv_heads
 
-        # Priority 1: NPU unified inference API (most optimized)
-        # Skip NPU path during warmup (empty/all-invalid block tables)
-        _bt = context.block_tables
-        is_warmup = (
-            not context.is_prefill
-            and _bt is not None
-            and _bt.numel() > 0
-            and (_bt.shape[1] == 0 or not (_bt >= 0).any())
-        )
-        if (
-            isinstance(self.backend, NPUAttentionBackend)
-            and not is_warmup
-            and _npu_fa_safe
-        ):
-            try:
-                # Use NPU unified inference engine with BNSD layout
-                seq_length = (
-                    context.context_lens.max().item()
-                    if context.context_lens is not None
-                    else q.shape[0]
-                )
-
-                # Prepare tensors for NPU format
-                npu_k_cache, npu_v_cache = self.backend.prepare_npu_cache(
-                    k,
-                    v,
-                    k_cache,
-                    v_cache,
-                    context,
-                    self.num_kv_heads,
-                    self.head_dim,
-                )
-
-                attn_out = self.backend.unified_inference(
-                    q,
-                    npu_k_cache,
-                    npu_v_cache,
-                    seq_length,
-                    self.num_kv_heads,
-                    scale=self.scale,
-                    context_lens=context.context_lens,
-                    is_prefill=context.is_prefill,
-                )
-
-                # Reshape output back to expected format [N, num_heads, head_dim]
-                if attn_out.dim() == 4 and attn_out.shape[2] == 1:
-                    attn_out = attn_out.squeeze(
-                        2
-                    )  # Remove seq_len dimension if present
-                elif attn_out.dim() == 4:
-                    attn_out = (
-                        attn_out.transpose(1, 2)
-                        .contiguous()
-                        .view(-1, self.num_heads, self.head_dim)
+        # NPU Flash Attention paths (Priority 1 + 2): GQA-safe check only once
+        if isinstance(self.backend, NPUAttentionBackend) and _npu_fa_safe:
+            # Priority 1: NPU unified inference API (most optimized)
+            # Skip NPU path during warmup (empty/all-invalid block tables)
+            _bt = context.block_tables
+            is_warmup = (
+                not context.is_prefill
+                and _bt is not None
+                and _bt.numel() > 0
+                and (_bt.shape[1] == 0 or not (_bt >= 0).any())
+            )
+            if not is_warmup:
+                try:
+                    seq_length = (
+                        context.context_lens.max().item()
+                        if context.context_lens is not None
+                        else q.shape[0]
                     )
 
-                return attn_out.contiguous()
+                    npu_k_cache, npu_v_cache = self.backend.prepare_npu_cache(
+                        k,
+                        v,
+                        k_cache,
+                        v_cache,
+                        context,
+                        self.num_kv_heads,
+                        self.head_dim,
+                    )
 
-            except Exception as e:
-                logger.debug(
-                    f"NPU unified inference failed: {e}, trying NPU fallback paths"
-                )
+                    attn_out = self.backend.unified_inference(
+                        q,
+                        npu_k_cache,
+                        npu_v_cache,
+                        seq_length,
+                        self.num_kv_heads,
+                        scale=self.scale,
+                        context_lens=context.context_lens,
+                        is_prefill=context.is_prefill,
+                    )
 
-        # Priority 2: NPU-specific prefill/decode paths
-        # Only active when NPU backend is selected (opt-in via MINIVLLM_USE_NPU_FA)
-        if (
-            _NPU_FLASH_ATTN_AVAILABLE
-            and isinstance(self.backend, NPUAttentionBackend)
-            and _npu_fa_safe
-        ):
-            if context.is_prefill:
-                # Prefill: use npu_flash_attn_func through the backend.forward
-                if isinstance(self.backend, NPUAttentionBackend):
-                    try:
-                        # Prepare query: convert from [N, heads, dim] to [B, heads, S, dim]
-                        if q.dim() == 3 and context.cum_seqlens_q is not None:
-                            batch_size = context.cum_seqlens_q.size(0) - 1
-                            max_seq = context.max_seqlen_q
-                            padded_q = torch.zeros(
-                                batch_size,
-                                self.num_heads,
-                                max_seq,
-                                self.head_dim,
-                                dtype=q.dtype,
-                                device=q.device,
-                            )
-                            padded_k = torch.zeros(
-                                batch_size,
-                                self.num_kv_heads,
-                                max_seq,
-                                self.head_dim,
-                                dtype=k.dtype,
-                                device=k.device,
-                            )
-                            padded_v = torch.zeros(
-                                batch_size,
-                                self.num_kv_heads,
-                                max_seq,
-                                self.head_dim,
-                                dtype=v.dtype,
-                                device=v.device,
-                            )
-                            for i in range(batch_size):
-                                start = context.cum_seqlens_q[i].item()
-                                end = context.cum_seqlens_q[i + 1].item()
-                                s_len = end - start
-                                padded_q[i, :, :s_len] = q[start:end].transpose(0, 1)
-                                padded_k[i, :, :s_len] = k[start:end].transpose(0, 1)
-                                padded_v[i, :, :s_len] = v[start:end].transpose(0, 1)
+                    if attn_out.dim() == 4 and attn_out.shape[2] == 1:
+                        attn_out = attn_out.squeeze(2)
+                    elif attn_out.dim() == 4:
+                        attn_out = (
+                            attn_out.transpose(1, 2)
+                            .contiguous()
+                            .view(-1, self.num_heads, self.head_dim)
+                        )
 
+                    return attn_out
+
+                except Exception as e:
+                    logger.debug(
+                        "NPU unified inference failed: %s, trying NPU fallback paths", e
+                    )
+
+            # Priority 2: NPU-specific prefill/decode paths
+            if _NPU_FLASH_ATTN_AVAILABLE:
+                if context.is_prefill:
+                    if q.dim() == 3 and context.cum_seqlens_q is not None:
+                        batch_size = context.cum_seqlens_q.size(0) - 1
+                        max_seq = context.max_seqlen_q
+                        padded_q = torch.zeros(
+                            batch_size,
+                            self.num_heads,
+                            max_seq,
+                            self.head_dim,
+                            dtype=q.dtype,
+                            device=q.device,
+                        )
+                        padded_k = torch.zeros(
+                            batch_size,
+                            self.num_kv_heads,
+                            max_seq,
+                            self.head_dim,
+                            dtype=k.dtype,
+                            device=k.device,
+                        )
+                        padded_v = torch.zeros(
+                            batch_size,
+                            self.num_kv_heads,
+                            max_seq,
+                            self.head_dim,
+                            dtype=v.dtype,
+                            device=v.device,
+                        )
+                        for i in range(batch_size):
+                            start = context.cum_seqlens_q[i].item()
+                            end = context.cum_seqlens_q[i + 1].item()
+                            s_len = end - start
+                            padded_q[i, :, :s_len] = q[start:end].transpose(0, 1)
+                            padded_k[i, :, :s_len] = k[start:end].transpose(0, 1)
+                            padded_v[i, :, :s_len] = v[start:end].transpose(0, 1)
+
+                        try:
                             attn_out = self.backend.forward(
                                 padded_q, padded_k, padded_v, is_causal=True
                             )
                             attn_out = attn_out[:, :, :max_seq].contiguous()
-                            # Flatten back: BNSD → [total_N, num_heads, head_dim]
                             attn_out = (
                                 attn_out.transpose(1, 2)
                                 .contiguous()
                                 .view(-1, self.num_heads, self.head_dim)
                             )
-                            # Trim to exact total tokens
                             total_tokens = context.cum_seqlens_q[-1].item()
                             attn_out = attn_out[:total_tokens]
-                            return attn_out.contiguous()
-                    except Exception as e:
-                        logger.warning("NPU prefill fallback failed: %s", e)
-            else:
-                # Decode: use legacy npu_incre_flash_attention
-                # Only attempt NPU FA if block_tables are valid (no empty blocks)
-                block_tables_valid = (
-                    context.block_tables is not None
-                    and context.block_tables.numel() > 0
-                    and (context.block_tables >= 0).all()
-                )
-                if (
-                    npu_incre_flash_attention is not None
-                    and k_cache.numel() > 0
-                    and block_tables_valid
-                ):
-                    try:
-                        batch_size = q.size(0)
-                        target_dtype = torch.float16
-                        q_npu = q.to(target_dtype).unsqueeze(2)
-                        k_cache_native = (
-                            k_cache
-                            if k_cache.dtype == target_dtype
-                            else k_cache.to(target_dtype)
-                        )
-                        v_cache_native = (
-                            v_cache
-                            if v_cache.dtype == target_dtype
-                            else v_cache.to(target_dtype)
-                        )
-                        attn_out = npu_incre_flash_attention(
-                            q_npu,
-                            k_cache_native,
-                            v_cache_native,
-                            num_heads=self.num_heads,
-                            num_key_value_heads=self.num_kv_heads,
-                            input_layout="BNSD",
-                            scale_value=self.scale,
-                            actual_seq_lengths=context.context_lens,
-                            block_table=context.block_tables,
-                        )
-                        attn_out = attn_out.to(q.dtype).squeeze(2)
-                        return attn_out
-                    except Exception as e:
-                        logger.warning("NPU decode fallback failed: %s", e)
+                            return attn_out
+                        except Exception as e:
+                            logger.warning("NPU prefill fallback failed: %s", e)
+                else:
+                    # Decode: use legacy npu_incre_flash_attention
+                    # Only attempt NPU FA if block_tables are valid (no empty blocks)
+                    block_tables_valid = (
+                        context.block_tables is not None
+                        and context.block_tables.numel() > 0
+                        and (context.block_tables >= 0).all()
+                    )
+                    if (
+                        npu_incre_flash_attention is not None
+                        and k_cache.numel() > 0
+                        and block_tables_valid
+                    ):
+                        try:
+                            batch_size = q.size(0)
+                            target_dtype = torch.float16
+                            q_npu = q.to(target_dtype).unsqueeze(2)
+                            k_cache_native = (
+                                k_cache
+                                if k_cache.dtype == target_dtype
+                                else k_cache.to(target_dtype)
+                            )
+                            v_cache_native = (
+                                v_cache
+                                if v_cache.dtype == target_dtype
+                                else v_cache.to(target_dtype)
+                            )
+                            attn_out = npu_incre_flash_attention(
+                                q_npu,
+                                k_cache_native,
+                                v_cache_native,
+                                num_heads=self.num_heads,
+                                num_key_value_heads=self.num_kv_heads,
+                                input_layout="BNSD",
+                                scale_value=self.scale,
+                                actual_seq_lengths=context.context_lens,
+                                block_table=context.block_tables,
+                            )
+                            attn_out = attn_out.to(q.dtype).squeeze(2)
+                            return attn_out
+                        except Exception as e:
+                            logger.warning("NPU decode fallback failed: %s", e)
 
         # Priority 3: CUDA FlashAttention
         if _FLASH_ATTN_AVAILABLE:
@@ -599,14 +582,24 @@ class Attention(nn.Module):
                     cached_k[mask] = self.k_cache[active_block_ids, active_offsets]
                     cached_v[mask] = self.v_cache[active_block_ids, active_offsets]
 
-            # Handle GQA/MQA: SDPA handles head broadcasting natively
-            # Permute cached_k/v from [batch, seqlen, kv_heads, dim]
-            # to SDPA format [batch, kv_heads, seqlen, dim]
-            k_sdpa = cached_k.permute(0, 2, 1, 3)
-            v_sdpa = cached_v.permute(0, 2, 1, 3)
+            # Handle GQA/MQA: SDPA handles head broadcasting natively on CUDA,
+            # but CPU backend requires explicit head expansion
+            if self.num_kv_heads != self.num_heads:
+                k_sdpa = cached_k.repeat_interleave(
+                    self.num_heads // self.num_kv_heads, dim=2
+                )
+                v_sdpa = cached_v.repeat_interleave(
+                    self.num_heads // self.num_kv_heads, dim=2
+                )
+            else:
+                k_sdpa = cached_k
+                v_sdpa = cached_v
 
-            # q: [batch, heads, dim] → [batch, heads, 1, dim]
-            q_sdpa = q.unsqueeze(2)
+            # Permute from [batch, seqlen, heads, dim] to [batch, heads, seqlen, dim]
+            k_sdpa = k_sdpa.permute(0, 2, 1, 3)
+            v_sdpa = v_sdpa.permute(0, 2, 1, 3)
+
+            q_sdpa = q.unsqueeze(2)  # [batch, heads, 1, dim]
 
             # SDPA mask: True = attend, False = masked (padding)
             sdpa_mask = torch.arange(max_seqlen, device=device).expand(

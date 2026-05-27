@@ -78,61 +78,31 @@ class RMSNorm(nn.Module):
         self.eps: float = float(eps)
         self.weight: nn.Parameter = nn.Parameter(torch.ones(hidden_size))
 
+    def _rms_norm_core(self, x: torch.Tensor) -> torch.Tensor:
+        """Core RMS normalization: x * rsqrt(mean(x^2) + eps) * weight."""
+        var = x.pow(2).mean(dim=-1, keepdim=True)
+        x = x * torch.rsqrt(var + self.eps)
+        return x * self.weight
+
     def rms_forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Apply RMS normalization without residual.
-
-        Args:
-            x: Input tensor to normalize
-
-        Returns:
-            Normalized tensor with same shape as input
-        """
-        # NPU optimization
         if _NPU_RMS_NORM_AVAILABLE and x.device.type == "npu":
             return torch_npu.npu_rms_norm(x, self.weight, epsilon=self.eps)[0]
 
         orig_dtype = x.dtype
-        # Convert to float for stable computation
-        x = x.float()
-
-        # Compute variance (mean of squares) along last dimension
-        var = x.pow(2).mean(dim=-1, keepdim=True)
-        x = x * torch.rsqrt(var + self.eps)
-
-        return x.to(orig_dtype) * self.weight
+        x_fp32 = x if x.dtype == torch.float32 else x.float()
+        return self._rms_norm_core(x_fp32).to(orig_dtype)
 
     def add_rms_forward(
         self, x: torch.Tensor, residual: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Apply RMS normalization with residual addition.
-
-        This method efficiently combines the residual connection with
-        normalization, reducing memory traffic and computation.
-
-        Args:
-            x: Input tensor to normalize
-            residual: Residual tensor to add before normalization
-
-        Returns:
-            Tuple of (normalized tensor, updated residual)
-        """
-        # NPU optimization
         if _NPU_RMS_NORM_AVAILABLE and x.device.type == "npu":
             x = x + residual
-            residual = x
-            return torch_npu.npu_rms_norm(x, self.weight, epsilon=self.eps)[0], residual
+            return torch_npu.npu_rms_norm(x, self.weight, epsilon=self.eps)[0], x
 
         orig_dtype = x.dtype
-        # Add residual to input and convert to float
-        x = x.float() + residual.float()
-        # Update residual in original dtype
-        residual = x.to(orig_dtype)
-
-        # Compute variance and normalize
-        var = x.pow(2).mean(dim=-1, keepdim=True)
-        x = x * torch.rsqrt(var + self.eps)
-
-        return x.to(orig_dtype) * self.weight, residual
+        x_fp32 = x.float() + residual.float()
+        residual = x_fp32.to(orig_dtype)
+        return self._rms_norm_core(x_fp32).to(orig_dtype), residual
 
     def forward(
         self,
