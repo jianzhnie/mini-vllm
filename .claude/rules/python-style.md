@@ -8,17 +8,19 @@ Recommended tooling: ruff, black (88 chars, double quotes), isort, mypy.
 
 ## 1 Module Mechanics
 
-### `__all__`
+### `__all__` (recommended)
 
-Public modules should export an explicit `__all__` list as the source of truth for the module's public API.
+Recommended for public modules: export an explicit `__all__` list as the source of truth for the module's public API. Not required — project does not use wildcard imports, and missing `__all__` has no functional impact.
 
 ```python
 __all__ = ["UserService", "create_user", "UserError"]
 ```
 
-### `from __future__ import annotations`
+### `from __future__ import annotations` (optional)
 
-Always the first import (before any other import). Enables PEP 604 (`X | Y`) and lazy evaluation of annotations.
+Enables PEP 604 (`X | Y`) and lazy evaluation of annotations. Note that this project targets Python 3.10+, so `X | Y` syntax works natively without the import.
+
+**Skip this import if your code uses** `torch.jit.script`, runtime `typing.get_type_hints()`, or `ClassVar` / `InitVar` in dataclasses — lazy string annotations can break these at runtime. Otherwise it is safe to include.
 
 ### Main guard
 
@@ -36,7 +38,7 @@ if __name__ == "__main__":
 
 Groups (alphabetical within each, one blank line between):
 
-1. `from __future__ import ...`
+1. `from __future__ import ...` (if present)
 2. Standard library
 3. Third-party
 4. First-party / local
@@ -47,8 +49,6 @@ Rules:
 - No relative imports, no wildcard imports, no multiple imports per line
 
 ```python
-from __future__ import annotations
-
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import ClassVar, Final, TypeAlias
