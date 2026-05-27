@@ -1,36 +1,80 @@
 # Python Style Guide
 
-This guide follows the [Google Python Style Guide](https://google.github.io/styleguide/pyguide.html) with standard adaptations for modern Python (3.10+).
+Based on the [Google Python Style Guide](https://google.github.io/styleguide/pyguide.html), adapted for modern Python 3.10+.
+
+Recommended tooling: ruff, black (88 chars, double quotes), isort, mypy.
 
 ---
 
-## 1 Formatting
+## 1 Module Mechanics
 
-### 1.1 Line length
+### `__all__`
 
-Maximum 88 characters. Use implicit line joining inside `()`, `[]`, `{}`. Never use `\` backslash continuation.
+Public modules should export an explicit `__all__` list as the source of truth for the module's public API.
 
-### 1.2 Indentation
+```python
+__all__ = ["UserService", "create_user", "UserError"]
+```
 
-4 spaces. No tabs.
+### `from __future__ import annotations`
 
-### 1.3 Blank lines
+Always the first import (before any other import). Enables PEP 604 (`X | Y`) and lazy evaluation of annotations.
 
-- 2 blank lines between top-level definitions (class, function)
-- 1 blank line between method definitions
-- 1 blank line between import groups
+### Main guard
 
-### 1.4 Whitespace
+All executable scripts define and call a `main()` function:
 
-- No spaces inside `()`, `[]`, `{}`
-- One space after `,`, `:`, `;`
-- One space on both sides of binary operators (`+`, `-`, `==`, etc.)
-- No spaces around `=` in keyword arguments: `func(a=1)`
-- One space around `=` in type-annotated defaults: `def func(a: int = 1)`
+```python
+def main() -> None:
+    ...
 
-### 1.5 Trailing comma
+if __name__ == "__main__":
+    main()
+```
 
-Required when closing bracket is on its own line:
+### Import ordering
+
+Groups (alphabetical within each, one blank line between):
+
+1. `from __future__ import ...`
+2. Standard library
+3. Third-party
+4. First-party / local
+
+Rules:
+- `import x` for packages; `from x import y` where `x` is the package prefix
+- `import y as z` only for widely-recognized abbreviations (`np`, `pd`)
+- No relative imports, no wildcard imports, no multiple imports per line
+
+```python
+from __future__ import annotations
+
+from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
+from typing import ClassVar, Final, TypeAlias
+
+import numpy as np
+import pandas as pd
+
+from myproject.core import Config
+from myproject.utils import helper
+```
+
+Prefer `collections.abc` over `typing` for abstract base types: `from collections.abc import Iterator` not `from typing import Iterator`.
+
+---
+
+## 2 Formatting
+
+**Line length**: Maximum 88 characters. Use implicit line joining inside `()`, `[]`, `{}`. Never use `\` backslash continuation.
+
+**Indentation**: 4 spaces. No tabs.
+
+**Blank lines**: 2 blank lines between top-level definitions (class, function). 1 blank line between method definitions. 1 blank line between import groups.
+
+**Whitespace**: No spaces inside `()`, `[]`, `{}`. One space after `,`, `:`, `;`. One space on both sides of binary operators (`+`, `-`, `==`, etc.). No spaces around `=` in keyword arguments: `func(a=1)`. One space around `=` in type-annotated defaults: `def func(a: int = 1)`.
+
+**Trailing comma**: Required when closing bracket is on its own line:
 
 ```python
 my_list = [
@@ -40,102 +84,68 @@ my_list = [
 ]
 ```
 
-### 1.6 Imports
-
-Order (alphabetical within each group, blank line between groups):
-
-1. `from __future__ import ...`
-2. Standard library
-3. Third-party
-4. First-party / local
-
-Rules:
-
-- `import x` for packages and modules
-- `from x import y` where `x` is package prefix, `y` is module name
-- `from x import y as z` when `y` conflicts, is too long, or too generic
-- `import y as z` only for standard abbreviations (e.g. `np`, `pd`, `torch` as `pt`)
-- No relative imports
-- No `from module import *`
-- No multiple imports on one line: `import os, sys`
-
-```python
-from __future__ import annotations
-
-import os
-from pathlib import Path
-
-import torch
-
-from myproject.utils import helper
-```
-
----
-
-## 2 Naming
+## 3 Naming
 
 | Type | Convention | Example |
 |------|------------|---------|
 | Module / package | `lower_snake_case` | `my_module` |
-| Class | `CapWords` | `MyClass` |
-| Exception | `CapWords` + `Error` suffix | `ValueError` |
-| Function / method | `lower_snake_case()` | `my_function` |
+| Class / exception / type alias | `CapWords` | `MyClass`, `ValueError`, `ProcessorConfig` |
+| Function / method / variable | `lower_snake_case` | `my_function`, `block_size` |
 | Constant | `UPPER_SNAKE_CASE` | `MAX_SIZE` |
-| Variable / parameter | `lower_snake_case` | `my_variable` |
 | Private (internal) | leading underscore | `_internal_func` |
-| Type alias | `CapWords` | `TensorDict` |
 
 Prohibited:
-
-- Names with hyphens `-`
-- Names containing type info (`id_to_name_dict`)
-- `__double_leading_and_trailing_underscore__` (reserved)
-- Single-char names except in very short blocks (`i`, `j`, `k`, `e`, `f`)
+- Hyphens, names carrying type info (`id_to_name_dict`), dunder names (reserved), single-char names except in tight loops (`i`, `j`, `k`)
 
 ---
 
-## 3 Type Annotations
+## 4 Type Annotations
 
-### 3.1 Required
+### Required
 
-All public functions and methods must have type annotations.
+All public functions and methods must annotate parameters and return type.
 
-### 3.2 Modern syntax
-
-Use `from __future__ import annotations` and Python 3.10+ syntax:
+### Modern syntax (3.10+)
 
 - `X | Y` instead of `Union[X, Y]`
 - `X | None` instead of `Optional[X]`
-- Built-in generics: `list[str]`, `dict[str, int]`, `tuple[int, str]`
+- Built-in generics: `list[int]`, `dict[str, int]`, `tuple[int, str]`
 
-### 3.3 Special cases
+### Special types
 
-- `self` and `cls` need not be annotated
-- `__init__` return type need not be annotated
-- Use `ClassVar` for class-level mutable attributes
-- Use `Any` only when the type truly cannot be expressed
+| Type | When |
+|------|------|
+| `ClassVar` | Class-level mutable attributes |
+| `TypeAlias` | Complex type shorthand at module level |
+| `Final` | Constants that should not be reassigned |
+| `Any` | Only when the type truly cannot be expressed |
 
-### 3.4 None defaults
+### None defaults
 
-Explicit `None` default requires explicit `None` in type:
+Explicit `None` default requires `| None` in the type:
 
 ```python
-# Yes
-def func(a: str | None = None) -> None:
+def func(a: str | None = None) -> None:  # correct
     ...
-
-# No
-def func(a: str = None) -> None:
+```
+```python
+def func(a: str = None) -> None:          # wrong
     ...
 ```
 
+### Rules
+
+- `self` and `cls` need not be annotated
+- `__init__` return type need not be annotated
+- Favor `collections.abc` for abstract types: `Sequence`, `Mapping`, `Iterable` over their `typing` equivalents
+
 ---
 
-## 4 Docstrings
+## 5 Docstrings
 
-Always use `"""` triple double-quotes.
+Always `"""` triple double-quotes. Follow the structure below for public API.
 
-### 4.1 Module
+### Module
 
 ```python
 """One-line summary of the module.
@@ -144,7 +154,7 @@ Leave one blank line, then describe the module in more detail.
 """
 ```
 
-### 4.2 Function / method
+### Function / Method
 
 ```python
 def my_function(arg1: int, arg2: str) -> bool:
@@ -163,13 +173,12 @@ def my_function(arg1: int, arg2: str) -> bool:
 ```
 
 Rules:
-
-- Summary line: one line, ends with period / question mark / exclamation
+- Summary: one line, ends with period / question mark / exclamation
 - `Args`, `Returns`, `Raises` sections for public API
-- Private methods (`_`) may omit docstring or use one-line only
-- Do not document the obvious (e.g. "gets x" for `get_x`)
+- Private methods (`_`) may use a one-line docstring or omit it
+- Do not document the obvious
 
-### 4.3 Class
+### Class
 
 ```python
 class MyClass:
@@ -183,45 +192,27 @@ class MyClass:
 
 ---
 
-## 5 Comments
+## 6 Comments
 
-- Comments explain **WHY**, not **WHAT**
-- Use block comments (`#`) above the code they describe, not at end of line
+- Explain **WHY**, not **WHAT**
+- Block comments (`#`) above the described code, not inline
 - Delete commented-out code before committing
 - Do not reference PR numbers or ticket IDs in code comments
 
 TODO format:
 
 ```python
-# TODO(username): Description of what needs to be done.
+# TODO(username): What needs to be done.
 ```
 
 ---
 
-## 6 Error Handling
+## 7 Error Handling
 
-### 6.1 Exception types
-
-- Catch the most specific exception possible
-- Never use bare `except:` or `except Exception:` unless re-raising immediately
-- Never swallow exceptions silently; at minimum log them
-- Custom exceptions must inherit an existing exception class and end with `Error`
-
-### 6.2 assert
-
-Use `assert` only for internal invariants, never for input validation or runtime checks (assertions can be disabled with `-O`).
-
-```python
-# Yes (internal invariant)
-assert index < len(data), "Index out of bounds"
-
-# No (runtime check)
-assert os.path.exists(path), "Path must exist"
-```
-
-### 6.3 Re-raising
-
-Use `raise from` to preserve tracebacks:
+- Catch the most specific exception; no bare `except:` or `except Exception:` unless re-raising immediately
+- Never silently swallow exceptions — log at minimum
+- Custom exceptions must inherit an existing exception and end with `Error`
+- Use `raise from` to preserve tracebacks:
 
 ```python
 try:
@@ -230,153 +221,148 @@ except FileNotFoundError as e:
     raise RuntimeError(f"Failed to load {path}") from e
 ```
 
-### 6.4 Resource cleanup
+- Use `with` for files and resources; use `finally` for cleanup
+- Minimize code inside `try` blocks — only the line that can fail
 
-Use `with` for files, sockets, locks. Use `finally` for cleanup.
+### assert
 
-### 6.5 try/except scope
-
-Minimize code inside `try/except` blocks:
+Use `assert` only for internal invariants (logic errors, not recoverable). Never for input validation or runtime checks — assertions can be disabled with `-O`.
 
 ```python
-# Yes
-value = compute_something()
-try:
-    result = value.risky_operation()
-except ValueError:
-    result = default
+# Yes — internal invariant
+assert x >= 0, "internal: negative value after normalization"
 
-# No
-try:
-    value = compute_something()
-    result = value.risky_operation()
-except ValueError:
-    result = default
+# No — runtime check
+assert os.path.exists(path), "Path must exist"
 ```
 
 ---
 
-## 7 Boolean Comparisons
+## 8 Values & Comparisons
+
+### Boolean
 
 | Prefer | Avoid |
 |--------|-------|
 | `if seq:` | `if len(seq) != 0:` |
 | `if not seq:` | `if len(seq) == 0:` |
 | `if val is None:` | `if val == None:` |
-| `if val is not None:` | `if val != None:` |
 | `if flag:` | `if flag == True:` |
 | `if not flag:` | `if flag == False:` |
 
-When `0` is a valid value, explicitly compare: `if x == 0:` not `if not x:`.
+When `0` is a valid value, compare explicitly: `if x == 0:` not `if not x:`.
 
----
+Use `isinstance` checks, not type identity: `isinstance(x, MyClass)` not `type(x) is MyClass`.
 
-## 8 Default Arguments
+### Default arguments
 
-Never use mutable objects as default arguments:
+Never use mutable objects as defaults:
 
 ```python
-# Yes
-def foo(a, b=None):
+def foo(a, b: list[int] | None = None):
     if b is None:
         b = []
-
-def foo(a, b: Sequence = ()):
+```
+```python
+def foo(a, b: Sequence[int] = ()):  # also valid — immutable tuple
     ...
-
-# No
-def foo(a, b=[]):
-def foo(a, b: Mapping = {}):
-def foo(a, b=time.time()):  # evaluated at import time
 ```
 
----
-
-## 9 String Formatting
+### String formatting
 
 - Prefer f-strings for inline formatting
-- Never use `+` for string concatenation in loops
-- Never accumulate strings with `+=` in loops (use `list` + `join` or `io.StringIO`)
-
-Logging: use `%`-style placeholders for lazy evaluation:
+- Never use `+` or `+=` for string accumulation in loops — use `"".join()` or `io.StringIO`
+- Logging: use `%`-style placeholders for lazy evaluation:
 
 ```python
-# Yes
-logger.info("Loading from %s", path)
+logger.info("Loading from %s", path)     # correct
+logger.info(f"Loading from {path}")       # wrong — eager eval
+```
 
-# No
-logger.info(f"Loading from {path}")
+Module-level logger pattern:
+
+```python
+import logging
+
+logger = logging.getLogger(__name__)
 ```
 
 ---
 
-## 10 Comprehensions
+## 9 Patterns
 
-Allowed for simple cases. Prohibited with multiple `for` clauses:
+### Comprehensions & generators
 
-```python
-# Yes
-result = [x * 2 for x in data if x > 0]
-
-# No
-result = [(x, y) for x in range(10) for y in range(5) if x * y > 10]
-```
-
-Use generator expressions for `any()` / `all()` / `sum()`:
+Allowed for simple cases. No multiple `for` clauses:
 
 ```python
-# Yes
-has_positive = any(x > 0 for x in data)
-
-# No
-has_positive = any([x > 0 for x in data])
+result = [x * 2 for x in data if x > 0]     # correct
+has_positive = any(x > 0 for x in data)      # correct — generator, not list
+has_positive = any([x > 0 for x in data])    # wrong — unnecessary list
 ```
 
----
+### Dataclasses
 
-## 11 Lambda
-
-Allowed only for trivial one-liners. Use nested functions for anything longer:
+Prefer `@dataclass` for data containers. Use `__post_init__` for validation that runs after field initialization:
 
 ```python
-# Yes
-sorted_items = sorted(items, key=lambda x: x[0])
+@dataclass
+class Config:
+    name: str
+    max_items: int = 100
 
-# No
-result = map(lambda x: complex_transform(x), items)
+    def __post_init__(self) -> None:
+        if self.max_items < 1:
+            raise ValueError(f"max_items must be >= 1, got {self.max_items}")
 ```
 
----
+### Enums
 
-## 12 Classes
+Use `Enum` + `auto()` for enumerations:
 
-- Prefer `@dataclass` for data containers
-- Use `@property` instead of trivial getter/setter methods
+```python
+from enum import Enum, auto
+
+class Status(Enum):
+    PENDING = auto()
+    ACTIVE = auto()
+    COMPLETED = auto()
+```
+
+### Properties
+
+Use `@property` instead of getter/setter methods:
+
+```python
+@property
+def full_name(self) -> str:
+    return f"{self.first} {self.last}"
+```
+
+### Match / case (3.10+)
+
+Use pattern matching for complex branching on enums, dataclasses, or tuples. Prefer over long `if`/`elif` chains.
+
+### Lambdas
+
+Only for trivial one-liners (e.g. sort keys). Use a nested `def` for anything multi-line.
+
+### Context managers
+
+Use `with` for any resource with clean-up. When defining custom context managers, prefer `@contextmanager` for simple cases, `__enter__`/`__exit__` for stateful ones.
+
+### Classes
+
 - Instance attributes initialized in `__init__`, not dynamically added later
-- Avoid `staticmethod` — use module-level functions instead
-- `classmethod` only for named constructors or modifying class-level state
-- Inherit from `object` explicitly only in Python 2 compatibility code
+- Avoid `staticmethod` — use module-level functions
+- `classmethod` only for named constructors or class-level state
+- Inherit from `object` only in Python 2 compat code
 
 ---
 
-## 13 Main Entry Point
-
-All executable scripts must define and call a `main()` function:
-
-```python
-def main() -> None:
-    ...
-
-if __name__ == "__main__":
-    main()
-```
-
----
-
-## 14 General Conventions
+## 10 General Conventions
 
 - Use `pathlib.Path` over `os.path` for file operations
-- Use `logging` module, not `print()`, for diagnostic output
-- Prefer `isinstance(x, type)` over `type(x) == type`
+- Use `logging` module, never `print()`, for diagnostic output
 - Keep functions focused; consider splitting when exceeding ~40 lines
 - Be consistent with existing code in the same file
