@@ -104,7 +104,7 @@ class Sampler(nn.Module):
 
         # 8. Sample
         # Greedy: temperature=0 → argmax (deterministic, no randomization)
-        if isinstance(temp, (int, float)) and temp == 0:
+        if isinstance(temp, int | float) and temp == 0:
             return torch.argmax(logits, dim=-1)
 
         return F.sample_from_logits(logits, generator=generator)

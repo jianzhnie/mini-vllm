@@ -41,10 +41,10 @@ __author__ = "Mini-vLLM Contributors"
 
 # Public API - import main classes for convenience
 try:
-    from minivllm.config import Config  # noqa: F401
-    from minivllm.engine.sequence import Sequence, SequenceStatus  # noqa: F401
-    from minivllm.llm import LLM  # noqa: F401
-    from minivllm.sampling_params import SamplingParams  # noqa: F401
+    from minivllm.config import Config
+    from minivllm.engine.sequence import Sequence, SequenceStatus
+    from minivllm.llm import LLM
+    from minivllm.sampling_params import SamplingParams
 
     __all__ = [
         "Config",

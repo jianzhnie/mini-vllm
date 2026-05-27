@@ -136,7 +136,7 @@ class ModelRunner:
                 cmd = self.distributed_manager.broadcast_data(None, src=0)
 
                 # Validate command format
-                if not isinstance(cmd, (list, tuple)) or len(cmd) != 3:
+                if not isinstance(cmd, list | tuple) or len(cmd) != 3:
                     logger.error("Rank %d: Invalid command format: %s", self.rank, cmd)
                     continue
 

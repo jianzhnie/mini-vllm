@@ -21,10 +21,10 @@ os.environ["ASCEND_RT_VISIBLE_DEVICES"] = ""
 os.environ["XPU_VISIBLE_DEVICES"] = ""
 os.environ["MINIVLLM_DEVICE"] = "cpu"
 
-from minivllm import LLM, SamplingParams  # noqa: E402
-from minivllm.config import Config  # noqa: E402
-from minivllm.utils.example_utils import format_prompts_with_chat_template  # noqa: E402
-from minivllm.utils.logger_utils import get_logger  # noqa: E402
+from minivllm import LLM, SamplingParams
+from minivllm.config import Config
+from minivllm.utils.example_utils import format_prompts_with_chat_template
+from minivllm.utils.logger_utils import get_logger
 
 logger = get_logger(__name__)
 

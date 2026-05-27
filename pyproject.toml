@@ -5,18 +5,32 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "minivllm"
 version = "0.1.0"
-authors = [{ name = "jianzhnie" }]
+description = "A lightweight LLM inference engine built from scratch, inspired by vLLM"
+readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-readme = "README.md"
-description = "a lightweight vLLM implementation built from scratch"
-requires-python = ">=3.10,<3.13"
+authors = [{ name = "jianzhnie" }]
+requires-python = ">=3.10"
+keywords = ["llm", "inference", "vllm", "kv-cache", "tensor-parallelism"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "torch>=2.2.0",
     "transformers>=4.37.0",
     "xxhash",
     "colorama",
-    "numpy<2",
+    "numpy>=1.21",
     "tqdm>=4.62.0",
     "safetensors>=0.4.0",
 ]
@@ -39,7 +53,7 @@ dev = [
 ]
 
 [project.urls]
-Homepage="https://github.com/jianzhnie/mini-vllm"
+Homepage = "https://github.com/jianzhnie/mini-vllm"
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -57,13 +71,15 @@ line-ending = "lf"
 
 [tool.ruff.lint]
 select = [
-    "F",    # Pyflakes
-    "E",    # Pycodestyle errors
-    "W",    # Pycodestyle warnings
-    "I",    # Isort (import sorting)
-    "B",    # Flake8-bugbear
-    "C4",   # Flake8-comprehensions
-    "SIM",  # Flake8-simplify
+    "F",     # Pyflakes
+    "E",     # Pycodestyle errors
+    "W",     # Pycodestyle warnings
+    "I",     # Isort (import sorting)
+    "B",     # Flake8-bugbear
+    "C4",    # Flake8-comprehensions
+    "SIM",   # Flake8-simplify
+    "UP",    # Pyupgrade (modernize syntax to 3.10+)
+    "RUF100",# Detect unused # noqa directives
 ]
 ignore = [
     "E501",  # Line too long (handled by formatter)
@@ -72,7 +88,27 @@ ignore = [
 [tool.ruff.lint.isort]
 known-first-party = ["minivllm"]
 
+[tool.ruff.lint.pyupgrade]
+keep-runtime-typing = true
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+ignore_missing_imports = true
+exclude = [
+    "tests/",
+    "examples/",
+]
+warn_unreachable = true
+warn_no_return = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = ["-v", "--tb=short", "--strict-markers"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "cuda: marks tests requiring CUDA device",
+    "npu: marks tests requiring NPU device",
+]

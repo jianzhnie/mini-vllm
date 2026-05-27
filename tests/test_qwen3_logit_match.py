@@ -13,14 +13,14 @@ import sys
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 os.environ["MINIVLLM_DEVICE"] = "cpu"
 
-import torch  # noqa: E402
-import torch.nn.functional as F  # noqa: E402
-from safetensors.torch import load_file  # noqa: E402
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer  # noqa: E402
+import torch
+import torch.nn.functional as F
+from safetensors.torch import load_file
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))  # noqa: E402
-from minivllm.models import create_model  # noqa: E402
-from minivllm.utils.context import reset_context, set_context  # noqa: E402
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from minivllm.models import create_model
+from minivllm.utils.context import reset_context, set_context
 
 MODEL_PATH = os.environ.get(
     "MINIVLLM_MODEL",
@@ -111,7 +111,7 @@ def compare_layer_by_layer(mv_model, hf_model, tokenizer):
     hf_layer_outputs = {}
 
     def make_hook(idx):
-        def hook(module, args, kwargs, output):  # noqa: ARG001
+        def hook(module, args, kwargs, output):
             o = output[0] if isinstance(output, tuple) else output
             hf_layer_outputs[idx] = o.detach()
 
@@ -280,7 +280,7 @@ def compare_subcomponents(mv_model, hf_model, input_ids, seq_len, layer_idx=0):
         print(f"  Attention output: computed (norm={attn_out.norm():.4f})")
 
         # RMSNorm mutation test
-        from minivllm.models.layers.layernorm import RMSNorm  # noqa: E402
+        from minivllm.models.layers.layernorm import RMSNorm
 
         norm = RMSNorm(4)
         x_orig = torch.tensor([1.0, 2.0, 3.0, 4.0])

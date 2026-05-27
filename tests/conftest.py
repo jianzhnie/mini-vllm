@@ -4,8 +4,8 @@ This module provides common fixtures used across multiple test files
 to reduce code duplication and improve test maintainability.
 """
 
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator
 from unittest.mock import MagicMock, patch
 
 import pytest

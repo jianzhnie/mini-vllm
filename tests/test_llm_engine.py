@@ -162,7 +162,7 @@ class TestLLMEngineInferenceStep:
         with patch.object(engine.model_runner, "call", return_value=[4, 5, 6]):
             output, num_tokens = engine.step()
             assert isinstance(output, list)
-            assert isinstance(num_tokens, (int, float))
+            assert isinstance(num_tokens, int | float)
 
 
 class TestLLMEngineTextGeneration:
