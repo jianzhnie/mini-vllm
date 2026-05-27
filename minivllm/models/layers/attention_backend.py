@@ -657,12 +657,14 @@ class NPUAttentionBackend(AttentionBackend):
         Returns:
             Tuple of (k_cache, v_cache) in NPU-optimized format
         """
-        # If we have block tables, use page attention format
+        # If we have valid block tables (non-empty, non-warmup), use page attention format
+        _bt = context.block_tables
         if (
-            context.block_tables is not None
+            _bt is not None
             and not context.is_prefill
-            and context.block_tables.numel() > 0
-            and context.block_tables.shape[1] > 0
+            and _bt.numel() > 0
+            and _bt.shape[1] > 0
+            and (_bt >= 0).any()
         ):
             # Decode phase with block tables: gather from cache
             batch_size = k.size(0) if k.dim() > 2 else 1

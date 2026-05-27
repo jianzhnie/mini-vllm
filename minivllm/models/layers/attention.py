@@ -238,15 +238,21 @@ class Attention(nn.Module):
                 "is called before inference."
             )
 
+        # NPU FA APIs (npu_fusion_attention, npu_fused_infer_attention_score)
+        # do not support GQA (num_heads != num_kv_heads). Skip all NPU FA paths
+        # for GQA models to avoid garbled output.
+        _npu_fa_safe = self.num_heads == self.num_kv_heads
+
         # Priority 1: NPU unified inference API (most optimized)
-        # Skip NPU path during warmup (empty block tables) to avoid NPU gather errors
+        # Skip NPU path during warmup (empty/all-invalid block tables)
+        _bt = context.block_tables
         is_warmup = (
             not context.is_prefill
-            and context.block_tables is not None
-            and context.block_tables.numel() > 0
-            and context.block_tables.shape[1] == 0
+            and _bt is not None
+            and _bt.numel() > 0
+            and (_bt.shape[1] == 0 or not (_bt >= 0).any())
         )
-        if isinstance(self.backend, NPUAttentionBackend) and not is_warmup:
+        if isinstance(self.backend, NPUAttentionBackend) and not is_warmup and _npu_fa_safe:
             try:
                 # Use NPU unified inference engine with BNSD layout
                 seq_length = (
@@ -292,13 +298,13 @@ class Attention(nn.Module):
                 return attn_out.contiguous()
 
             except Exception as e:
-                logger.warning(
+                logger.debug(
                     f"NPU unified inference failed: {e}, trying NPU fallback paths"
                 )
 
         # Priority 2: NPU-specific prefill/decode paths
         # Only active when NPU backend is selected (opt-in via MINIVLLM_USE_NPU_FA)
-        if _NPU_FLASH_ATTN_AVAILABLE and isinstance(self.backend, NPUAttentionBackend):
+        if _NPU_FLASH_ATTN_AVAILABLE and isinstance(self.backend, NPUAttentionBackend) and _npu_fa_safe:
             if context.is_prefill:
                 # Prefill: use npu_flash_attn_func through the backend.forward
                 if isinstance(self.backend, NPUAttentionBackend):
@@ -357,7 +363,13 @@ class Attention(nn.Module):
                         logger.warning(f"NPU prefill fallback failed: {e}")
             else:
                 # Decode: use legacy npu_incre_flash_attention
-                if npu_incre_flash_attention is not None and k_cache.numel() > 0:
+                # Only attempt NPU FA if block_tables are valid (no empty blocks)
+                block_tables_valid = (
+                    context.block_tables is not None
+                    and context.block_tables.numel() > 0
+                    and (context.block_tables >= 0).all()
+                )
+                if npu_incre_flash_attention is not None and k_cache.numel() > 0 and block_tables_valid:
                     try:
                         batch_size = q.size(0)
                         target_dtype = torch.float16

@@ -564,7 +564,7 @@ class InferenceExecutor:
                 has_empty_block_table = True
 
         if has_empty_block_table:
-            logger.warning(
+            logger.debug(
                 "Some sequences have empty block tables during decode. "
                 "This is expected during warmup but may indicate an issue during actual inference."
             )
