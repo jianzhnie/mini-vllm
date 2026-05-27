@@ -46,12 +46,12 @@ Dependencies:
     - torch: Always required
 """
 
-import logging
 import math
 import os
 from typing import Any
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 
 from minivllm.models.layers.attention_backend import (
@@ -173,6 +173,9 @@ class Attention(nn.Module):
         self.v_cache: torch.Tensor = torch.tensor([])
         # Track whether KV cache has been properly initialized by ModelRunner
         self._cache_initialized: bool = False
+        # Buffer caching for decode attention to avoid per-step allocation
+        self._buf_k: torch.Tensor | None = None
+        self._buf_v: torch.Tensor | None = None
 
     def extra_repr(self) -> str:
         return (
@@ -545,22 +548,18 @@ class Attention(nn.Module):
             # Use device and dtype from input tensors for consistency
             device = q.device
             dtype = q.dtype
-            cached_k = torch.zeros(
-                batch_size,
-                max_seqlen,
-                self.num_kv_heads,
-                self.head_dim,
-                device=device,
-                dtype=dtype,
-            )
-            cached_v = torch.zeros(
-                batch_size,
-                max_seqlen,
-                self.num_kv_heads,
-                self.head_dim,
-                device=device,
-                dtype=dtype,
-            )
+
+            # Reuse buffers to avoid per-step allocation
+            buf_shape = (batch_size, max_seqlen, self.num_kv_heads, self.head_dim)
+            if (
+                self._buf_k is None
+                or self._buf_k.shape != buf_shape
+                or self._buf_k.dtype != dtype
+            ):
+                self._buf_k = torch.zeros(buf_shape, device=device, dtype=dtype)
+                self._buf_v = torch.zeros(buf_shape, device=device, dtype=dtype)
+            cached_k = self._buf_k.zero_()
+            cached_v = self._buf_v.zero_()
 
             # Vectorized KV cache gather (replaces triple-nested Python for-loop)
             block_size = self.k_cache.size(1)
@@ -600,55 +599,30 @@ class Attention(nn.Module):
                     cached_k[mask] = self.k_cache[active_block_ids, active_offsets]
                     cached_v[mask] = self.v_cache[active_block_ids, active_offsets]
 
-            # Handle GQA/MQA: repeat k/v heads to match q heads
-            cached_k, cached_v = self._repeat_kv_heads(
-                cached_k.unsqueeze(0), cached_v.unsqueeze(0)
+            # Handle GQA/MQA: SDPA handles head broadcasting natively
+            # Permute cached_k/v from [batch, seqlen, kv_heads, dim]
+            # to SDPA format [batch, kv_heads, seqlen, dim]
+            k_sdpa = cached_k.permute(0, 2, 1, 3)
+            v_sdpa = cached_v.permute(0, 2, 1, 3)
+
+            # q: [batch, heads, dim] → [batch, heads, 1, dim]
+            q_sdpa = q.unsqueeze(2)
+
+            # SDPA mask: True = attend, False = masked (padding)
+            sdpa_mask = torch.arange(max_seqlen, device=device).expand(
+                batch_size, max_seqlen
             )
-            cached_k = cached_k.squeeze(0)
-            cached_v = cached_v.squeeze(0)
+            sdpa_mask = sdpa_mask < context.context_lens.unsqueeze(1)
+            sdpa_mask = sdpa_mask.unsqueeze(1).unsqueeze(2)
 
-            # DEBUG: Check if cached_k contains valid data
-            if logger.isEnabledFor(logging.DEBUG) and cached_k.abs().sum() == 0:
-                logger.debug(
-                    f"Decode Step: cached_k is all zeros! Batch size: {batch_size}"
-                )
-                logger.debug("Context Lens: %s", context.context_lens)
-                logger.debug(
-                    "Block Tables sample: %s",
-                    context.block_tables[0]
-                    if len(context.block_tables) > 0
-                    else "Empty",
-                )
-                logger.debug(
-                    f"Slot Mapping sample: {context.slot_mapping[:10] if context.slot_mapping is not None else 'None'}"
-                )
-                logger.debug(
-                    f"Global k_cache non-zero elements: {self.k_cache.count_nonzero()}"
-                )
-
-            # Compute attention for single query token per sequence
-            # q: [batch, num_heads, head_dim]
-            # cached_k: [batch, seqlen, num_heads, head_dim]
-            # q_expanded: [batch, num_heads, 1, head_dim]
-            q_expanded = q.unsqueeze(2)
-            # [batch, num_heads, 1, head_dim] @ [batch, num_heads, head_dim, seqlen]
-            # -> [batch, num_heads, 1, seqlen]
-            attn_weights = (
-                torch.matmul(q_expanded, cached_k.transpose(1, 2).transpose(-2, -1))
-                * self.scale
+            attn_out = F.scaled_dot_product_attention(
+                q_sdpa,
+                k_sdpa,
+                v_sdpa,
+                attn_mask=sdpa_mask,
+                scale=self.scale,
             )
-
-            # Create attention mask based on actual sequence lengths
-            seqlen_mask = self._create_seqlen_mask(
-                max_seqlen, batch_size, context.context_lens, device
-            )
-            attn_weights = attn_weights.masked_fill(seqlen_mask, float("-inf"))
-
-            # Softmax and weighted sum
-            attn_probs = torch.softmax(attn_weights, dim=-1)
-            # [batch, num_heads, 1, seqlen] @ [batch, num_heads, seqlen, head_dim]
-            # -> [batch, num_heads, 1, head_dim]
-            attn_out = torch.matmul(attn_probs, cached_v.transpose(1, 2)).squeeze(2)
+            attn_out = attn_out.squeeze(2)  # [batch, heads, dim]
 
         return attn_out
 
@@ -720,29 +694,3 @@ class Attention(nn.Module):
         # Reshape back to original format
         out_seq = out_seq.squeeze(0).transpose(0, 1)  # [seqlen_q, num_heads, head_dim]
         return out_seq
-
-    def _create_seqlen_mask(
-        self,
-        max_seqlen: int,
-        batch_size: int,
-        context_lens: torch.Tensor,
-        device: torch.device,
-    ) -> torch.Tensor:
-        """Create attention mask based on actual sequence lengths.
-
-        Args:
-            max_seqlen: Maximum sequence length
-            batch_size: Batch size
-            context_lens: Tensor of actual sequence lengths
-            device: Device for creating the mask
-
-        Returns:
-            Mask tensor of shape [batch, 1, 1, seqlen]
-        """
-        seqlen_mask = torch.arange(max_seqlen, device=device, dtype=torch.long).expand(
-            batch_size, max_seqlen
-        )
-        seqlen_mask = seqlen_mask >= context_lens.unsqueeze(1)
-        seqlen_mask = seqlen_mask.unsqueeze(1).unsqueeze(2)
-        # [batch, 1, 1, seqlen]
-        return seqlen_mask
