@@ -117,14 +117,14 @@ def set_context(
         independent context.
     """
     ctx = Context(
-        is_prefill,
-        max_seqlen_q,
-        max_seqlen_k,
-        cum_seqlens_q,
-        cum_seqlens_k,
-        slot_mapping,
-        context_lens,
-        block_tables,
+        is_prefill=is_prefill,
+        max_seqlen_q=max_seqlen_q,
+        max_seqlen_k=max_seqlen_k,
+        cum_seqlens_q=cum_seqlens_q,
+        cum_seqlens_k=cum_seqlens_k,
+        slot_mapping=slot_mapping,
+        context_lens=context_lens,
+        block_tables=block_tables,
     )
     _CONTEXT_VAR.set(ctx)
 

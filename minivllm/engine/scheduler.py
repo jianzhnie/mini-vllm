@@ -258,7 +258,9 @@ class Scheduler:
         Args:
             sequence: Sequence to preempt.
         """
-        logger.info(f"Preempting sequence {sequence.seq_id} due to memory constraints.")
+        logger.info(
+            "Preempting sequence %d due to memory constraints.", sequence.seq_id
+        )
         sequence.status = SequenceStatus.WAITING
         self.block_manager.deallocate(sequence)
         self.waiting.appendleft(sequence)

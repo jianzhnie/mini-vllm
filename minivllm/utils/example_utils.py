@@ -47,7 +47,7 @@ def format_prompts_with_chat_template(
             )
             formatted_prompts.append(formatted)
     except Exception as e:
-        logger.warning(f"Failed to apply chat template ({e}), using raw prompts.")
+        logger.warning("Failed to apply chat template (%s), using raw prompts.", e)
         return prompts
 
     return formatted_prompts

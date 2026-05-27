@@ -4,8 +4,8 @@ This module provides the Config dataclass which defines all configuration
 parameters for initializing and running the LLM engine.
 """
 
-import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import ClassVar
 
 from transformers import AutoConfig, PretrainedConfig
@@ -128,7 +128,7 @@ class Config:
 
     def _validate_model_path(self) -> None:
         """Validate that model path exists or is a valid HuggingFace model ID."""
-        if os.path.isdir(self.model):
+        if Path(self.model).is_dir():
             return
         # Allow HuggingFace model IDs (e.g. "facebook/opt-125m", "Qwen/Qwen3-0.6B")
         # These don't start with /, ./, ~ and are not absolute paths

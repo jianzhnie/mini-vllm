@@ -94,7 +94,7 @@ class ModelRunner:
     def _initialize(self) -> None:
         """Initialize all components and prepare for inference."""
         try:
-            logger.info(f"Rank {self.rank}: Initializing ModelRunner...")
+            logger.info("Rank %d: Initializing ModelRunner...", self.rank)
 
             # Initialize model management (loads model and tokenizer)
             self.model_manager.initialize()
@@ -114,10 +114,10 @@ class ModelRunner:
             if self.rank == 0:
                 self.inference_executor.capture_device_graphs(self.config.max_num_seqs)
 
-            logger.info(f"Rank {self.rank}: ModelRunner initialization completed")
+            logger.info("Rank %d: ModelRunner initialization completed", self.rank)
 
         except Exception as e:
-            logger.error(f"Rank {self.rank}: ModelRunner initialization failed: {e}")
+            logger.error("Rank %d: ModelRunner initialization failed: %s", self.rank, e)
             self.exit()
             raise
 
@@ -128,7 +128,7 @@ class ModelRunner:
         via distributed communication, execute them, and continue until
         receiving 'exit'.
         """
-        logger.info(f"Rank {self.rank}: Starting worker loop")
+        logger.info("Rank %d: Starting worker loop", self.rank)
 
         try:
             while True:
@@ -137,13 +137,13 @@ class ModelRunner:
 
                 # Validate command format
                 if not isinstance(cmd, (list, tuple)) or len(cmd) != 3:
-                    logger.error(f"Rank {self.rank}: Invalid command format: {cmd}")
+                    logger.error("Rank %d: Invalid command format: %s", self.rank, cmd)
                     continue
 
                 method_name, args, kwargs = cmd
 
                 if method_name == "exit":
-                    logger.info(f"Rank {self.rank}: Received exit command")
+                    logger.info("Rank %d: Received exit command", self.rank)
                     break
 
                 # Execute command locally
@@ -153,21 +153,21 @@ class ModelRunner:
                         method(*args, **kwargs)
                     except Exception as e:
                         logger.error(
-                            f"Rank {self.rank}: Error executing {method_name}: {e}"
+                            "Rank %d: Error executing %s: %s", self.rank, method_name, e
                         )
                         # Continue processing next command instead of crashing
                 else:
                     logger.error(
-                        f"Rank {self.rank}: Unknown method received: {method_name}"
+                        "Rank %d: Unknown method received: %s", self.rank, method_name
                     )
                     # Notify rank 0 about the error if needed
 
         except KeyboardInterrupt:
-            logger.info(f"Rank {self.rank}: Worker interrupted")
+            logger.info("Rank %d: Worker interrupted", self.rank)
         except Exception as e:
-            logger.error(f"Rank {self.rank}: Worker error: {e}", exc_info=True)
+            logger.error("Rank %d: Worker error: %s", self.rank, e, exc_info=True)
         finally:
-            logger.info(f"Rank {self.rank}: Worker exiting")
+            logger.info("Rank %d: Worker exiting", self.rank)
             self.exit()
 
     def call(self, method_name: str, *args: Any, **kwargs: Any) -> Any:
@@ -233,7 +233,7 @@ class ModelRunner:
         2. Cleans up distributed manager
         3. Cleans up model manager
         """
-        logger.info(f"Rank {self.rank}: Cleaning up ModelRunner...")
+        logger.info("Rank %d: Cleaning up ModelRunner...", self.rank)
 
         errors: list[str] = []
 
@@ -259,6 +259,8 @@ class ModelRunner:
             errors.append(f"Failed to cleanup model manager: {e}")
 
         if errors:
-            logger.warning(f"Rank {self.rank}: Cleanup completed with errors: {errors}")
+            logger.warning(
+                "Rank %d: Cleanup completed with errors: %s", self.rank, errors
+            )
         else:
-            logger.info(f"Rank {self.rank}: ModelRunner cleanup completed")
+            logger.info("Rank %d: ModelRunner cleanup completed", self.rank)

@@ -111,7 +111,7 @@ def set_device(device: torch.device) -> None:
         try:
             set_fn(device)
         except Exception as e:
-            logger.warning(f"Failed to set device {device}: {e}")
+            logger.warning("Failed to set device %s: %s", device, e)
 
 
 def get_default_device_name() -> str:

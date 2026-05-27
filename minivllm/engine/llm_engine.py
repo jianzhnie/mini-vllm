@@ -99,7 +99,7 @@ class LLMEngine:
 
         # Initialize main model runner on rank 0
         self.model_runner: ModelRunner = ModelRunner(config, 0, self.events)
-        logger.info(f"Initialized LLM Engine with model: {config.model}")
+        logger.info("Initialized LLM Engine with model: %s", config.model)
 
         # Reuse tokenizer already loaded by ModelManager (avoids duplicate loading)
         self.tokenizer: PreTrainedTokenizer = self.model_runner.model_manager.tokenizer

@@ -368,7 +368,7 @@ class Attention(nn.Module):
                             attn_out = attn_out[:total_tokens]
                             return attn_out.contiguous()
                     except Exception as e:
-                        logger.warning(f"NPU prefill fallback failed: {e}")
+                        logger.warning("NPU prefill fallback failed: %s", e)
             else:
                 # Decode: use legacy npu_incre_flash_attention
                 # Only attempt NPU FA if block_tables are valid (no empty blocks)
@@ -410,7 +410,7 @@ class Attention(nn.Module):
                         attn_out = attn_out.to(q.dtype).squeeze(2)
                         return attn_out
                     except Exception as e:
-                        logger.warning(f"NPU decode fallback failed: {e}")
+                        logger.warning("NPU decode fallback failed: %s", e)
 
         # Priority 3: CUDA FlashAttention
         if _FLASH_ATTN_AVAILABLE:
@@ -593,7 +593,7 @@ class Attention(nn.Module):
                             logger.error(
                                 f"num_kv_heads: {self.num_kv_heads}, head_dim: {self.head_dim}"
                             )
-                            logger.error(f"k_cache total shape: {self.k_cache.shape}")
+                            logger.error("k_cache total shape: %s", self.k_cache.shape)
                             raise e
                     token_idx += tokens_in_block
                     if token_idx >= seqlen:
@@ -611,9 +611,12 @@ class Attention(nn.Module):
                 logger.debug(
                     f"Decode Step: cached_k is all zeros! Batch size: {batch_size}"
                 )
-                logger.debug(f"Context Lens: {context.context_lens}")
+                logger.debug("Context Lens: %s", context.context_lens)
                 logger.debug(
-                    f"Block Tables sample: {context.block_tables[0] if len(context.block_tables) > 0 else 'Empty'}"
+                    "Block Tables sample: %s",
+                    context.block_tables[0]
+                    if len(context.block_tables) > 0
+                    else "Empty",
                 )
                 logger.debug(
                     f"Slot Mapping sample: {context.slot_mapping[:10] if context.slot_mapping is not None else 'None'}"

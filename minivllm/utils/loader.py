@@ -51,8 +51,8 @@ def find_parameter(model: nn.Module, name: str) -> nn.Parameter | None:
     if hasattr(model, "get_parameter") and callable(model.get_parameter):
         try:
             return model.get_parameter(name)
-        except Exception:
-            logger.debug(f"get_parameter failed for '{name}'")
+        except Exception as e:
+            logger.debug("get_parameter failed for '%s': %s", name, e)
             return None
 
     # Fallback to named_parameters
@@ -75,16 +75,15 @@ def apply_weight_loader(
         else:
             weight_loader(param, tensor)
 
-        log_details = (
+        packed_prefix = "packed " if is_packed else ""
+        shard_suffix = (
             f" (shard_id: {shard_id})" if is_packed and shard_id is not None else ""
         )
-        logger.debug(
-            f"Loaded {'packed ' if is_packed else ''}weight '{weight_name}'{log_details}"
-        )
+        logger.debug("Loaded %sweight '%s'%s", packed_prefix, weight_name, shard_suffix)
         return True
 
     except Exception as e:
-        logger.warning(f"Failed to load weight '{weight_name}': {e}")
+        logger.warning("Failed to load weight '%s': %s", weight_name, e)
         return False
 
 
@@ -114,7 +113,7 @@ def load_weight(
     # Direct loading
     param = find_parameter(model, weight_name)
     if param is None:
-        logger.warning(f"Parameter '{weight_name}' not found, skipping weight")
+        logger.warning("Parameter '%s' not found, skipping weight", weight_name)
         return False
 
     return apply_weight_loader(param, tensor, weight_name)
@@ -141,7 +140,7 @@ def load_model(model: nn.Module, model_path: str | Path) -> None:
                 )
             except OSError:
                 base_path = Path(snapshot_download(repo_id=repo_id))
-            logger.info(f"Resolved HuggingFace model ID to: {base_path}")
+            logger.info("Resolved HuggingFace model ID to: %s", base_path)
         except Exception as e:
             raise FileNotFoundError(
                 f"Could not resolve model path: {model_path}. "
@@ -161,21 +160,25 @@ def load_model(model: nn.Module, model_path: str | Path) -> None:
         raise ValueError(f"No .safetensors or .bin files found in {base_path}")
 
     logger.info(
-        f"Found {len(safetensor_files)} safetensors file(s) and {len(bin_files)} bin file(s) in {base_path}"
+        "Found %d safetensors file(s) and %d bin file(s) in %s",
+        len(safetensor_files),
+        len(bin_files),
+        base_path,
     )
 
     # Get packed modules mapping
     packed_modules_mapping = getattr(model, "packed_modules_mapping", {})
     if packed_modules_mapping:
         logger.info(
-            f"Using packed modules mapping with {len(packed_modules_mapping)} pattern(s)"
+            "Using packed modules mapping with %d pattern(s)",
+            len(packed_modules_mapping),
         )
 
     # Load weights and track statistics
     total_weights = loaded_weights = 0
 
     for file_path in safetensor_files:
-        logger.info(f'Loading weights from "{file_path.name}"')
+        logger.info('Loading weights from "%s"', file_path.name)
 
         try:
             with safe_open(str(file_path), framework="pt", device="cpu") as f:
@@ -187,13 +190,13 @@ def load_model(model: nn.Module, model_path: str | Path) -> None:
                         loaded_weights += 1
 
         except Exception as exc:
-            logger.exception(f'Failed to load weights from "{file_path}"')
+            logger.exception('Failed to load weights from "%s"', file_path)
             raise RuntimeError(
                 f'Failed to load weights from "{file_path}": {exc}'
             ) from exc
 
     for file_path in bin_files:
-        logger.info(f'Loading weights from "{file_path.name}"')
+        logger.info('Loading weights from "%s"', file_path.name)
 
         try:
             state_dict = torch.load(
@@ -209,7 +212,7 @@ def load_model(model: nn.Module, model_path: str | Path) -> None:
             del state_dict
 
         except Exception as exc:
-            logger.exception(f'Failed to load weights from "{file_path}"')
+            logger.exception('Failed to load weights from "%s"', file_path)
             raise RuntimeError(
                 f'Failed to load weights from "{file_path}": {exc}'
             ) from exc
@@ -220,11 +223,17 @@ def load_model(model: nn.Module, model_path: str | Path) -> None:
 
     if missing_params > 0:
         logger.warning(
-            f"Weight loading completed with {missing_params} missing parameter(s) out of {total_weights} total weights"
+            "Weight loading completed with %d missing parameter(s) out of %d total weights",
+            missing_params,
+            total_weights,
         )
     else:
         logger.info("All weights loaded successfully")
 
     logger.info(
-        f"Loaded {loaded_weights}/{total_weights} weights from {len(safetensor_files)} file(s) (success rate: {success_rate:.1%})"
+        "Loaded %d/%d weights from %d file(s) (success rate: %.1f%%)",
+        loaded_weights,
+        total_weights,
+        len(safetensor_files),
+        success_rate * 100,
     )

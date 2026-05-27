@@ -827,7 +827,7 @@ class NPUAttentionBackend(AttentionBackend):
                 v_cache_reshaped.index_put_((valid_slots,), valid_value)
         except RuntimeError as e:
             # Fallback
-            logger.warning(f"KV Cache update failed: {e}")
+            logger.warning("KV Cache update failed: %s", e)
             # Try CPU fallback if desperate? No, that would be too slow.
             # Just raise for now.
             raise e

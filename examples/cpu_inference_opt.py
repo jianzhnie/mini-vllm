@@ -137,10 +137,11 @@ def run_inference() -> None:
     start_time = perf_counter()
 
     logger.info("Starting CPU inference with mini-vLLM")
-    logger.info(f"Model: {config.model}")
+    logger.info("Model: %s", config.model)
     logger.info(
-        f"Configuration: max_seqs={config.max_num_seqs}, "
-        f"max_tokens={sampling_params.max_tokens}"
+        "Configuration: max_seqs=%d, max_tokens=%d",
+        config.max_num_seqs,
+        sampling_params.max_tokens,
     )
 
     # Initialize LLM engine
@@ -152,10 +153,10 @@ def run_inference() -> None:
     formatted_prompts = format_prompts_with_chat_template(llm.tokenizer, prompts)
 
     if formatted_prompts:
-        logger.info(f"First prompt: {formatted_prompts[0]!r}")
+        logger.info("First prompt: %r", formatted_prompts[0])
 
     # Run inference
-    logger.info(f"Generating completions for {len(formatted_prompts)} prompts...")
+    logger.info("Generating completions for %d prompts...", len(formatted_prompts))
     inference_start = perf_counter()
     outputs = llm.generate(formatted_prompts, sampling_params, use_tqdm=True)
     inference_time = perf_counter() - inference_start
@@ -198,7 +199,7 @@ def main() -> int:
         return 0
 
     except ValueError as e:
-        logger.error(f"Configuration error: {e}")
+        logger.error("Configuration error: %s", e)
         return 1
 
     except KeyboardInterrupt:
@@ -206,7 +207,7 @@ def main() -> int:
         return 1
 
     except Exception as e:
-        logger.error(f"Unexpected error: {e}", exc_info=True)
+        logger.error("Unexpected error: %s", e, exc_info=True)
         return 1
 
 

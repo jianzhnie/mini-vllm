@@ -98,7 +98,7 @@ class DistributedManager:
                 dist.init_process_group(
                     backend=self.backend, rank=self.rank, world_size=self.world_size
                 )
-            logger.debug(f"Distributed backend setup: {self.backend}")
+            logger.debug("Distributed backend setup: %s", self.backend)
         except Exception as e:
             raise RuntimeError(f"Failed to setup distributed backend: {e}") from e
 
@@ -150,7 +150,7 @@ class DistributedManager:
         """Synchronize all processes."""
         if self.is_distributed and dist.is_initialized():
             dist.barrier()
-            logger.debug(f"Rank {self.rank}: Distributed barrier completed")
+            logger.debug("Rank %d: Distributed barrier completed", self.rank)
 
     def broadcast_data(self, data: Any, src: int = 0) -> Any:
         """Broadcast data from source to all processes.
@@ -212,6 +212,8 @@ class DistributedManager:
                 dist.destroy_process_group()
 
             self._initialized = False
-            logger.debug(f"Rank {self.rank}: Distributed manager cleanup completed")
+            logger.debug("Rank %d: Distributed manager cleanup completed", self.rank)
         except Exception as e:
-            logger.warning(f"Rank {self.rank}: Error during distributed cleanup: {e}")
+            logger.warning(
+                "Rank %d: Error during distributed cleanup: %s", self.rank, e
+            )

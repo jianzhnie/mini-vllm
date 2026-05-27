@@ -123,7 +123,7 @@ class InferenceExecutor:
         try:
             return getattr(torch, dtype_str)
         except AttributeError:
-            logger.warning(f"Unknown dtype '{dtype_str}', defaulting to float32")
+            logger.warning("Unknown dtype '%s', defaulting to float32", dtype_str)
             return torch.float32
 
     def _init_attributes(self) -> None:
@@ -140,7 +140,7 @@ class InferenceExecutor:
         self.total_decode_tokens = 0
         self.inference_count = 0
 
-        logger.debug(f"InferenceExecutor initialized on device {self.device}")
+        logger.debug("InferenceExecutor initialized on device %s", self.device)
 
     def initialize(self, max_num_batched_tokens: int, max_num_seqs: int) -> None:
         """Initialize the executor with cache and sampler.
@@ -188,8 +188,10 @@ class InferenceExecutor:
                 self.kv_cache.numel() * self.kv_cache.element_size() / (1024**3)
             )
             logger.info(
-                f"Allocated KV cache: {cache_size_gb:.2f} GB "
-                f"({num_blocks} blocks x {self.block_size} tokens)"
+                "Allocated KV cache: %.2f GB (%d blocks x %d tokens)",
+                cache_size_gb,
+                num_blocks,
+                self.block_size,
             )
 
         except torch.cuda.OutOfMemoryError as e:
@@ -213,7 +215,7 @@ class InferenceExecutor:
         try:
             free, total = mem_get_info(self.device)
         except Exception as e:
-            logger.warning(f"Failed to get memory info: {e}, using defaults")
+            logger.warning("Failed to get memory info: %s, using defaults", e)
             free, total = 4 * 1024**3, 8 * 1024**3  # Default 4GB free, 8GB total
 
         used = total - free
@@ -268,9 +270,10 @@ class InferenceExecutor:
             )
 
         logger.debug(
-            f"Calculated KV cache blocks: {num_blocks} "
-            f"({available_memory / 1024**3:.2f} GB available, "
-            f"{block_bytes} bytes/block)"
+            "Calculated KV cache blocks: %d (%.2f GB available, %d bytes/block)",
+            num_blocks,
+            available_memory / 1024**3,
+            block_bytes,
         )
 
         return num_blocks
@@ -294,7 +297,7 @@ class InferenceExecutor:
                 "KV cache may not be properly used."
             )
         else:
-            logger.debug(f"Assigned KV cache to {layer_id} attention layers")
+            logger.debug("Assigned KV cache to %d attention layers", layer_id)
 
     def _initialize_sampler(self) -> None:
         """Initialize the token sampler."""
@@ -354,7 +357,7 @@ class InferenceExecutor:
             self.execute_batch(dummy_sequences, prefill=False)
 
         empty_cache()
-        logger.debug(f"Model warmup completed with {num_seqs} sequences")
+        logger.debug("Model warmup completed with %d sequences", num_seqs)
 
     def execute_batch(
         self, sequences: list[Sequence], prefill: bool = True
@@ -409,7 +412,7 @@ class InferenceExecutor:
             return logits, next_tokens
 
         except Exception as e:
-            logger.error(f"Batch execution failed: {e}")
+            logger.error("Batch execution failed: %s", e)
             raise
         finally:
             reset_context()
@@ -835,7 +838,7 @@ class InferenceExecutor:
             )
 
         except Exception as e:
-            logger.warning(f"Failed to capture device graphs: {e}")
+            logger.warning("Failed to capture device graphs: %s", e)
             self.graphs.clear()
             self.graph_vars.clear()
 
@@ -879,7 +882,9 @@ class InferenceExecutor:
             reset_context()
 
         except Exception as e:
-            logger.warning(f"Failed to capture graph for batch size {batch_size}: {e}")
+            logger.warning(
+                "Failed to capture graph for batch size %d: %s", batch_size, e
+            )
             reset_context()
 
     def cleanup(self) -> None:

@@ -55,7 +55,7 @@ class ModelManager:
         self.model_type = None
         self._model_config = None
 
-        logger.debug(f"ModelManager initialized for model: {config.model}")
+        logger.debug("ModelManager initialized for model: %s", config.model)
 
     def initialize(self) -> None:
         """Initialize model manager and load the model.
@@ -80,7 +80,7 @@ class ModelManager:
         try:
             self.device = get_current_device()
             validate_device(self.device)
-            logger.debug(f"Device setup successful: {self.device}")
+            logger.debug("Device setup successful: %s", self.device)
         except Exception as e:
             raise RuntimeError(f"Failed to setup device: {e}") from e
 
@@ -89,7 +89,7 @@ class ModelManager:
         if not self.config.model:
             raise ValueError("Model path cannot be empty")
         # Additional validation can be added here
-        logger.debug(f"Model path validation passed: {self.config.model}")
+        logger.debug("Model path validation passed: %s", self.config.model)
 
     def _load_tokenizer(self) -> None:
         """Load the tokenizer for the model."""
@@ -155,7 +155,7 @@ class ModelManager:
                 self.model.to(self.device)
 
             self._model_config = self.model.config
-            logger.info(f"Model loaded successfully: {self.model_type}")
+            logger.info("Model loaded successfully: %s", self.model_type)
 
         except Exception as e:
             logger.exception("Failed to load model")

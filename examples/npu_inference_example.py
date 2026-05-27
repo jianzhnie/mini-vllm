@@ -45,7 +45,7 @@ def resolve_model(name_or_path: str) -> str:
     """Resolve a short name to a full path, or return the path unchanged."""
     if name_or_path in _MODEL_PATHS:
         return _MODEL_PATHS[name_or_path]
-    if os.path.isdir(name_or_path):
+    if Path(name_or_path).is_dir():
         return name_or_path
     # Allow HuggingFace hub IDs (e.g. facebook/opt-125m)
     return name_or_path
