@@ -252,7 +252,11 @@ class Attention(nn.Module):
             and _bt.numel() > 0
             and (_bt.shape[1] == 0 or not (_bt >= 0).any())
         )
-        if isinstance(self.backend, NPUAttentionBackend) and not is_warmup and _npu_fa_safe:
+        if (
+            isinstance(self.backend, NPUAttentionBackend)
+            and not is_warmup
+            and _npu_fa_safe
+        ):
             try:
                 # Use NPU unified inference engine with BNSD layout
                 seq_length = (
@@ -304,7 +308,11 @@ class Attention(nn.Module):
 
         # Priority 2: NPU-specific prefill/decode paths
         # Only active when NPU backend is selected (opt-in via MINIVLLM_USE_NPU_FA)
-        if _NPU_FLASH_ATTN_AVAILABLE and isinstance(self.backend, NPUAttentionBackend) and _npu_fa_safe:
+        if (
+            _NPU_FLASH_ATTN_AVAILABLE
+            and isinstance(self.backend, NPUAttentionBackend)
+            and _npu_fa_safe
+        ):
             if context.is_prefill:
                 # Prefill: use npu_flash_attn_func through the backend.forward
                 if isinstance(self.backend, NPUAttentionBackend):
@@ -369,7 +377,11 @@ class Attention(nn.Module):
                     and context.block_tables.numel() > 0
                     and (context.block_tables >= 0).all()
                 )
-                if npu_incre_flash_attention is not None and k_cache.numel() > 0 and block_tables_valid:
+                if (
+                    npu_incre_flash_attention is not None
+                    and k_cache.numel() > 0
+                    and block_tables_valid
+                ):
                     try:
                         batch_size = q.size(0)
                         target_dtype = torch.float16

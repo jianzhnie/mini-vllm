@@ -39,12 +39,17 @@ def resolve_model(name: str) -> str:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="mini-vLLM Tensor Parallelism Example")
-    p.add_argument("--model", default=_DEFAULT_MODEL,
-                   help=f"Model short name ({', '.join(_MODEL_PATHS)}) or path")
-    p.add_argument("--tp", type=int, default=0,
-                   help="Single TP size to test (overrides --all)")
-    p.add_argument("--all", action="store_true",
-                   help="Test TP=1, TP=2, TP=4 sequentially")
+    p.add_argument(
+        "--model",
+        default=_DEFAULT_MODEL,
+        help=f"Model short name ({', '.join(_MODEL_PATHS)}) or path",
+    )
+    p.add_argument(
+        "--tp", type=int, default=0, help="Single TP size to test (overrides --all)"
+    )
+    p.add_argument(
+        "--all", action="store_true", help="Test TP=1, TP=2, TP=4 sequentially"
+    )
     p.add_argument("--max-tokens", type=int, default=48)
     p.add_argument("--dtype", default="float16", choices=["float16", "float32"])
     return p.parse_args()
@@ -66,7 +71,9 @@ def run_tp_inference(model_path: str, tp: int, max_tokens: int, dtype: str) -> d
         dtype=dtype,
     )
 
-    params = SamplingParams(temperature=0.7, top_p=0.95, top_k=40, max_tokens=max_tokens)
+    params = SamplingParams(
+        temperature=0.7, top_p=0.95, top_k=40, max_tokens=max_tokens
+    )
 
     t0 = time.perf_counter()
     llm = LLM(config)
@@ -92,6 +99,7 @@ def run_tp_inference(model_path: str, tp: int, max_tokens: int, dtype: str) -> d
 def check_tp_available(tp: int) -> bool:
     """Check if enough NPU devices are available."""
     import torch
+
     count = torch.npu.device_count() if hasattr(torch, "npu") else 0
     if count < tp:
         print(f"  SKIP: need {tp} NPU devices, found {count}")
@@ -100,10 +108,11 @@ def check_tp_available(tp: int) -> bool:
 
 
 def print_result(r: dict) -> None:
-    print(f"  TP={r['tp']}: init={r['init_s']}s  infer={r['infer_s']}s  "
-          f"tokens={r['tokens']}  throughput={r['tok_s']} tok/s")
-    for i, (prompt, text) in enumerate(zip(_PROMPTS, r["texts"])):
-        tokens = len(text.split())
+    print(
+        f"  TP={r['tp']}: init={r['init_s']}s  infer={r['infer_s']}s  "
+        f"tokens={r['tokens']}  throughput={r['tok_s']} tok/s"
+    )
+    for i, (prompt, text) in enumerate(zip(_PROMPTS, r["texts"], strict=False)):
         snippet = text[:120]
         print(f"    [{i}] Q: {prompt[:60]}")
         print(f"        A: {snippet}{'...' if len(text) > 120 else ''}")
@@ -124,11 +133,11 @@ def main() -> int:
     else:
         tp_sizes = [1]
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(f"  Tensor Parallelism Example — {model_name}")
     print(f"  Dtype: {args.dtype}   Max tokens: {args.max_tokens}")
     print(f"  Prompts: {len(_PROMPTS)}")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
 
     results = []
     for tp in tp_sizes:
@@ -142,22 +151,27 @@ def main() -> int:
         except Exception as e:
             print(f"  TP={tp} FAILED: {e}")
             if tp > 2 and "HCCL" in str(e):
-                print(f"  NOTE: TP={tp} may require HCCL cross-device links not available")
+                print(
+                    f"  NOTE: TP={tp} may require HCCL cross-device links not available"
+                )
                 print(f"  on this machine. Try running TP={tp} independently.")
         # Allow time for worker processes to fully terminate between runs
         if len(tp_sizes) > 1:
             import torch.distributed as dist
+
             if dist.is_initialized():
                 dist.destroy_process_group()
             time.sleep(1)
 
     # Summary
     if len(results) > 1:
-        print(f"\n{'='*70}")
+        print(f"\n{'=' * 70}")
         print("  Summary")
-        print(f"{'='*70}")
+        print(f"{'=' * 70}")
         for r in results:
-            print(f"  TP={r['tp']}: {r['tok_s']} tok/s  ({r['tokens']} tokens, {r['infer_s']}s)")
+            print(
+                f"  TP={r['tp']}: {r['tok_s']} tok/s  ({r['tokens']} tokens, {r['infer_s']}s)"
+            )
 
     return 0 if results else 1
 
