@@ -28,7 +28,7 @@ _MODEL_PATHS: dict[str, str] = {
     "gpt2": "/home/jianzhnie/llmtuner/hfhub/models/openai-community/gpt2",
 }
 
-_DEFAULT_MODEL = "qwen"
+_DEFAULT_MODEL = "opt"
 
 _PROMPTS = [
     "Hello, who are you?",
