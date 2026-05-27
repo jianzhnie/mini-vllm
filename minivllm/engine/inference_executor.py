@@ -83,14 +83,11 @@ class InferenceExecutor:
         )
         self.num_layers = hf_config.num_hidden_layers
 
-        # Use model's actual dtype if model is available, otherwise resolve from config
-        if hasattr(model, "parameters"):
-            try:
-                first_param = next(model.parameters())
-                self.dtype = first_param.dtype
-            except StopIteration:
-                self.dtype = self._resolve_dtype()
-        else:
+        # Use model's actual dtype if available, otherwise resolve from config
+        try:
+            first_param = next(model.parameters())
+            self.dtype = first_param.dtype
+        except (StopIteration, AttributeError, TypeError):
             self.dtype = self._resolve_dtype()
 
         self._init_attributes()

@@ -340,8 +340,10 @@ class Sequence:
             self.last_token = self.token_ids[-1]
         else:
             if isinstance(token_data, int):
-                # Worker optimization: only last token is needed for decode
-                self.token_ids = [0] * (self.num_tokens - 1) + [token_data]
+                # Worker optimization: only last token is needed for decode;
+                # pad with zeros to satisfy len(token_ids) == num_tokens
+                self.token_ids = [0] * self.num_tokens
+                self.token_ids[-1] = token_data
                 self.last_token = token_data
             else:
                 self.token_ids = token_data

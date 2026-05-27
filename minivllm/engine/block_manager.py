@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import struct
 from collections import deque
+from contextlib import suppress
 
 import xxhash
 
@@ -113,8 +114,10 @@ class BlockManager:
         self.num_blocks: int = num_blocks
         self.blocks: list[Block] = [Block(i) for i in range(num_blocks)]
         self.hash_to_block_id: dict[int, int] = {}
-        # Use a double-ended queue for efficient allocation/deallocation
+        # Use a double-ended queue for FIFO allocation order
         self.free_block_ids: deque[int] = deque(range(num_blocks))
+        # Set for O(1) membership testing and removal
+        self._free_set: set[int] = set(range(num_blocks))
         # Use a set for efficient membership testing
         self.used_block_ids: set[int] = set()
         self.stats = {
@@ -149,6 +152,18 @@ class BlockManager:
         h.update(struct.pack(f"<{len(token_ids)}i", *token_ids))
         return h.intdigest()
 
+    def _get_any_free_block(self) -> int:
+        """Return an arbitrary free block ID in O(1) amortized time.
+
+        Uses a deque for approximate FIFO ordering with lazy tombstone cleanup.
+        """
+        while self.free_block_ids:
+            block_id = self.free_block_ids[0]
+            if block_id in self._free_set:
+                return block_id
+            self.free_block_ids.popleft()
+        raise RuntimeError("No free blocks available")
+
     def _allocate_block(self, block_id: int, reset: bool = True) -> Block:
         """Allocate a block from the free pool.
 
@@ -167,19 +182,13 @@ class BlockManager:
             raise RuntimeError(
                 f"Invalid block_id: {block_id}. Valid range: [0, {len(self.blocks)})"
             )
-        if not self.free_block_ids:
-            raise RuntimeError("No free blocks available")
+        if block_id not in self._free_set:
+            raise RuntimeError(f"Block {block_id} not in free blocks")
 
-        # Check if it is the first element (O(1) operation)
-        if self.free_block_ids and self.free_block_ids[0] == block_id:
-            actual_id: int = self.free_block_ids.popleft()
-        else:
-            # Remove specific element from middle (O(n) operation)
-            if block_id in self.free_block_ids:
-                self.free_block_ids.remove(block_id)
-                actual_id = block_id
-            else:
-                raise RuntimeError(f"Block {block_id} not in free blocks")
+        self._free_set.remove(block_id)
+        with suppress(ValueError):
+            self.free_block_ids.remove(block_id)
+        actual_id: int = block_id
 
         block: Block = self.blocks[actual_id]
         if block.ref_count != 0:
@@ -223,9 +232,10 @@ class BlockManager:
 
         self.used_block_ids.remove(block_id)
         self.free_block_ids.append(block_id)
+        self._free_set.add(block_id)
 
     def get_num_free_blocks(self) -> int:
-        return len(self.free_block_ids)
+        return len(self._free_set)
 
     def can_allocate(self, sequence: Sequence) -> bool:
         """Check if sequence can be allocated.
@@ -237,7 +247,7 @@ class BlockManager:
             True if enough free blocks exist for the sequence.
         """
         required_blocks = sequence.num_blocks
-        available_blocks = len(self.free_block_ids)
+        available_blocks = len(self._free_set)
         return available_blocks >= required_blocks
 
     def allocate(self, sequence: Sequence) -> None:
@@ -270,10 +280,10 @@ class BlockManager:
         if sequence.block_table:
             raise ValueError("Sequence already has allocated blocks")
 
-        if len(self.free_block_ids) < sequence.num_blocks:
+        if len(self._free_set) < sequence.num_blocks:
             raise ValueError(
                 f"No free blocks available for allocation: need {sequence.num_blocks}, "
-                f"have {len(self.free_block_ids)}"
+                f"have {len(self._free_set)}"
             )
 
         hash_prev: int = -1  # Hash of previous block for chained hashing
@@ -305,13 +315,7 @@ class BlockManager:
 
             if not cache_hit:
                 # Cache miss: allocate a new block from free pool
-                if not self.free_block_ids:
-                    raise ValueError(
-                        f"No free blocks available for allocation. "
-                        f"Need {sequence.num_blocks} blocks, "
-                        f"have {len(self.free_block_ids)} free blocks."
-                    )
-                block_id = self.free_block_ids[0]
+                block_id = self._get_any_free_block()
                 block: Block = self._allocate_block(block_id)
                 self.stats["cache_misses"] += 1
 
@@ -387,7 +391,7 @@ class BlockManager:
         needs_new_block: bool = len(sequence) % self.block_size == 0
         required_blocks = 1 if needs_new_block else 0
 
-        return len(self.free_block_ids) >= required_blocks
+        return len(self._free_set) >= required_blocks
 
     def may_append(self, sequence: Sequence) -> None:
         """Append tokens to a sequence's last block, allocating new blocks
@@ -420,14 +424,7 @@ class BlockManager:
                 )
 
             # Allocate a new block for this token
-            if not self.free_block_ids:
-                raise ValueError(
-                    "No free blocks available for allocation. "
-                    "This may trigger sequence preemption."
-                )
-
-            # Pick any free block
-            block_id: int = self.free_block_ids[0]
+            block_id: int = self._get_any_free_block()
             self._allocate_block(block_id)
             block_table.append(block_id)
 

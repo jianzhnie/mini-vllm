@@ -562,42 +562,43 @@ class Attention(nn.Module):
                 dtype=dtype,
             )
 
-            block_size = self.k_cache.size(1)  # Tokens per block
-            # Optimize block gathering with vectorized operations where possible
-            for i in range(batch_size):
-                seqlen = context.context_lens[i].item()
-                block_table = context.block_tables[i]
+            # Vectorized KV cache gather (replaces triple-nested Python for-loop)
+            block_size = self.k_cache.size(1)
 
-                # Gather tokens from blocks
-                token_idx = 0
-                for block_id in block_table:
-                    if block_id == -1:
-                        break
-                    tokens_in_block = min(block_size, seqlen - token_idx)
-                    if tokens_in_block > 0:
-                        try:
-                            cached_k[i, token_idx : token_idx + tokens_in_block] = (
-                                self.k_cache[block_id, :tokens_in_block]
-                            )
-                            cached_v[i, token_idx : token_idx + tokens_in_block] = (
-                                self.v_cache[block_id, :tokens_in_block]
-                            )
-                        except RuntimeError as e:
-                            logger.error("Shape mismatch in _fallback_attention:")
-                            logger.error(
-                                f"cached_k slice shape: {cached_k[i, token_idx : token_idx + tokens_in_block].shape}"
-                            )
-                            logger.error(
-                                f"k_cache slice shape: {self.k_cache[block_id, :tokens_in_block].shape}"
-                            )
-                            logger.error(
-                                f"num_kv_heads: {self.num_kv_heads}, head_dim: {self.head_dim}"
-                            )
-                            logger.error("k_cache total shape: %s", self.k_cache.shape)
-                            raise e
-                    token_idx += tokens_in_block
-                    if token_idx >= seqlen:
-                        break
+            # Position grid: [1, max_seqlen] → which token position we're at
+            seq_pos = torch.arange(max_seqlen, device=device).unsqueeze(0)
+
+            # Map token positions to block index and intra-block offset
+            block_indices = (seq_pos // block_size).long()
+            block_offsets = (seq_pos % block_size).long()
+
+            # Ensure context tensors are on the right device
+            context_lens = context.context_lens
+            if context_lens.device != device:
+                context_lens = context_lens.to(device)
+            block_tables = context.block_tables
+            if block_tables.device != device:
+                block_tables = block_tables.to(device)
+
+            # Guard: empty block tables (warmup path, no blocks allocated yet)
+            if block_tables.size(1) > 0:
+                # Validity mask: token position < actual sequence length
+                valid_mask = seq_pos < context_lens.unsqueeze(1)
+
+                # Gather block IDs from block tables using safe clamping
+                max_block_idx = block_tables.size(1) - 1
+                safe_indices = block_indices.clamp(0, max_block_idx).expand(
+                    batch_size, -1
+                )
+                block_ids = torch.gather(block_tables, 1, safe_indices)
+
+                # Valid slots: within seqlen AND block_id >= 0
+                mask = valid_mask & (block_ids >= 0)
+                if mask.any():
+                    active_block_ids = block_ids[mask]
+                    active_offsets = block_offsets.expand(batch_size, -1)[mask]
+                    cached_k[mask] = self.k_cache[active_block_ids, active_offsets]
+                    cached_v[mask] = self.v_cache[active_block_ids, active_offsets]
 
             # Handle GQA/MQA: repeat k/v heads to match q heads
             cached_k, cached_v = self._repeat_kv_heads(

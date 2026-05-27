@@ -360,6 +360,9 @@ class NPUAttentionBackend(AttentionBackend):
         self._npu_available = self._check_npu_availability()
         self._fallback_backend = StandardAttentionBackend()
         self.npu_fused_infer_attention_score = npu_fused_infer_attention_score
+        self._k_buffer: torch.Tensor | None = None
+        self._v_buffer: torch.Tensor | None = None
+        self._buffer_shape: tuple[int, ...] | None = None
 
         if not self._npu_available:
             logger.warning("NPU not available, falling back to standard attention")
@@ -674,23 +677,14 @@ class NPUAttentionBackend(AttentionBackend):
                 else k.size(-2)
             )
 
-            # Create empty cache tensors
-            k_npu = torch.zeros(
-                batch_size,
-                max_seqlen,
-                num_kv_heads,
-                head_dim,
-                device=k.device,
-                dtype=k.dtype,
-            )
-            v_npu = torch.zeros(
-                batch_size,
-                max_seqlen,
-                num_kv_heads,
-                head_dim,
-                device=v.device,
-                dtype=v.dtype,
-            )
+            # Reuse cached buffer tensors to avoid per-step allocation
+            buf_shape = (batch_size, max_seqlen, num_kv_heads, head_dim)
+            if self._buffer_shape != buf_shape:
+                self._k_buffer = torch.zeros(buf_shape, device=k.device, dtype=k.dtype)
+                self._v_buffer = torch.zeros(buf_shape, device=v.device, dtype=v.dtype)
+                self._buffer_shape = buf_shape
+            k_npu = self._k_buffer.zero_()
+            v_npu = self._v_buffer.zero_()
 
             if k_cache.numel() == 0:
                 return k.contiguous(), v.contiguous()

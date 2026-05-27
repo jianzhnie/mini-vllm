@@ -25,8 +25,7 @@ class Qwen2Attention(QwenAttention):
     default_rope_theta: float = 1000000
 
 
-class Qwen2MLP(QwenMLP):
-    pass
+Qwen2MLP = QwenMLP
 
 
 class Qwen2DecoderLayer(QwenDecoderLayer):
