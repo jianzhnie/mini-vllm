@@ -1,4 +1,5 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
     "allow": [
       "Bash(shellcheck *)",
@@ -6,6 +7,13 @@
       "Bash(bash -n *)",
       "Bash(bash -n **/*.sh)",
       "Bash(pre-commit run *)",
+      "Bash(python *)",
+      "Bash(python3 *)",
+      "Bash(pip install *)",
+      "Bash(pytest *)",
+      "Bash(ruff *)",
+      "Bash(black *)",
+      "Bash(mypy *)",
       "Bash(git status*)",
       "Bash(git log*)",
       "Bash(git diff*)",
@@ -30,10 +38,19 @@
       "mcp__codegraph__codegraph_callees",
       "mcp__codegraph__codegraph_impact",
       "mcp__codegraph__codegraph_node",
-      "mcp__codegraph__codegraph_status"
+      "mcp__codegraph__codegraph_status",
+      "mcp__codegraph__codegraph_explore",
+      "mcp__codegraph__codegraph_files",
+      "mcp__codegraph__codegraph_trace"
     ],
-    "defaultMode": "auto"
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./credentials.*)",
+      "Read(./secrets/**)"
+    ]
   },
+  "cleanupPeriodDays": 14,
   "enableAllProjectMcpServers": true,
   "hooks": {
     "SessionStart": [
@@ -186,5 +203,9 @@
     "ruflo-knowledge-graph@ruflo": true,
     "mcp-server-dev@claude-plugins-official": true,
     "commit-commands@claude-code-plugins": true
-  }
+  },
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
+  "teammateMode": "in-process"
 }

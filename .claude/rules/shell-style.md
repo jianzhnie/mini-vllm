@@ -1,3 +1,9 @@
+---
+paths:
+  - "**/*.sh"
+  - "**/*.bash"
+---
+
 # Shell Script Style
 
 All shell scripts in this project must follow these conventions. Based on Google Shell Style Guide, adapted for bash 4.2+ compatibility.
