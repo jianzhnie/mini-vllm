@@ -59,7 +59,18 @@
       "Read(./.env)",
       "Read(./.env.*)",
       "Read(./credentials.*)",
-      "Read(./secrets/**)"
+      "Read(./secrets/**)",
+      "Read(./**/__pycache__/**)",
+      "Read(./**/*.pyc)",
+      "Read(./**/build/**)",
+      "Read(./**/dist/**)",
+      "Read(./**/*.egg-info/**)",
+      "Read(./**/.mypy_cache/**)",
+      "Read(./**/.ruff_cache/**)",
+      "Read(./**/.pytest_cache/**)",
+      "Read(./**/htmlcov/**)",
+      "Read(./**/.coverage*)",
+      "Read(./**/*.so)"
     ]
   },
   "enableAllProjectMcpServers": true,
@@ -210,9 +221,9 @@
   },
   "statusLine": {
     "type": "command",
-    "command": "git -C \"$CLAUDE_PROJECT_DIR\" branch --show-current 2>/dev/null | xargs -I{} printf 'branch:{}' ; changes=$(git -C \"$CLAUDE_PROJECT_DIR\" status --porcelain 2>/dev/null | wc -l | tr -d ' ') ; [[ \"$changes\" -gt 0 ]] && printf ' changes:%d' \"$changes\"",
+    "command": "${CLAUDE_PROJECT_DIR}/.claude/statusline.sh",
     "padding": 5,
-    "refreshInterval": 30
+    "refreshInterval": 15
   },
   "enabledPlugins": {
     "code-review@claude-plugins-official": true,
@@ -227,7 +238,8 @@
     "commit-commands@claude-code-plugins": true,
     "pyright-lsp@claude-plugins-official": true,
     "security-guidance@claude-plugins-official": true,
-    "github@claude-plugins-official": false
+    "github@claude-plugins-official": true,
+    "huggingface-skills@claude-plugins-official": true
   },
   "teammateMode": "in-process"
 }
