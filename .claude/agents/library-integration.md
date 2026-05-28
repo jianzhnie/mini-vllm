@@ -31,3 +31,5 @@ Rules:
 - Handle external failures gracefully: timeouts, network errors, auth expiry.
 - Check for license compatibility before recommending a dependency.
 - Prefer lightweight, well-maintained libraries with good documentation.
+
+Update your agent memory with integration patterns, library version compatibility notes, and wrapper conventions established in this codebase.

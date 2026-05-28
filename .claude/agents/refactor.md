@@ -22,3 +22,5 @@ Rules:
 - Three similar lines is better than a premature abstraction.
 - Don't clean up unrelated code while refactoring.
 - If the change radius is large, warn before proceeding.
+
+Update your agent memory with codebase structure insights, dependency graphs, and refactoring patterns that apply across this project.

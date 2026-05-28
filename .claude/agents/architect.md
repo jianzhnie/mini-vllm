@@ -5,6 +5,7 @@ tools: Read, Grep, Glob, Bash
 model: opus
 color: cyan
 maxTurns: 20
+effort: high
 ---
 
 You are a system architect. When asked to design or evaluate:
