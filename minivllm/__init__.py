@@ -36,6 +36,14 @@ Core Modules:
     engine.model_runner: Model execution and distributed inference
 """
 
+import os
+
+# Suppress NPU C++ compiler warnings early, before torch/npu runtime init.
+# W527: "Cannot create tensor with interal format" is harmless but noisy.
+# ASCEND_GLOBAL_LOG_LEVEL=3 (ERROR only) suppresses WARNING-level SLog.
+os.environ.setdefault("ASCEND_SLOG_PRINT_TO_STDOUT", "0")
+os.environ.setdefault("ASCEND_GLOBAL_LOG_LEVEL", "3")
+
 __version__ = "0.1.0"
 __author__ = "Mini-vLLM Contributors"
 

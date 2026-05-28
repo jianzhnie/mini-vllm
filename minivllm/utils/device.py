@@ -120,7 +120,19 @@ def get_default_device_name() -> str:
 
 
 def get_distributed_backend() -> str:
-    """Appropriate distributed backend for current device."""
+    """Appropriate distributed backend for current device.
+
+    Set MINIVLLM_TP_BACKEND to override (e.g. 'gloo' for CPU-based TP testing
+    when HCCL P2P networking is unavailable on NPU).
+    """
+    import os
+
+    override = os.environ.get("MINIVLLM_TP_BACKEND", "").lower()
+    if override:
+        import torch.distributed as dist
+
+        if dist.is_available() and hasattr(dist, "Backend"):
+            return override
     dtype = _get_device_type()
     backends = {
         "npu": "hccl",
@@ -214,6 +226,56 @@ def supports_cuda_graph() -> bool:
 
 # Alias kept for backward compatibility
 supports_device_graph = supports_cuda_graph
+
+
+def get_device_graph_class() -> type:
+    """Return the appropriate device graph class for the current device.
+
+    Returns torch.npu.NPUGraph for NPU, torch.cuda.CUDAGraph for CUDA.
+
+    Raises RuntimeError if device graph is not supported.
+    """
+    dtype = _get_device_type()
+    if dtype == "cuda":
+        import torch
+
+        return torch.cuda.CUDAGraph
+    if dtype == "npu":
+        import torch
+
+        return torch.npu.NPUGraph
+    raise RuntimeError(f"Device graph not supported for device type: {dtype}")
+
+
+class DeviceGraphContext:
+    """Context manager for device graph capture, works with CUDAGraph and NPUGraph.
+
+    NPU requires a non-default stream for capture. We create a dedicated stream.
+    """
+
+    def __init__(self, graph: Any, pool: Any = None) -> None:
+        self._graph = graph
+        self._pool = pool
+        self._stream: Any = None
+        self._orig_stream: Any = None
+
+    def __enter__(self) -> None:
+        import torch
+
+        dtype = _get_device_type()
+        if dtype == "npu":
+            self._orig_stream = torch.npu.current_stream()
+            self._stream = torch.npu.Stream()
+            torch.npu.set_stream(self._stream)
+        self._graph.capture_begin(self._pool)
+
+    def __exit__(self, *args: Any) -> None:
+        import torch
+
+        self._graph.capture_end()
+        if self._stream is not None:
+            torch.npu.set_stream(self._orig_stream)
+            self._stream.synchronize()
 
 
 def get_device_capabilities(device: torch.device | None = None) -> dict[str, Any]:

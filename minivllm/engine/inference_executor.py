@@ -19,8 +19,10 @@ from minivllm.engine.sequence import Sequence
 from minivllm.sampling.sampler import Sampler
 from minivllm.utils.context import get_context, reset_context, set_context
 from minivllm.utils.device import (
+    DeviceGraphContext,
     empty_cache,
     get_current_device,
+    get_device_graph_class,
     mem_get_info,
     memory_stats,
     move_tensor_to_device,
@@ -843,14 +845,11 @@ class InferenceExecutor:
             # Warmup
             outputs.copy_(self.model(input_ids=input_ids, positions=positions)[0])
 
-            # Capture graph
-            graph = torch.cuda.CUDAGraph()
-            with torch.cuda.graph(graph, self.graph_pool):
+            # Capture graph using device-appropriate graph class
+            DeviceGraph = get_device_graph_class()
+            graph = DeviceGraph()
+            with DeviceGraphContext(graph):
                 outputs.copy_(self.model(input_ids=input_ids, positions=positions)[0])
-
-            # Create graph pool on first capture for memory efficiency
-            if self.graph_pool is None:
-                self.graph_pool = graph.pool()
 
             self.graphs[batch_size] = graph
             synchronize(self.device)

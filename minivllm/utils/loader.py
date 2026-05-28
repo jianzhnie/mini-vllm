@@ -182,7 +182,7 @@ def load_model(model: nn.Module, model_path: str | Path) -> None:
 
         try:
             with safe_open(str(file_path), framework="pt", device="cpu") as f:
-                for weight_name in f.keys():  # noqa: SIM118 (safetensors 0.7+ compat)
+                for weight_name in f:
                     total_weights += 1
                     tensor = f.get_tensor(weight_name)
 
