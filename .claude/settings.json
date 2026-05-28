@@ -238,7 +238,7 @@
     "commit-commands@claude-code-plugins": true,
     "pyright-lsp@claude-plugins-official": true,
     "security-guidance@claude-plugins-official": true,
-    "github@claude-plugins-official": true,
+    "github@claude-plugins-official": false,
     "huggingface-skills@claude-plugins-official": true
   },
   "teammateMode": "in-process"
