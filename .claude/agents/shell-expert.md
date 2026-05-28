@@ -3,6 +3,7 @@ name: shell-expert
 description: Shell script specialist. Use for writing .sh files, bash scripting, fixing shellcheck warnings, or reviewing shell code. Follows POSIX-compatible best practices by default.
 tools: Read, Write, Edit, Bash, Grep, Glob
 model: sonnet
+permissionMode: acceptEdits
 color: orange
 maxTurns: 15
 ---

@@ -3,6 +3,7 @@ name: test-writer
 description: Writes unit and integration tests. Use proactively after implementing new code, fixing bugs (add regression test), or when test coverage is missing. Adapts to whatever test framework and conventions the project uses.
 tools: Read, Write, Edit, Bash, Grep, Glob
 model: sonnet
+permissionMode: acceptEdits
 color: yellow
 memory: project
 maxTurns: 20

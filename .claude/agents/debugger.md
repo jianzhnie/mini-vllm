@@ -3,6 +3,7 @@ name: debugger
 description: Debugging specialist for errors, test failures, crashes, and unexpected behavior. Use proactively when encountering any issues — traces the root cause systematically and proposes fixes.
 tools: Read, Edit, Bash, Grep, Glob
 model: sonnet
+permissionMode: acceptEdits
 color: red
 memory: project
 maxTurns: 20

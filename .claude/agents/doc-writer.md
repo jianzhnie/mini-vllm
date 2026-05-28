@@ -3,6 +3,7 @@ name: doc-writer
 description: Writes and updates documentation, docstrings, and inline comments. Use when adding missing docs, improving unclear explanations, or documenting new features. Adapts to the project's existing documentation style.
 tools: Read, Write, Edit, Grep, Glob
 model: sonnet
+permissionMode: acceptEdits
 color: purple
 maxTurns: 15
 ---

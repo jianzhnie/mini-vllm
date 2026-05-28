@@ -3,6 +3,7 @@ name: library-integration
 description: Specializes in integrating third-party libraries, SDKs, and APIs into a project. Use when adding a new dependency, upgrading a library with breaking changes, wrapping an external API, or adapting code to work with a new framework version.
 tools: Read, Write, Edit, Bash, Grep, Glob, WebFetch
 model: sonnet
+permissionMode: acceptEdits
 color: green
 memory: project
 maxTurns: 20

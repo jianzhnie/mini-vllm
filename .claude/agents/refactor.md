@@ -3,6 +3,7 @@ name: refactor
 description: Safe code refactoring specialist. Improves structure without changing behavior. Use for renaming, extracting functions, simplifying logic, or reducing duplication. Checks impact before every edit.
 tools: Read, Write, Edit, Bash, Grep, Glob
 model: sonnet
+permissionMode: acceptEdits
 color: green
 memory: project
 maxTurns: 20
