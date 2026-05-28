@@ -4,6 +4,7 @@ description: Specializes in integrating third-party libraries, SDKs, and APIs in
 tools: Read, Write, Edit, Bash, Grep, Glob, WebFetch
 model: sonnet
 permissionMode: acceptEdits
+isolation: worktree
 color: green
 memory: project
 maxTurns: 20

@@ -4,6 +4,7 @@ description: Writes unit and integration tests. Use proactively after implementi
 tools: Read, Write, Edit, Bash, Grep, Glob
 model: sonnet
 permissionMode: acceptEdits
+isolation: worktree
 color: yellow
 memory: project
 maxTurns: 20

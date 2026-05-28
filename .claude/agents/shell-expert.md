@@ -4,6 +4,7 @@ description: Shell script specialist. Use for writing .sh files, bash scripting,
 tools: Read, Write, Edit, Bash, Grep, Glob
 model: sonnet
 permissionMode: acceptEdits
+isolation: worktree
 color: orange
 maxTurns: 15
 ---

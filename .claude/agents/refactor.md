@@ -4,6 +4,7 @@ description: Safe code refactoring specialist. Improves structure without changi
 tools: Read, Write, Edit, Bash, Grep, Glob
 model: sonnet
 permissionMode: acceptEdits
+isolation: worktree
 color: green
 memory: project
 maxTurns: 20

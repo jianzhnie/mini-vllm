@@ -14,14 +14,21 @@
       "Bash(ruff *)",
       "Bash(black *)",
       "Bash(mypy *)",
-      "Bash(git status*)",
-      "Bash(git log*)",
-      "Bash(git diff*)",
-      "Bash(git branch*)",
+      "Bash(git status *)",
+      "Bash(git log *)",
+      "Bash(git diff *)",
+      "Bash(git branch *)",
       "Bash(git add *)",
       "Bash(git show *)",
       "Bash(git remote *)",
       "Bash(git rev-parse *)",
+      "Bash(git checkout *)",
+      "Bash(git switch *)",
+      "Bash(git fetch *)",
+      "Bash(git pull *)",
+      "Bash(git stash *)",
+      "Bash(git tag *)",
+      "Bash(git reset *)",
       "Bash(ls*)",
       "Bash(find*)",
       "Bash(chmod *)",
@@ -180,6 +187,18 @@
           }
         ]
       }
+    ],
+    "SubagentStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/log-agent.sh",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   },
   "worktree": {
@@ -205,7 +224,8 @@
     "commit-commands@claude-code-plugins": true
   },
   "env": {
-    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+    "MAX_MCP_OUTPUT_TOKENS": "50000"
   },
   "teammateMode": "in-process"
 }
