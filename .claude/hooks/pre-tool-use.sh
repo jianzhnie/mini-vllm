@@ -52,7 +52,7 @@ if [[ "$TOOL_NAME" == "Write" || "$TOOL_NAME" == "Edit" ]]; then
     fi
 
     # Block protected file patterns
-    PROTECTED_PATTERNS=("package-lock.json" ".git/")
+    readonly PROTECTED_PATTERNS=("package-lock.json" ".git/")
     for pattern in "${PROTECTED_PATTERNS[@]}"; do
         if [[ "$FILE_PATH" == *"$pattern"* ]]; then
             jq -n --arg fp "$FILE_PATH" --arg pat "$pattern" \

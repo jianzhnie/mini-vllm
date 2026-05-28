@@ -8,7 +8,7 @@ echo "## Post-compaction context restore"
 echo ""
 echo "### Project: ${PROJECT_NAME}"
 if [[ -f "${CLAUDE_PROJECT_DIR}/CLAUDE.md" ]]; then
-    head -3 "${CLAUDE_PROJECT_DIR}/CLAUDE.md" | grep -v '^$' | head -1 | sed 's/^#* *//'
+    awk 'NF && !/^#/ {print; exit}' "${CLAUDE_PROJECT_DIR}/CLAUDE.md"
 fi
 echo ""
 echo "### Key conventions"
