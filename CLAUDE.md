@@ -1,52 +1,28 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-## Contents
-
-- [Project Overview](#project-overview)
-- [Development Commands](#development-commands)
-- [Code Conventions](#code-conventions)
-- [Architecture](#architecture)
-- [Config Validation Rules](#config-validation-rules)
-- [Sampling Parameters](#sampling-parameters)
-- [Adding a New Model Architecture](#adding-a-new-model-architecture)
-- [Running Inference](#running-inference)
-- [Debugging](#debugging)
-- [Available Skills](#available-skills)
-
-## Project Overview
-
-mini-vLLM is a lightweight LLM inference engine built from scratch, inspired by vLLM. It supports CUDA Graph optimization, tensor parallelism, KV cache management with prefix caching, and multi-device backends (CUDA, NPU, XPU, MPS, MLU, MUSA).
+mini-vLLM is a lightweight LLM inference engine built from scratch (inspired by vLLM). Supports CUDA Graph, tensor parallelism, block-based KV cache with prefix caching, and multi-device backends (CUDA, NPU, XPU, MPS, MLU, MUSA).
 
 - **Language**: Python 3.10–3.12
 - **Build system**: setuptools via `pyproject.toml`
+- **Code conventions**: `.claude/rules/` — Python, Git, Shell, compatibility
 
 ## Development Commands
 
-### Setup
-
 ```bash
-pip install -e ".[dev]"          # Dev dependencies (pytest, ruff, black, mypy)
-pip install -e ".[cuda]"         # CUDA: flash-attn, triton
-pip install -e ".[npu]"          # NPU: torch-npu
+pip install -e ".[dev]"           # dev: pytest, ruff, black, mypy
+pip install -e ".[cuda]"          # CUDA: flash-attn, triton
+pip install -e ".[npu]"           # NPU: torch-npu
 ```
 
-### Test
-
 ```bash
-python -m pytest tests/                              # All tests (excludes slow)
-python -m pytest tests/test_config.py -v             # Single file
-python -m pytest -k test_sampling                    # Pattern match
-python -m pytest tests/ --cov=minivllm               # Coverage
-python -m pytest -m integration                      # By marker
-python -m pytest tests/ --slow                       # Include slow tests
-python tests/run_tests.py --coverage -v              # Runner script
+python -m pytest tests/                       # All tests (excludes slow)
+python -m pytest tests/ --cov=minivllm        # Coverage
+python -m pytest tests/ --slow                # Include slow tests
+python -m pytest -m integration               # By marker
+python -m pytest -k test_sampling             # Pattern match
 ```
 
 Markers: `slow`, `integration`, `cuda`, `npu`.
-
-### Lint & Format
 
 ```bash
 black minivllm/ tests/
@@ -56,67 +32,49 @@ mypy minivllm/
 pre-commit run --all-files
 ```
 
-Tools configured in `pyproject.toml`: ruff (E, F, UP, B, SIM, I rules), black (line-length 88), isort (black profile), mypy (strict).
-
-## Code Conventions
-
-Code style rules are defined in `.claude/rules/`:
-
-| File | Scope |
-|------|-------|
-| `python-style.md` | Python — 命名、类型注解、docstring、import、异常处理、dataclass |
-| `git-conventions.md` | Git — Conventional Commits 格式 (`type(scope): description`)，禁止 amend/force-push |
-| `shell-style.md` | Shell — 文件结构、错误处理、管道、`set -euo pipefail` |
-| `compatibility.md` | 兼容性红线 — CLI 参数、环境变量、接口不可变更 |
-
-Key Python conventions: line-width 88, `X \| Y` over `Union`, `X \| None` over `Optional`, `CapWords` / `lower_snake_case` / `UPPER_SNAKE_CASE`, `pathlib` over `os.path`, `logging` over `print()`.
-
 ## Architecture
 
 ### Entry Points
 
-- **`minivllm/llm.py`**: `LLM` class — extends `LLMEngine`, thin user-facing API
-- **`minivllm/config.py`**: `Config` dataclass — validates all engine parameters, loads HF model config
-- **`minivllm/sampling_params.py`**: `SamplingParams` dataclass — user-facing sampling parameters
+| File | Purpose |
+|------|---------|
+| `minivllm/llm.py` | `LLM` class — thin user-facing API over `LLMEngine` |
+| `minivllm/config.py` | `Config` dataclass — validates engine params, loads HF config |
+| `minivllm/sampling_params.py` | `SamplingParams` dataclass — user-facing sampling params |
 
 ### Engine Layer (`minivllm/engine/`)
 
-- **`llm_engine.py`**: `LLMEngine` — orchestrates the pipeline, spawns worker processes, manages tokenizer reuse
-- **`scheduler.py`**: `Scheduler` — two-phase scheduling (prefill + decode), preempts newest sequences under cache pressure
-- **`block_manager.py`**: `BlockManager` — physical KV cache blocks with xxhash-based prefix caching and copy-on-write
-- **`model_runner.py`**: `ModelRunner` — top-level coordinator delegating to `ModelManager`, `DistributedManager`, `InferenceExecutor`
-- **`inference_executor.py`**: `InferenceExecutor` — KV cache allocation, model warmup, batch execution, CUDA Graph capture/replay, token sampling
-- **`distributed_manager.py`**: `DistributedManager` — multi-process coordination via nccl/hccl/ccl/gloo backends
-- **`sequence.py`**: `Sequence` — request state with token tracking, block table, pickle-optimized serialization
+| File | Purpose |
+|------|---------|
+| `llm_engine.py` | `LLMEngine` — orchestrates pipeline, spawns workers, manages tokenizer reuse |
+| `scheduler.py` | `Scheduler` — two-phase (prefill + decode), preempts newest under cache pressure |
+| `block_manager.py` | `BlockManager` — physical KV cache blocks, xxhash prefix caching, copy-on-write |
+| `model_runner.py` | `ModelRunner` — delegates to `ModelManager`, `DistributedManager`, `InferenceExecutor` |
+| `inference_executor.py` | `InferenceExecutor` — KV allocation, warmup, batch execution, CUDA Graph, token sampling |
+| `distributed_manager.py` | `DistributedManager` — multi-process via nccl/hccl/ccl/gloo |
+| `sequence.py` | `Sequence` — request state: tokens, block table, serialization |
 
 ### Model Layer (`minivllm/models/`)
 
-- **`manager.py`**: `ModelManager` — model loading, architecture detection, lifecycle management
-- **`__init__.py`**: `create_model()` factory + model registry (maps HF config `architectures`/`model_type` to classes)
-- Supported: `Qwen2ForCausalLM` (`qwen2.py`), `Qwen3ForCausalLM` (`qwen3.py`), `OPTForCausalLM` (`opt.py`)
-- **`layers/`**: `attention.py` (FlashAttention + fallback), `attention_backend.py` (ABC + backend implementations), `rotary_embedding.py` (RoPE), `linear.py` (column/row/QKV parallel), `layernorm.py` (RMSNorm), `activation.py` (SiluAndMul), `embed_head.py` (parallel embedding/LM head), `npu_flash_attention.py` (NPU-specific)
+- `manager.py`: `ModelManager` — loading, architecture detection, lifecycle
+- `__init__.py`: `create_model()` factory + `MODEL_REGISTRY` (maps HF `architectures`/`model_type` to classes)
+- Models: `Qwen2ForCausalLM` (`qwen2.py`), `Qwen3ForCausalLM` (`qwen3.py`), `OPTForCausalLM` (`opt.py`)
+- `layers/`: `attention.py`, `attention_backend.py`, `rotary_embedding.py`, `linear.py`, `layernorm.py`, `activation.py`, `embed_head.py`, `npu_flash_attention.py`
 
 ### Sampling (`minivllm/sampling/`)
 
-- **`sampler.py`**: `Sampler(nn.Module)` — pipeline: penalties → avoid_top_k → temperature → typical → top_k → top_p → min_p → multinomial
-- **`functional.py`**: Stateless ops (`apply_temperature`, `apply_top_k`, `apply_top_p`, etc.), `torch.compile` on CUDA
-- **`config.py`**: `SamplingConfig` — internal config with `repetition_penalty`, `frequency_penalty`, `presence_penalty`, `typical_p`, `avoid_top_k`, `seed` (beyond user-facing `SamplingParams`)
-- **`mirostat.py`**: `MirostatSampler`, `MirostatV2Sampler` — standalone stateful samplers (not wired into main pipeline)
+- `sampler.py`: `Sampler(nn.Module)` — pipeline: penalties → avoid_top_k → temperature → typical → top_k → top_p → min_p → multinomial
+- `functional.py`: Stateless ops (`apply_temperature`, `apply_top_k`, `apply_top_p`, etc.)
+- `config.py`: `SamplingConfig` — internal config (repetition/frequency/presence penalties, typical_p, avoid_top_k, seed)
+- `mirostat.py`: `MirostatSampler`, `MirostatV2Sampler` — standalone, not wired into main pipeline
 
 ### Utils (`minivllm/utils/`)
 
-- **`device.py`**: Multi-device abstraction (CUDA/NPU/XPU/MPS/MLU/MUSA/CPU) — detection, memory, distributed backend selection
-- **`context.py`**: Thread-safe inference context via `contextvars` — stores is_prefill, seq lengths, slot_mapping, block_tables
-- **`loader.py`**: Weight loading (safetensors + .bin), packed module mapping (q/k/v → qkv), HF model ID download support
-- **`logger_utils.py`**: Color-coded logging, distributed-aware (only rank 0 logs at INFO)
-- **`random_utils.py`**: Cross-library seed setting (Python/numpy/torch/CUDA/NPU)
-
-### Key Design Patterns
-
-1. **Two-Phase Scheduling**: Prefill processes new sequences and populates KV cache; Decode generates one token per step reusing cached KV
-2. **Block-Based KV Cache**: Fixed-size blocks (default 64 tokens, must be divisible by 64), xxhash prefix caching, copy-on-write
-3. **Tensor Parallelism**: Rank 0 in main process, ranks 1-N as spawned workers; shared memory IPC + event synchronization
-4. **CUDA Graph**: Captures decode graphs for batch sizes [1, 2, 4, 8, 16, 32, ..., max_num_seqs]; disable with `enforce_eager=True`
+- `device.py` — multi-device detection (CUDA/NPU/XPU/MPS/MLU/MUSA/CPU), memory, distributed backend
+- `context.py` — thread-safe `contextvars` (is_prefill, seq lengths, slot_mapping, block_tables)
+- `loader.py` — weight loading (safetensors + .bin), packed module mapping (q/k/v → qkv), HF download
+- `logger_utils.py` — color-coded logging, distributed-aware (rank 0 only at INFO)
+- `random_utils.py` — cross-library seed setting (Python/numpy/torch/CUDA/NPU)
 
 ### Data Flow
 
@@ -128,38 +86,30 @@ User Prompt → LLM.generate() → LLMEngine.add_request()
 
 ## Config Validation Rules
 
-Key constraints enforced in `Config.__post_init__()`:
-
 | Field | Rule | Default |
 |---|---|---|
 | `model` | Existing local dir or HF model ID | (required) |
 | `dtype` | `'auto'`, `'float16'`, `'bfloat16'`, `'float32'` | `'auto'` |
 | `device_memory_utilization` | [0.1, 1.0] | 0.9 |
-| `kvcache_block_size` | Must be divisible by 64 | 64 |
+| `kvcache_block_size` | Divisible by 64 | 64 |
 | `tensor_parallel_size` | [1, 8] | 1 |
-| `max_num_batched_tokens` | Must be > 0, and >= `max_model_len` | 16384 |
-| `max_num_seqs` | Must be > 0 | 512 |
-| `max_model_len` | Must be > 0; auto-adjusted if exceeds model limits | 4096 |
+| `max_num_batched_tokens` | > 0, >= `max_model_len` | 16384 |
+| `max_num_seqs` | > 0 | 512 |
+| `max_model_len` | > 0; auto-capped to model max | 4096 |
 
 `gpu_memory_utilization` is a backward-compat alias for `device_memory_utilization`.
 
 ## Sampling Parameters
 
-**User-facing `SamplingParams`** (6 fields):
-- `temperature`: > 1e-10 (greedy not permitted)
-- `top_p`: (0, 1.0]
-- `top_k`: -1 (disabled) or > 0
-- `min_p`: [0, 1.0]
-- `max_tokens`: > 0
-- `ignore_eos`: bool
+**`SamplingParams`** (user-facing): `temperature` (> 1e-10), `top_p` ((0, 1.0]), `top_k` (-1 or > 0), `min_p` ([0, 1.0]), `max_tokens` (> 0), `ignore_eos` (bool).
 
-**Internal `SamplingConfig`** adds: `repetition_penalty`, `frequency_penalty`, `presence_penalty`, `typical_p`, `avoid_top_k`, `seed`. These exist in the sampler pipeline but are not wired through from user input.
+**`SamplingConfig`** (internal) adds `repetition_penalty`, `frequency_penalty`, `presence_penalty`, `typical_p`, `avoid_top_k`, `seed` — not wired through from user input.
 
-## Adding a New Model Architecture
+## Adding a New Model
 
-1. Create model class in `minivllm/models/` following HuggingFace format (see `qwen2.py` as reference)
-2. Register in `minivllm/models/__init__.py` model registry (`MODEL_REGISTRY` dict)
-3. Add detection logic in `minivllm/models/manager.py` (`_detect_model_type()`)
+1. Create model class in `minivllm/models/` following HuggingFace format (reference: `qwen2.py`)
+2. Register in `minivllm/models/__init__.py` → `MODEL_REGISTRY` dict
+3. Add detection in `minivllm/models/manager.py` → `_detect_model_type()`
 
 ## Running Inference
 
@@ -175,30 +125,12 @@ outputs = llm.generate(
 
 ## Debugging
 
-- Set `enforce_eager=True` to disable CUDA Graph
-- Use `logger.setLevel(logging.DEBUG)` for verbose output
-- Check KV cache via `scheduler.block_manager.get_num_free_blocks()`
-
 | Symptom | Fix |
 |---------|-----|
 | OOM | Lower `device_memory_utilization` or `max_model_len` |
 | Slow decode | Ensure `enforce_eager=False` and GPU available |
 | KV cache exhaustion | Reduce `max_num_seqs` or increase `kvcache_block_size` |
 
-## Available Skills
-
-Claude Code skills available in this project. Invoke proactively when the task matches.
-
-| Skill | When to use |
-|-------|-------------|
-| `commit` | Create a git commit with Conventional Commits |
-| `code-review` / `review` | Review a PR or pre-landing diff |
-| `ship` | Test → review → bump version → commit → push → create PR |
-| `health` | Code quality dashboard (lint + type + test score) |
-| `simplify` | Review and fix code reuse, quality, and efficiency |
-| `freeze` / `unfreeze` | Restrict / lift file edit scope to a specific directory |
-| `guard` / `careful` | Safety guardrails for destructive commands |
-| `context-save` / `context-restore` | Save / restore working context across sessions |
-| `loop` | Recurring task runner |
-| `check` | Syntax and style validation |
-| `gstack` / `browse` | Browser-based QA testing and dogfooding |
+- `enforce_eager=True` disables CUDA Graph for debugging
+- `logger.setLevel(logging.DEBUG)` for verbose output
+- `scheduler.block_manager.get_num_free_blocks()` to check KV cache
