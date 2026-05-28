@@ -4,9 +4,14 @@ set -euo pipefail
 
 INPUT=$(cat)
 FILE_PATH=$(jq -r '.tool_input.file_path // empty' <<<"$INPUT")
+TOOL_NAME=$(jq -r '.tool_name // "Edit"' <<<"$INPUT")
 
 # File must exist
 [[ ! -f "$FILE_PATH" ]] && exit 0
+
+# Log edited file for session summary (deduplicate per session)
+EDIT_LOG="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}/.claude/.session-edits"
+echo "${FILE_PATH}|${TOOL_NAME}" >> "$EDIT_LOG"
 
 OUTPUT=""
 
