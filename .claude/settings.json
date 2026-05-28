@@ -124,12 +124,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/shellcheck-hook.sh",
-            "timeout": 30
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/autoformat-hook.sh",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/post-tool-use.sh",
             "timeout": 30
           }
         ]
@@ -163,12 +158,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-dangerous.sh",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/protect-files.sh",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/pre-tool-use.sh",
             "timeout": 5
           }
         ]
