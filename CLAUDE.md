@@ -2,12 +2,25 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Contents
+
+- [Project Overview](#project-overview)
+- [Development Commands](#development-commands)
+- [Code Conventions](#code-conventions)
+- [Architecture](#architecture)
+- [Config Validation Rules](#config-validation-rules)
+- [Sampling Parameters](#sampling-parameters)
+- [Adding a New Model Architecture](#adding-a-new-model-architecture)
+- [Running Inference](#running-inference)
+- [Debugging](#debugging)
+- [Available Skills](#available-skills)
+
 ## Project Overview
 
 mini-vLLM is a lightweight LLM inference engine built from scratch, inspired by vLLM. It supports CUDA Graph optimization, tensor parallelism, KV cache management with prefix caching, and multi-device backends (CUDA, NPU, XPU, MPS, MLU, MUSA).
 
 - **Language**: Python 3.10–3.12
-- **Build system**: setuptools via `pyproject.toml` (no `setup.py`)
+- **Build system**: setuptools via `pyproject.toml`
 
 ## Development Commands
 
@@ -45,11 +58,18 @@ pre-commit run --all-files
 
 Tools configured in `pyproject.toml`: ruff (E, F, UP, B, SIM, I rules), black (line-length 88), isort (black profile), mypy (strict).
 
-### CI
+## Code Conventions
 
-Two GitHub Actions workflows (`.github/workflows/`):
-- **pytests.yml**: lint (pre-commit + mypy) then test (Python 3.10/3.11 matrix, CPU torch)
-- **code-quality.yml**: black/ruff/bandit/mypy
+Code style rules are defined in `.claude/rules/`:
+
+| File | Scope |
+|------|-------|
+| `python-style.md` | Python — 命名、类型注解、docstring、import、异常处理、dataclass |
+| `git-conventions.md` | Git — Conventional Commits 格式 (`type(scope): description`)，禁止 amend/force-push |
+| `shell-style.md` | Shell — 文件结构、错误处理、管道、`set -euo pipefail` |
+| `compatibility.md` | 兼容性红线 — CLI 参数、环境变量、接口不可变更 |
+
+Key Python conventions: line-width 88, `X \| Y` over `Union`, `X \| None` over `Optional`, `CapWords` / `lower_snake_case` / `UPPER_SNAKE_CASE`, `pathlib` over `os.path`, `logging` over `print()`.
 
 ## Architecture
 
@@ -158,3 +178,27 @@ outputs = llm.generate(
 - Set `enforce_eager=True` to disable CUDA Graph
 - Use `logger.setLevel(logging.DEBUG)` for verbose output
 - Check KV cache via `scheduler.block_manager.get_num_free_blocks()`
+
+| Symptom | Fix |
+|---------|-----|
+| OOM | Lower `device_memory_utilization` or `max_model_len` |
+| Slow decode | Ensure `enforce_eager=False` and GPU available |
+| KV cache exhaustion | Reduce `max_num_seqs` or increase `kvcache_block_size` |
+
+## Available Skills
+
+Claude Code skills available in this project. Invoke proactively when the task matches.
+
+| Skill | When to use |
+|-------|-------------|
+| `commit` | Create a git commit with Conventional Commits |
+| `code-review` / `review` | Review a PR or pre-landing diff |
+| `ship` | Test → review → bump version → commit → push → create PR |
+| `health` | Code quality dashboard (lint + type + test score) |
+| `simplify` | Review and fix code reuse, quality, and efficiency |
+| `freeze` / `unfreeze` | Restrict / lift file edit scope to a specific directory |
+| `guard` / `careful` | Safety guardrails for destructive commands |
+| `context-save` / `context-restore` | Save / restore working context across sessions |
+| `loop` | Recurring task runner |
+| `check` | Syntax and style validation |
+| `gstack` / `browse` | Browser-based QA testing and dogfooding |
