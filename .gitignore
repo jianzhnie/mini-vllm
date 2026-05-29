@@ -214,5 +214,6 @@ __marimo__/
 .claude/worktrees/
 .claude/agent-memory-local/
 .claude/skills/gstack
+ruvector.db
 .codegraph
 CLAUDE.local.md
