@@ -38,6 +38,10 @@ human_tokens() {
 }
 USED=$(echo "$input" | jq -r '.context_window.used_tokens // 0')
 TOTAL=$(echo "$input" | jq -r '.context_window.total_tokens // 1000000')
+# Fallback: if token fields aren't in the JSON, estimate from percentage
+if [ "$USED" = "0" ] || [ "$USED" = "null" ]; then
+    USED=$((PCT * TOTAL / 100))
+fi
 printf "%b%s %s %s/%s %3d%%%b" "$COLOR" "$BAR" "$MODEL" "$(human_tokens "$USED")" "$(human_tokens "$TOTAL")" "$PCT" "$RESET"
 
 # Git info

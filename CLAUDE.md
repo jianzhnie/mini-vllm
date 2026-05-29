@@ -38,6 +38,38 @@ pre-commit run --all-files
 
 Test markers: `slow`, `integration`, `cuda`, `npu`.
 
+## Common Workflows
+
+### Before starting a task
+- `/status` — see current branch, uncommitted changes, recent commits
+
+### Fix a bug
+1. **Reproduce**: write a minimal failing test
+2. **Root cause**: use `@debugger` agent or `codegraph_trace` to trace the flow
+3. **Fix**: minimal diff, only the broken code path
+4. **Verify**: run the failing test → run `python -m pytest tests/ -x -q`
+
+### Add a feature
+1. **Explore**: use `@architect` for design review on multi-file changes
+2. **Test first**: write a test, confirm it fails
+3. **Implement**: minimal changes, no extra abstractions
+4. **Review**: `/precheck` for lint, `@code-reviewer` for the diff
+
+### Before committing
+```bash
+pre-commit run --all-files    # lint + format + type check
+python -m pytest tests/ -x -q # fast test pass
+```
+
+### Code exploration
+- **Structural questions** (what calls what): `codegraph_*` tools — see `.claude/CLAUDE.md`
+- **Literal search** (strings, comments): `grep`
+- **Don't delegate exploration to agents** — answer directly with 2-3 codegraph calls
+
+### When context gets long
+- `/context-save` before switching tasks
+- `/context-restore` to pick up where you left off
+
 ## Architecture summary
 
 ```
