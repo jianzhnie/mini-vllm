@@ -207,13 +207,7 @@ marimo/_lsp/
 __marimo__/
 .vscode/
 # Claude Code
-.claude/config-audit.log
-.claude/command-log.txt
-.claude/stop-failure.log
-.claude/.session-*
-.claude/worktrees/
-.claude/agent-memory-local/
-.claude/skills/gstack
+.claude/
 ruvector.db
 .codegraph
 CLAUDE.local.md
