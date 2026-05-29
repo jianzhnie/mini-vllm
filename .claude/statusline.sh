@@ -26,7 +26,19 @@ fi
 RESET='\033[0m'
 
 # Context display
-printf "%b%s %s %3d%%%b" "$COLOR" "$BAR" "$MODEL" "$PCT" "$RESET"
+human_tokens() {
+    local n="$1"
+    if (( n >= 1000000 )); then
+        printf "%.1fM" "$(echo "$n / 1000000" | bc -l)"
+    elif (( n >= 1000 )); then
+        printf "%.1fK" "$(echo "$n / 1000" | bc -l)"
+    else
+        printf "%d" "$n"
+    fi
+}
+USED=$(echo "$input" | jq -r '.context_window.used_tokens // 0')
+TOTAL=$(echo "$input" | jq -r '.context_window.total_tokens // 1000000')
+printf "%b%s %s %s/%s %3d%%%b" "$COLOR" "$BAR" "$MODEL" "$(human_tokens "$USED")" "$(human_tokens "$TOTAL")" "$PCT" "$RESET"
 
 # Git info
 if git rev-parse --git-dir > /dev/null 2>&1; then
@@ -36,7 +48,11 @@ if git rev-parse --git-dir > /dev/null 2>&1; then
     UNTRACKED=$(git ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')
 
     printf "  \033[36m%s\033[0m" "$BRANCH"
-    [ "$STAGED" -gt 0 ] && printf " \033[32m+%d\033[0m" "$STAGED"
-    [ "$MODIFIED" -gt 0 ] && printf " \033[33m~%d\033[0m" "$MODIFIED"
-    [ "$UNTRACKED" -gt 0 ] && printf " \033[90m?%d\033[0m" "$UNTRACKED"
+    if [ "$STAGED" -gt 0 ] || [ "$MODIFIED" -gt 0 ] || [ "$UNTRACKED" -gt 0 ]; then
+        printf " |"
+        [ "$STAGED" -gt 0 ] && printf " \033[32m+%d\033[0m" "$STAGED"
+        [ "$MODIFIED" -gt 0 ] && printf " \033[33mM%d\033[0m" "$MODIFIED"
+        [ "$UNTRACKED" -gt 0 ] && printf " \033[90m?%d\033[0m" "$UNTRACKED"
+    fi
 fi
+true
