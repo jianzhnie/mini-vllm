@@ -79,6 +79,7 @@ class QwenAttention(nn.Module):
         qkv_bias: bool | None = None,
         rope_theta: float | None = None,
         rope_scaling: dict[str, Any] | None = None,
+        use_buffered_page_attention: bool = False,
     ) -> None:
         super().__init__()
         if qkv_bias is None:
@@ -132,6 +133,7 @@ class QwenAttention(nn.Module):
             self.head_dim,
             self.scaling,
             self.num_kv_heads,
+            use_buffered_page_attention=use_buffered_page_attention,
         )
 
         if not self.qkv_bias:
@@ -262,6 +264,9 @@ class QwenDecoderLayer(nn.Module):
                 config, self.attention_cls.default_rope_theta
             ),
             rope_scaling=_resolve_rope_scaling(config),
+            use_buffered_page_attention=getattr(
+                config, "use_buffered_page_attention", False
+            ),
         )
         self.mlp = QwenMLP(
             hidden_size=config.hidden_size,

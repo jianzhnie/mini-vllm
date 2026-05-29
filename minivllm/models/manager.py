@@ -133,6 +133,10 @@ class ModelManager:
                     self.config.model, trust_remote_code=True
                 )
 
+            # Attach runtime config to hf_config so layers can read it
+            self.config.hf_config.use_buffered_page_attention = (
+                self.config.use_buffered_page_attention
+            )
             self.model = create_model(self.config.hf_config)
             self.model_type = (
                 type(self.model).__name__.replace("ForCausalLM", "").lower()

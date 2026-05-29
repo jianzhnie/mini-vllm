@@ -51,7 +51,6 @@ import os
 from typing import Any
 
 import torch
-import torch.nn.functional as F
 from torch import nn
 
 from minivllm.models.layers.attention_backend import (
@@ -60,6 +59,8 @@ from minivllm.models.layers.attention_backend import (
     NPUAttentionBackend,
     StandardAttentionBackend,
 )
+from minivllm.models.layers.attention_gather import BufferedPageAttention
+from minivllm.models.layers.page_attention import PageAttention
 from minivllm.utils.context import get_context
 from minivllm.utils.device import is_torch_npu_available
 from minivllm.utils.logger_utils import get_logger
@@ -145,6 +146,7 @@ class Attention(nn.Module):
         head_dim: int,
         scale: float,
         num_kv_heads: int,
+        use_buffered_page_attention: bool = False,
     ) -> None:
         super().__init__()
         self.num_heads: int = num_heads
@@ -170,15 +172,19 @@ class Attention(nn.Module):
         else:
             self.backend = StandardAttentionBackend()
 
+        # Page attention decode implementation (callable class):
+        # - PageAttention: allocates fresh gather buffers per call (default)
+        # - BufferedPageAttention: reuses pre-allocated buffers across calls
+        self._page_attn: PageAttention | BufferedPageAttention = (
+            BufferedPageAttention() if use_buffered_page_attention else PageAttention()
+        )
+
         # KV cache tensors are set later by the ModelRunner
         # Initialize as empty tensors to avoid attribute errors during initialization
         self.k_cache: torch.Tensor = torch.tensor([])
         self.v_cache: torch.Tensor = torch.tensor([])
         # Track whether KV cache has been properly initialized by ModelRunner
         self._cache_initialized: bool = False
-        # Buffer caching for decode attention to avoid per-step allocation
-        self._buf_k: torch.Tensor | None = None
-        self._buf_v: torch.Tensor | None = None
 
     def extra_repr(self) -> str:
         return (
@@ -513,114 +519,27 @@ class Attention(nn.Module):
             # [total_tokens, num_heads, head_dim]
             attn_out = torch.cat(outputs, dim=0)
         else:
-            # For decode, use cached k/v for efficient single-token generation
+            # For decode, use page attention over cached K/V blocks
             if not self._cache_initialized:
                 raise RuntimeError(
                     "KV cache must be initialized before decode phase. "
                     "This indicates a problem with the inference pipeline."
                 )
 
-            batch_size = q.size(0)
-
-            # Validate context information
             if context.context_lens is None or context.block_tables is None:
                 raise RuntimeError(
                     "Context lengths or block tables not set for decode phase. "
                     "This is a bug in the inference pipeline."
                 )
 
-            # Collect cached k/v for all sequences in batch
-            max_seqlen = context.context_lens.max().item()
-            # Use device and dtype from input tensors for consistency
-            device = q.device
-            dtype = q.dtype
-
-            # Reuse buffers to avoid per-step allocation
-            buf_shape = (batch_size, max_seqlen, self.num_kv_heads, self.head_dim)
-            if (
-                self._buf_k is None
-                or self._buf_k.shape != buf_shape
-                or self._buf_k.dtype != dtype
-            ):
-                self._buf_k = torch.zeros(buf_shape, device=device, dtype=dtype)
-                self._buf_v = torch.zeros(buf_shape, device=device, dtype=dtype)
-            cached_k = self._buf_k.zero_()
-            cached_v = self._buf_v.zero_()
-
-            # Vectorized KV cache gather (replaces triple-nested Python for-loop)
-            block_size = self.k_cache.size(1)
-
-            # Position grid: [1, max_seqlen] → which token position we're at
-            seq_pos = torch.arange(
-                max_seqlen, dtype=torch.int64, device=device
-            ).unsqueeze(0)
-
-            # Map token positions to block index and intra-block offset
-            block_indices = seq_pos // block_size
-            block_offsets = seq_pos % block_size
-
-            # Ensure context tensors are on the right device
-            context_lens = context.context_lens
-            if context_lens.device != device:
-                context_lens = context_lens.to(device)
-            block_tables = context.block_tables
-            if block_tables.device != device:
-                block_tables = block_tables.to(device)
-
-            # Guard: empty block tables (warmup path, no blocks allocated yet)
-            if block_tables.size(1) > 0:
-                # Validity mask: token position < actual sequence length
-                valid_mask = seq_pos < context_lens.unsqueeze(1)
-
-                # Gather block IDs from block tables using safe clamping
-                max_block_idx = block_tables.size(1) - 1
-                safe_indices = block_indices.clamp(0, max_block_idx).expand(
-                    batch_size, -1
-                )
-                block_ids = torch.gather(block_tables, 1, safe_indices)
-
-                # Valid slots: within seqlen AND block_id >= 0
-                mask = valid_mask & (block_ids >= 0)
-                if mask.any():
-                    active_block_ids = block_ids[mask]
-                    active_offsets = block_offsets.expand(batch_size, -1)[mask]
-                    cached_k[mask] = self.k_cache[active_block_ids, active_offsets]
-                    cached_v[mask] = self.v_cache[active_block_ids, active_offsets]
-
-            # Handle GQA/MQA: SDPA handles head broadcasting natively on CUDA,
-            # but CPU backend requires explicit head expansion
-            if self.num_kv_heads != self.num_heads:
-                k_sdpa = cached_k.repeat_interleave(
-                    self.num_heads // self.num_kv_heads, dim=2
-                )
-                v_sdpa = cached_v.repeat_interleave(
-                    self.num_heads // self.num_kv_heads, dim=2
-                )
-            else:
-                k_sdpa = cached_k
-                v_sdpa = cached_v
-
-            # Permute from [batch, seqlen, heads, dim] to [batch, heads, seqlen, dim]
-            k_sdpa = k_sdpa.permute(0, 2, 1, 3)
-            v_sdpa = v_sdpa.permute(0, 2, 1, 3)
-
-            q_sdpa = q.unsqueeze(2)  # [batch, heads, 1, dim]
-
-            # SDPA mask: True = attend, False = masked (padding)
-            sdpa_mask = torch.arange(max_seqlen, device=device).expand(
-                batch_size, max_seqlen
+            attn_out = self._page_attn(
+                q,
+                self.k_cache,
+                self.v_cache,
+                context.block_tables,
+                context.context_lens,
+                self.scale,
             )
-            sdpa_mask = sdpa_mask < context.context_lens.unsqueeze(1)
-            sdpa_mask = sdpa_mask.unsqueeze(1).unsqueeze(2)
-
-            attn_out = F.scaled_dot_product_attention(
-                q_sdpa,
-                k_sdpa,
-                v_sdpa,
-                attn_mask=sdpa_mask,
-                scale=self.scale,
-            )
-            attn_out = attn_out.squeeze(2)  # [batch, heads, dim]
 
         return attn_out
 

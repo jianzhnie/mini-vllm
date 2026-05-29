@@ -48,6 +48,7 @@ class OPTAttention(nn.Module):
         embed_dim: int,
         num_heads: int,
         bias: bool = True,
+        use_buffered_page_attention: bool = False,
     ) -> None:
         super().__init__()
         self.embed_dim = embed_dim
@@ -77,6 +78,7 @@ class OPTAttention(nn.Module):
             self.head_dim,
             self.scaling,
             num_heads,  # OPT uses MHA (num_kv_heads = num_heads)
+            use_buffered_page_attention=use_buffered_page_attention,
         )
 
     def forward(
@@ -155,6 +157,9 @@ class OPTDecoderLayer(nn.Module):
             embed_dim=self.embed_dim,
             num_heads=config.num_attention_heads,
             bias=config.enable_bias,
+            use_buffered_page_attention=getattr(
+                config, "use_buffered_page_attention", False
+            ),
         )
         self.do_layer_norm_before = config.do_layer_norm_before
         self.self_attn_layer_norm = nn.LayerNorm(self.embed_dim)
