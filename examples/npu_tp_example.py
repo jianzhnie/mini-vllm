@@ -23,6 +23,9 @@ from pathlib import Path
 _MODEL_PATHS: dict[str, str] = {
     "opt": "/home/jianzhnie/llmtuner/hfhub/models/facebook/opt-125m",
     "qwen": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-0.6B",
+    "qwen3": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-0.6B",
+    "qwen3-1.7b": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-1.7B",
+    "qwen3-4b": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-4B",
 }
 
 _DEFAULT_MODEL = "opt"
@@ -51,7 +54,7 @@ def parse_args() -> argparse.Namespace:
         "--all", action="store_true", help="Test TP=1, TP=2, TP=4 sequentially"
     )
     p.add_argument("--max-tokens", type=int, default=48)
-    p.add_argument("--dtype", default="float16", choices=["float16", "float32"])
+    p.add_argument("--dtype", default="float16", choices=["float16", "float32", "bfloat16"])
     return p.parse_args()
 
 
