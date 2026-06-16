@@ -48,6 +48,7 @@ def resolve_model(name_or_path: str) -> str:
         return name_or_path
     return name_or_path
 
+
 prompts = [
     "Hello, who are you?",
     "What is your name?",
@@ -218,7 +219,8 @@ def main() -> int:
     """Main entry point for the example script."""
     parser = argparse.ArgumentParser(description="CPU Inference Example")
     parser.add_argument(
-        "--model", default="opt",
+        "--model",
+        default="opt",
         help=f"Model short name ({', '.join(_MODEL_PATHS)}) or path",
     )
     args = parser.parse_args()

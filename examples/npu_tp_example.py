@@ -54,7 +54,9 @@ def parse_args() -> argparse.Namespace:
         "--all", action="store_true", help="Test TP=1, TP=2, TP=4 sequentially"
     )
     p.add_argument("--max-tokens", type=int, default=48)
-    p.add_argument("--dtype", default="float16", choices=["float16", "float32", "bfloat16"])
+    p.add_argument(
+        "--dtype", default="float16", choices=["float16", "float32", "bfloat16"]
+    )
     return p.parse_args()
 
 

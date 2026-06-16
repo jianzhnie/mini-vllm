@@ -74,7 +74,9 @@ def parse_args() -> argparse.Namespace:
         "--flash-attn", action="store_true", help="Enable NPU flash attention"
     )
     p.add_argument(
-        "--no-eager", action="store_true", help="Disable eager mode (enable graph capture)"
+        "--no-eager",
+        action="store_true",
+        help="Disable eager mode (enable graph capture)",
     )
     p.add_argument("--prompt", action="append", help="Add a prompt (repeatable)")
     return p.parse_args()
