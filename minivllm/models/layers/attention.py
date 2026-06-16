@@ -230,9 +230,7 @@ class Attention(nn.Module):
             target_dtype = k_cache.dtype
             if q.dtype != target_dtype:
                 q = q.to(target_dtype)
-            if k.dtype != target_dtype:
                 k = k.to(target_dtype)
-            if v.dtype != target_dtype:
                 v = v.to(target_dtype)
 
         # Store K/V to cache if cache is initialized
@@ -295,14 +293,15 @@ class Attention(nn.Module):
                         is_prefill=context.is_prefill,
                     )
 
-                    if attn_out.dim() == 4 and attn_out.shape[2] == 1:
-                        attn_out = attn_out.squeeze(2)
-                    elif attn_out.dim() == 4:
-                        attn_out = (
-                            attn_out.transpose(1, 2)
-                            .contiguous()
-                            .view(-1, self.num_heads, self.head_dim)
-                        )
+                    if attn_out.dim() == 4:
+                        if attn_out.shape[2] == 1:
+                            attn_out = attn_out.squeeze(2)
+                        else:
+                            attn_out = (
+                                attn_out.transpose(1, 2)
+                                .contiguous()
+                                .view(-1, self.num_heads, self.head_dim)
+                            )
 
                     return attn_out
 
@@ -365,8 +364,6 @@ class Attention(nn.Module):
                         except Exception as e:
                             logger.warning("NPU prefill fallback failed: %s", e)
                 else:
-                    # Decode: use legacy npu_incre_flash_attention
-                    # Only attempt NPU FA if block_tables are valid (no empty blocks)
                     block_tables_valid = (
                         context.block_tables is not None
                         and context.block_tables.numel() > 0
@@ -378,23 +375,11 @@ class Attention(nn.Module):
                         and block_tables_valid
                     ):
                         try:
-                            batch_size = q.size(0)
-                            target_dtype = torch.float16
-                            q_npu = q.to(target_dtype).unsqueeze(2)
-                            k_cache_native = (
-                                k_cache
-                                if k_cache.dtype == target_dtype
-                                else k_cache.to(target_dtype)
-                            )
-                            v_cache_native = (
-                                v_cache
-                                if v_cache.dtype == target_dtype
-                                else v_cache.to(target_dtype)
-                            )
+                            q_npu = q.unsqueeze(2)
                             attn_out = npu_incre_flash_attention(
                                 q_npu,
-                                k_cache_native,
-                                v_cache_native,
+                                k_cache,
+                                v_cache,
                                 num_heads=self.num_heads,
                                 num_key_value_heads=self.num_kv_heads,
                                 input_layout="BNSD",
@@ -402,8 +387,7 @@ class Attention(nn.Module):
                                 actual_seq_lengths=context.context_lens,
                                 block_table=context.block_tables,
                             )
-                            attn_out = attn_out.to(q.dtype).squeeze(2)
-                            return attn_out
+                            return attn_out.squeeze(2)
                         except Exception as e:
                             logger.warning("NPU decode fallback failed: %s", e)
 
@@ -412,7 +396,7 @@ class Attention(nn.Module):
             if context.is_prefill:
                 # Prefill phase: process entire prompt sequence
                 # In prefill, if a prefix cache exists we use cached KV tensors
-                if context.block_tables is not None:  # prefix cache
+                if context.block_tables is not None:
                     k, v = k_cache, v_cache
 
                 if flash_attn_varlen_func is not None:

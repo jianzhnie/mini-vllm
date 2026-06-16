@@ -363,6 +363,8 @@ class NPUAttentionBackend(AttentionBackend):
         self._k_buffer: torch.Tensor | None = None
         self._v_buffer: torch.Tensor | None = None
         self._buffer_shape: tuple[int, ...] | None = None
+        self._attn_mask_cache: dict[int, torch.Tensor] = {}
+        self._seq_pos_cache: dict[tuple[int, torch.device], torch.Tensor] = {}
 
         if not self._npu_available:
             logger.warning("NPU not available, falling back to standard attention")
@@ -549,8 +551,6 @@ class NPUAttentionBackend(AttentionBackend):
             if query.dim() == 3:
                 query = query.unsqueeze(2)  # (batch, num_heads, 1, head_dim)
 
-        # Basic implementation of unified inference
-        # Note: This matches the signature expected by Attention.forward
         # Cast to supported dtype for NPU kernel
         q_dtype = query.dtype
         target_dtype = None
@@ -560,14 +560,21 @@ class NPUAttentionBackend(AttentionBackend):
             key_cache = key_cache.to(target_dtype)
             value_cache = value_cache.to(target_dtype)
 
-        # Construct attention mask for prefill (causal)
+        # Construct attention mask for prefill (causal) - cached for reuse
         q_len = query.shape[2]
         atten_mask = None
         if q_len > 1:
-            atten_mask = torch.triu(
-                torch.ones(q_len, q_len, device=query.device, dtype=torch.bool),
-                diagonal=1,
-            )
+            if q_len in self._attn_mask_cache:
+                atten_mask = self._attn_mask_cache[q_len]
+                if atten_mask.device != query.device:
+                    atten_mask = atten_mask.to(query.device)
+                    self._attn_mask_cache[q_len] = atten_mask
+            else:
+                atten_mask = torch.triu(
+                    torch.ones(q_len, q_len, device=query.device, dtype=torch.bool),
+                    diagonal=1,
+                )
+                self._attn_mask_cache[q_len] = atten_mask
             atten_mask = atten_mask.view(1, 1, q_len, q_len)
 
         try:
@@ -657,6 +664,9 @@ class NPUAttentionBackend(AttentionBackend):
     ) -> tuple[Tensor, Tensor]:
         """Prepare KV cache in optimal format for NPU unified inference.
 
+        Uses cached position grids and pre-allocated buffers to minimize
+        per-step memory allocation overhead on NPU.
+
         Args:
             k: Key tensor (either current input or cached)
             v: Value tensor (either current input or cached)
@@ -700,12 +710,15 @@ class NPUAttentionBackend(AttentionBackend):
 
             block_size = k_cache.size(1)
 
-            # Vectorized gather implementation
-
-            # 1. Create grid of sequence positions [1, max_seqlen]
-            seq_pos = torch.arange(
-                max_seqlen, dtype=torch.int64, device=k.device
-            ).unsqueeze(0)
+            # Cache position grid per (max_seqlen, device) to avoid re-creation
+            cache_key = (max_seqlen, k.device)
+            if cache_key in self._seq_pos_cache:
+                seq_pos = self._seq_pos_cache[cache_key]
+            else:
+                seq_pos = torch.arange(
+                    max_seqlen, dtype=torch.int64, device=k.device
+                ).unsqueeze(0)
+                self._seq_pos_cache[cache_key] = seq_pos
 
             # 2. Map to block indices and offsets
             block_table_indices = seq_pos // block_size
@@ -726,16 +739,15 @@ class NPUAttentionBackend(AttentionBackend):
                 block_tables = block_tables.to(k.device)
 
             max_block_idx = block_tables.size(1) - 1
-            safe_indices = block_table_indices.clamp(max=max_block_idx)
-
+            safe_indices = block_table_indices.clamp(max=max_block_idx).expand(
+                batch_size, -1
+            )
             if (block_table_indices > max_block_idx).any():
                 logger.warning(
                     "Block table index out of range in prepare_npu_cache. "
                     f"Max block index: {max_block_idx}, "
                     f"Max requested: {block_table_indices.max().item()}"
                 )
-
-            safe_indices = safe_indices.expand(batch_size, -1)
 
             # Gather block IDs: [batch_size, max_seqlen]
             block_ids = torch.gather(block_tables, 1, safe_indices)
@@ -784,7 +796,8 @@ class NPUAttentionBackend(AttentionBackend):
     ) -> None:
         """Store KV cache using NPU optimizations.
 
-        Uses vectorized operations optimized for NPU memory layout.
+        Uses vectorized index_copy_ operations optimized for NPU memory layout.
+        Minimizes dtype conversions and contiguity checks.
         """
         batch_size, num_heads, head_dim = key.shape
         hidden_size = num_heads * head_dim
@@ -796,15 +809,15 @@ class NPUAttentionBackend(AttentionBackend):
 
         valid_slots = slot_mapping[valid_mask]
 
-        # Reshape key/value to [num_valid, hidden_size]
-        valid_key = key[valid_mask].view(-1, hidden_size)
-        valid_value = value[valid_mask].view(-1, hidden_size)
+        # Reshape key/value to [num_valid, hidden_size] — fused view + mask
+        valid_key = key[valid_mask].reshape(-1, hidden_size)
+        valid_value = value[valid_mask].reshape(-1, hidden_size)
 
         # Reshape cache to [total_tokens, hidden_size] for direct indexing
         k_cache_reshaped = k_cache.view(-1, hidden_size)
         v_cache_reshaped = v_cache.view(-1, hidden_size)
 
-        # Ensure valid_key/valid_value match cache dtype
+        # Ensure matching dtypes (only convert if needed)
         if valid_key.dtype != k_cache.dtype:
             valid_key = valid_key.to(k_cache.dtype)
         if valid_value.dtype != v_cache.dtype:
