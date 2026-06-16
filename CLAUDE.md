@@ -98,12 +98,31 @@ User Prompt → LLM → LLMEngine → Scheduler (prefill+decode) → BlockManage
 2. Register in `MODEL_REGISTRY` in `minivllm/models/__init__.py`
 3. Add detection in `minivllm/models/manager.py` → `_detect_model_type()`
 
+## NPU Optimizations
+
+NPU-specific kernels (auto-detected when `torch_npu` is available):
+- `npu_rms_norm` — fused RMSNorm
+- `npu_rotary_mul` — fused RoPE (enabled by default; `MINIVLLM_USE_NPU_ROPE=0` to disable)
+- `npu_swiglu` — fused SiluAndMul activation
+- `npu_fusion_attention` / `npu_fused_infer_attention_score` — flash attention (opt-in: `MINIVLLM_USE_NPU_FA=1`)
+- `npu_incre_flash_attention` — incremental decode attention
+
+Key NPU perf considerations:
+- Avoid per-step tensor allocation (pre-allocated decode buffers in `InferenceExecutor`)
+- Cache attention masks and position grids (in `NPUAttentionBackend`, `PageAttention`)
+- Use `index_copy_` for KV cache scatter (fastest on NPU)
+- Use int32 indices for NPU index operations
+- Prefer contiguous BNSD layout for attention kernels
+
+Docs: `docs/npu_optimization.md`, `docs/npu_benchmark_report.md`, `docs/npu_flash_attention_guide.md`
+
 ## Debugging
 
 | Symptom | Fix |
 |---------|-----|
 | OOM | Lower `device_memory_utilization` or `max_model_len` |
-| Slow decode | Ensure `enforce_eager=False` and GPU available |
+| Slow decode | Ensure `enforce_eager=False` and GPU/NPU available |
 | KV cache exhaustion | Reduce `max_num_seqs` or increase `kvcache_block_size` |
+| NPU garbled output | Check GQA model with `MINIVLLM_USE_NPU_FA=0` (unified FA doesn't support GQA) |
 
 `logger.setLevel(logging.DEBUG)` for verbose output. `scheduler.block_manager.get_num_free_blocks()` to check KV cache.

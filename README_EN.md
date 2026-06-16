@@ -218,9 +218,26 @@ python tests/run_tests.py --coverage -v
 
 ## 📚 Supported Models
 
-- **Qwen2** — Recommended
-- **Qwen3** — Recommended
-- **OPT**
+| Model | Parameters | NPU Optimized | Notes |
+|-------|:----------:|:-------------:|-------|
+| **Qwen3-4B** | 4B | ✅ | High-quality multilingual |
+| **Qwen3-1.7B** | 1.7B | ✅ | Lightweight high-performance |
+| **Qwen3-0.6B** | 600M | ✅ | Ultra-lightweight |
+| **Qwen2** | 0.5B-72B | ✅ | Stable and reliable |
+| **OPT** | 125M-66B | ✅ | English benchmarks |
+
+## 🚀 NPU Inference Performance
+
+Benchmarked on Huawei Ascend 910 (CANN 9.0, torch 2.12):
+
+| Model | NPU (tok/s) | CPU (tok/s) | Speedup |
+|-------|:-----------:|:-----------:|:-------:|
+| OPT-125M | 102.8 | 33.2 | 3.1x |
+| Qwen3-0.6B | 46.4 | 8.2 | 5.7x |
+| Qwen3-1.7B | 45.8 | 3.0 | **15.1x** |
+| Qwen3-4B | 39.9 | 1.5 | **27.2x** |
+
+See [NPU Benchmark Report](docs/npu_benchmark_report.md) and [NPU Optimization Guide](docs/npu_optimization.md) for details.
 
 ## 📄 License
 

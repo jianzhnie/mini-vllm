@@ -39,6 +39,8 @@ All scripts accept the following short names (mapped to local model paths):
 |---|---|
 | `opt` (default) | `/home/jianzhnie/llmtuner/hfhub/models/facebook/opt-125m` |
 | `qwen` / `qwen3` | `/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-0.6B` |
+| `qwen3-1.7b` | `/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-1.7B` |
+| `qwen3-4b` | `/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-4B` |
 | `gpt2` | `/home/jianzhnie/llmtuner/hfhub/models/openai-community/gpt2` |
 
 You can also pass a full path to any HuggingFace-format model directory.
@@ -108,7 +110,7 @@ python examples/npu_inference_example.py --prompt "What is AI?"
 | `--max-seqs` | `8` | Max concurrent sequences |
 | `--tp` | `1` | Tensor parallelism size (1–8) |
 | `--flash-attn` | off | Enable NPU flash attention |
-| `--eager` | `True` | Force eager mode |
+| `--no-eager` | off | Disable eager mode (enable graph capture) |
 | `--prompt` | — | Add a prompt (repeatable) |
 
 ---
@@ -171,7 +173,7 @@ python examples/npu_tp_example.py --tp 2 --model qwen
 | `--tp` | `0` | Single TP size (1/2/4); overrides `--all` |
 | `--all` | off | Run TP=1, TP=2, TP=4 sequentially |
 | `--max-tokens` | `48` | Max tokens per prompt |
-| `--dtype` | `float16` | `float16` or `float32` |
+| `--dtype` | `float16` | `float16`, `float32`, or `bfloat16` |
 
 **Note:** TP=4 requires 4 NPU devices with HCCL peer-to-peer connectivity. On some machines, TP=4 in `--all` mode may fail due to HCCL link timeouts between runs; try running TP=4 standalone (`--tp 4`) if this occurs.
 
@@ -198,9 +200,11 @@ Forces execution on CPU, useful as a golden reference for output comparison.
 
 ```bash
 python examples/cpu_inference_opt.py
+python examples/cpu_inference_opt.py --model qwen3
+python examples/cpu_inference_opt.py --model qwen3-1.7b
 ```
 
-Hides all accelerator devices by setting `MINIVLLM_DEVICE=cpu`.
+Accepts `--model` with the same short names as other scripts. Hides all accelerator devices by setting `MINIVLLM_DEVICE=cpu`.
 
 ---
 
