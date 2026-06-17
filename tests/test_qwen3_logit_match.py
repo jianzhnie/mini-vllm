@@ -24,7 +24,7 @@ from minivllm.utils.context import reset_context, set_context
 
 MODEL_PATH = os.environ.get(
     "MINIVLLM_MODEL",
-    "/Users/robin/hfhub/models/Qwen/Qwen3-0.6B",
+    "Qwen/Qwen3-0.6B",
 )
 PROMPT = "<|im_start|>user\nHello, who are you?<|im_end|>\n<|im_start|>assistant\n"
 

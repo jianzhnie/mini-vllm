@@ -33,7 +33,7 @@ def create_model(hf_config: Any) -> Any:
     Detects the architecture from ``hf_config.architectures`` or
     ``hf_config.model_type`` and returns the corresponding model.
     """
-    architectures = getattr(hf_config, "architectures", [])
+    architectures = getattr(hf_config, "architectures", None) or []
     model_type = getattr(hf_config, "model_type", "").lower()
 
     arch_name = None

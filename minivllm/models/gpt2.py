@@ -196,7 +196,7 @@ class GPT2ForCausalLM(nn.Module):
                             if hasattr(p, "weight_loader"):
                                 p.weight_loader(p, sw, shard)
                             else:
-                                p.data.copy_(w_t)
+                                p.data.copy_(sw)
                     continue
 
                 elif rest == "attn.c_attn.bias":
@@ -212,7 +212,7 @@ class GPT2ForCausalLM(nn.Module):
                             if hasattr(p, "weight_loader"):
                                 p.weight_loader(p, sb, shard)
                             else:
-                                p.data.copy_(w)
+                                p.data.copy_(sb)
                     continue
 
                 elif rest == "attn.c_proj.weight":

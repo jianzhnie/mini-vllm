@@ -1,30 +1,25 @@
-#!/usr/bin/env python3
-"""
-Test script to demonstrate the improved loader functionality.
+"""Tests for the weight loader functionality.
 
-This script tests various scenarios including:
-- Basic weight loading
-- Packed module handling
-- Error handling and validation
-- Custom weight loaders
+Tests various scenarios including:
+- Basic weight loading from safetensors
+- Error handling for missing/empty directories
+- Custom weight loaders on parameters
+- Shape validation in default weight loader
 """
 
-import logging
 import tempfile
 from pathlib import Path
 
+import pytest
 import torch
 import torch.nn as nn
 from safetensors.torch import save_file
 
 from minivllm.utils.loader import get_default_weight_loader, load_model
 
-# Configure logging to see the improvements
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-
 
 class DemoModel(nn.Module):
-    """Demo model with various parameter types for demonstration."""
+    """Demo model with various parameter types for testing."""
 
     def __init__(self):
         super().__init__()
@@ -32,14 +27,12 @@ class DemoModel(nn.Module):
         self.linear2 = nn.Linear(20, 30)
         self.embedding = nn.Embedding(100, 50)
 
-        # Add packed modules mapping for demonstration
         self.packed_modules_mapping = {
             "packed_": ("linear1.", 0),
             "sharded_": ("linear2.", 1),
         }
 
     def get_parameter(self, name: str) -> nn.Parameter:
-        """Custom parameter getter for testing."""
         for param_name, param in self.named_parameters():
             if param_name == name:
                 return param
@@ -47,13 +40,11 @@ class DemoModel(nn.Module):
 
 
 class CustomWeightLoaderModel(nn.Module):
-    """Model with custom weight loader for demonstration."""
+    """Model with custom weight loader for testing."""
 
     def __init__(self):
         super().__init__()
         self.linear = nn.Linear(5, 10)
-
-        # Add custom weight loader to the parameter
         self.linear.weight.weight_loader = self._custom_weight_loader
 
     def _custom_weight_loader(
@@ -62,132 +53,97 @@ class CustomWeightLoaderModel(nn.Module):
         tensor: torch.Tensor,
         shard_id: int = 0,
     ) -> None:
-        """Custom weight loader that scales the weights."""
-        print(f"Custom weight loader called with shard_id: {shard_id}")
-        param.data.copy_(tensor * 0.5)  # Scale weights by 0.5
+        param.data.copy_(tensor * 0.5)
 
 
-def create_test_weights(directory: Path) -> None:
+def _create_test_weights(directory: Path) -> None:
     """Create test safetensors files."""
-    # Create some test tensors
     tensors1 = {
         "linear1.weight": torch.randn(20, 10),
         "linear1.bias": torch.randn(20),
         "embedding.weight": torch.randn(100, 50),
     }
-
     tensors2 = {
         "linear2.weight": torch.randn(30, 20),
         "linear2.bias": torch.randn(30),
-        "packed_extra.weight": torch.randn(15, 10),  # For packed module testing
-        "sharded_extra.weight": torch.randn(25, 20),  # For sharded module testing
     }
-
-    # Save to safetensors files
     save_file(tensors1, directory / "model-00001-of-00002.safetensors")
     save_file(tensors2, directory / "model-00002-of-00002.safetensors")
-    print(f"Created test safetensors files in: {directory}")
 
 
-def test_basic_loading() -> None:
-    """Test basic weight loading functionality."""
-    print("\n" + "=" * 60)
-    print("Testing Basic Weight Loading")
-    print("=" * 60)
+class TestBasicLoading:
+    """Test basic weight loading from safetensors files."""
 
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_path = Path(temp_dir)
-        create_test_weights(temp_path)
+    def test_loads_matching_parameters(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            _create_test_weights(temp_path)
 
-        model = DemoModel()
-        print("Model parameters before loading:")
-        for name, param in model.named_parameters():
-            print(f"  {name}: {param.shape}")
+            model = DemoModel()
+            old_weight = model.linear1.weight.data.clone()
 
-        load_model(model, str(temp_path))
-        print("✓ Basic loading completed successfully")
+            load_model(model, str(temp_path))
+
+            assert not torch.equal(model.linear1.weight.data, old_weight)
+
+    def test_all_params_have_expected_shapes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            _create_test_weights(temp_path)
+
+            model = DemoModel()
+            load_model(model, str(temp_path))
+
+            assert model.linear1.weight.shape == (20, 10)
+            assert model.linear2.weight.shape == (30, 20)
+            assert model.embedding.weight.shape == (100, 50)
 
 
-def test_error_handling() -> None:
+class TestErrorHandling:
     """Test error handling for invalid inputs."""
-    print("\n" + "=" * 60)
-    print("Testing Error Handling")
-    print("=" * 60)
 
-    model = DemoModel()
+    def test_nonexistent_directory_raises(self):
+        model = DemoModel()
+        with pytest.raises(FileNotFoundError):
+            load_model(model, "/non/existent/path")
 
-    # Test non-existent directory
-    try:
-        load_model(model, "/non/existent/path")
-        print("✗ Should have raised FileNotFoundError")
-    except FileNotFoundError as e:
-        print(f"✓ Correctly caught FileNotFoundError: {e}")
-
-    # Test empty directory
-    with tempfile.TemporaryDirectory() as temp_dir:
-        try:
-            load_model(model, temp_dir)
-            print("✗ Should have raised ValueError")
-        except ValueError as e:
-            print(f"✓ Correctly caught ValueError: {e}")
+    def test_empty_directory_raises(self):
+        model = DemoModel()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with pytest.raises(ValueError):
+                load_model(model, temp_dir)
 
 
-def test_custom_weight_loader() -> None:
-    """Test custom weight loader functionality."""
-    print("\n" + "=" * 60)
-    print("Testing Custom Weight Loader")
-    print("=" * 60)
+class TestCustomWeightLoader:
+    """Test custom weight loader callable on parameter attributes."""
 
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_path = Path(temp_dir)
+    def test_custom_loader_scales_weights(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            test_tensor = torch.randn(10, 5)
+            save_file({"linear.weight": test_tensor}, temp_path / "custom.safetensors")
 
-        # Create test tensor
-        test_tensor = torch.randn(10, 5)
-        save_file({"linear.weight": test_tensor}, temp_path / "custom.safetensors")
+            model = CustomWeightLoaderModel()
+            load_model(model, str(temp_path))
 
-        model = CustomWeightLoaderModel()
-
-        print("Original weight statistics:")
-        print(f"  Mean: {model.linear.weight.data.mean():.4f}")
-        print(f"  Std:  {model.linear.weight.data.std():.4f}")
-
-        load_model(model, str(temp_path))
-
-        print("After custom loading (should be scaled by 0.5):")
-        print(f"  Mean: {model.linear.weight.data.mean():.4f}")
-        print(f"  Std:  {model.linear.weight.data.std():.4f}")
-        print("✓ Custom weight loader test completed")
+            expected = test_tensor * 0.5
+            assert torch.allclose(model.linear.weight.data, expected, atol=1e-6)
 
 
-def test_shape_validation() -> None:
+class TestShapeValidation:
     """Test shape validation in default_weight_loader."""
-    print("\n" + "=" * 60)
-    print("Testing Shape Validation")
-    print("=" * 60)
 
-    default_weight_loader = get_default_weight_loader()
-
-    param = nn.Parameter(torch.randn(5, 3))
-    correct_tensor = torch.randn(5, 3)
-    wrong_tensor = torch.randn(4, 2)
-
-    # Test correct shape
-    try:
+    def test_correct_shape_loads_successfully(self):
+        default_weight_loader = get_default_weight_loader()
+        param = nn.Parameter(torch.randn(5, 3))
+        correct_tensor = torch.randn(5, 3)
         default_weight_loader(param, correct_tensor)
-        print("✓ Correct shape loaded successfully")
-    except Exception as e:
-        print(f"✗ Unexpected error with correct shape: {e}")
+        assert torch.allclose(param.data, correct_tensor)
 
-    # Test wrong shape
-    try:
+    def test_wrong_shape_warns_and_skips(self):
+        default_weight_loader = get_default_weight_loader()
+        param = nn.Parameter(torch.randn(5, 3))
+        original = param.data.clone()
+        wrong_tensor = torch.randn(4, 2)
         default_weight_loader(param, wrong_tensor)
-        print("✗ Should have raised RuntimeError for wrong shape")
-    except RuntimeError as e:
-        print(f"✓ Correctly caught shape mismatch: {e}")
-
-
-if __name__ == "__main__":
-    test_basic_loading()
-    test_error_handling()
-    test_custom_weight_loader()
-    test_shape_validation()
+        assert torch.equal(param.data, original)

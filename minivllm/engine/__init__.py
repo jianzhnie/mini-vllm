@@ -10,7 +10,7 @@ Core Components:
     Scheduler: Schedules sequences for prefill and decode phases
     InferenceExecutor: Handles model inference execution with optimizations
     DistributedManager: Manages distributed inference coordination
-    ModelRunner: Main engine orchestration (optimized version from model_runner_opt)
+    ModelRunner: Main engine orchestration
     LLMEngine: High-level engine interface
 """
 

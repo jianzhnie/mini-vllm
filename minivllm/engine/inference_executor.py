@@ -167,6 +167,18 @@ class InferenceExecutor:
             max_seqs, dtype=torch.int32, device=self.device
         )
 
+        # Pre-allocated block tables buffer for decode (avoids per-step allocation)
+        max_blocks = (
+            self.config.max_model_len + self.config.kvcache_block_size - 1
+        ) // self.config.kvcache_block_size
+        self._decode_block_tables_cpu = torch.full(
+            (max_seqs, max_blocks), -1, dtype=torch.int32
+        )
+        self._decode_block_tables = torch.full(
+            (max_seqs, max_blocks), -1, dtype=torch.int32, device=self.device
+        )
+        self._max_blocks_per_seq = max_blocks
+
         logger.debug("InferenceExecutor initialized on device %s", self.device)
 
     def initialize(self, max_num_batched_tokens: int, max_num_seqs: int) -> None:
@@ -588,7 +600,7 @@ class InferenceExecutor:
         slot_mapping_buf = self._decode_slot_mapping[:batch_size]
         context_lens_buf = self._decode_context_lens[:batch_size]
 
-        block_tables = self._prepare_block_tables(sequences)
+        block_tables = self._prepare_block_tables_decode(sequences)
 
         # Set context for attention kernels
         set_context(
@@ -636,6 +648,45 @@ class InferenceExecutor:
             block_tables_tensor, self.device, non_blocking=True
         )
 
+    def _prepare_block_tables_decode(
+        self, sequences: list[Sequence]
+    ) -> torch.Tensor:
+        """Prepare block tables for decode using pre-allocated buffers.
+
+        Avoids per-step tensor allocation by reusing pre-allocated CPU/device
+        buffers and only copying the active region.
+        """
+        batch_size = len(sequences)
+        if batch_size == 0:
+            return torch.empty((0, 0), dtype=torch.int32, device=self.device)
+
+        max_blocks = max(
+            (len(seq.block_table) for seq in sequences), default=0
+        )
+        if max_blocks == 0:
+            return torch.empty(
+                (batch_size, 0), dtype=torch.int32, device=self.device
+            )
+
+        # Use pre-allocated buffers when possible
+        if (
+            batch_size <= self._decode_block_tables_cpu.size(0)
+            and max_blocks <= self._decode_block_tables_cpu.size(1)
+        ):
+            buf = self._decode_block_tables_cpu[:batch_size, :max_blocks]
+            buf.fill_(-1)
+            for i, seq in enumerate(sequences):
+                bt = seq.block_table
+                if bt:
+                    buf[i, : len(bt)] = torch.tensor(bt, dtype=torch.int32)
+            self._decode_block_tables[:batch_size, :max_blocks].copy_(
+                buf, non_blocking=True
+            )
+            return self._decode_block_tables[:batch_size, :max_blocks]
+
+        # Fallback to dynamic allocation for oversized batches
+        return self._prepare_block_tables(sequences)
+
     def _execute_model(
         self, input_ids: torch.Tensor, positions: torch.Tensor, is_prefill: bool
     ) -> torch.Tensor:
@@ -656,9 +707,11 @@ class InferenceExecutor:
             not is_prefill
             and not self.enforce_eager
             and supports_cuda_graph()
-            and batch_size in self.graphs
+            and self.graphs
         ):
-            return self._execute_with_cuda_graph(input_ids, positions)
+            graph_bs = next((bs for bs in self.graph_bs if bs >= batch_size), None)
+            if graph_bs is not None and graph_bs in self.graphs:
+                return self._execute_with_cuda_graph(input_ids, positions)
 
         return self._execute_eager(input_ids, positions)
 
@@ -784,6 +837,7 @@ class InferenceExecutor:
         try:
             # Determine batch sizes to capture
             self.graph_bs = [1, 2, 4, 8]
+            self.graph_bs.extend(range(8 + 4, 16, 4))
             self.graph_bs.extend(range(16, min(max_batch_size, 512) + 1, 16))
 
             max_blocks = (
