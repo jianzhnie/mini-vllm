@@ -33,11 +33,11 @@ from minivllm.utils.logger_utils import get_logger
 logger = get_logger(__name__)
 
 _MODEL_PATHS: dict[str, str] = {
-    "opt": "/home/jianzhnie/llmtuner/hfhub/models/facebook/opt-125m",
-    "qwen": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-0.6B",
-    "qwen3": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-0.6B",
-    "qwen3-1.7b": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-1.7B",
-    "qwen3-4b": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-4B",
+    "opt": "facebook/opt-125m",
+    "qwen": "Qwen/Qwen3-0.6B",
+    "qwen3": "Qwen/Qwen3-0.6B",
+    "qwen3-1.7b": "Qwen/Qwen3-1.7B",
+    "qwen3-4b": "Qwen/Qwen3-4B",
 }
 
 
@@ -189,7 +189,7 @@ def run_inference(model_path: str = "") -> None:
 
     # Print summary
     print("\n" + "=" * 80)
-    print("              INFERENCE RESULTS (OPT-125M on CPU)")
+    print("              INFERENCE RESULTS (CPU)")
     print("=" * 80)
     print(f"Model:        {config.model}")
     print("Device:       CPU")

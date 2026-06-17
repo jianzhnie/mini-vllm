@@ -78,7 +78,7 @@ User Prompt → LLM → LLMEngine → Scheduler (prefill+decode) → BlockManage
 ```
 
 - **Engine**: `llm_engine.py`, `scheduler.py` (two-phase), `block_manager.py` (block-based KV), `model_runner.py`, `inference_executor.py`, `distributed_manager.py` (nccl/hccl), `sequence.py`
-- **Models**: `manager.py` + `__init__.py` (`MODEL_REGISTRY`). Supported: Qwen2, Qwen3, OPT.
+- **Models**: `manager.py` + `__init__.py` (`MODEL_REGISTRY`). Supported: Qwen2, Qwen3, OPT, GPT2.
 - **Layers**: `attention.py` (FlashAttention + SDPA fallback), `linear.py` (column/row/QKV parallel), `rotary_embedding.py`, `layernorm.py` (RMSNorm), `activation.py` (SiluAndMul)
 - **Sampling**: `sampler.py` (penalties→temperature→top_k→top_p→min_p→multinomial), `mirostat.py` (standalone, not wired)
 - **Utils**: `device.py`, `context.py` (contextvars), `loader.py` (safetensors), `logger_utils.py`

@@ -22,8 +22,8 @@ from minivllm import LLM, SamplingParams
 from minivllm.config import Config
 
 _MODELS = {
-    "opt": "/Users/robin/hfhub/models/facebook/opt-125m",
-    "qwen": "/Users/robin/hfhub/models/Qwen/Qwen3-0.6B",
+    "opt": "facebook/opt-125m",
+    "qwen": "Qwen/Qwen3-0.6B",
 }
 _PROMPTS = [
     "Hello, who are you?",
@@ -41,12 +41,12 @@ def main() -> int:
     p.add_argument("--max-tokens", type=int, default=64)
     p.add_argument("--temperature", type=float, default=0.7)
     p.add_argument("--max-model-len", type=int, default=512)
-    p.add_argument("--eager", action="store_true", default=True)
+    p.add_argument("--eager", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--attention-mode", default="fresh", choices=["fresh", "buffered"])
     args = p.parse_args()
 
     model_path = _MODELS.get(args.model, args.model)
-    if not Path(model_path).is_dir():
+    if not Path(model_path).is_dir() and "/" not in model_path:
         print(f"Error: model not found: {model_path}", file=sys.stderr)
         return 1
 

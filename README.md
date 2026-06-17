@@ -227,6 +227,7 @@ python tests/run_tests.py --coverage -v
 | **Qwen3-0.6B** | 600M | ✅ | 超轻量部署 |
 | **Qwen2** | 0.5B-72B | ✅ | 稳定可靠 |
 | **OPT** | 125M-66B | ✅ | 英文基准测试 |
+| **GPT2** | 117M-1.5B | ✅ | 经典英文模型 |
 
 ## 🚀 NPU 推理性能
 
@@ -234,10 +235,19 @@ python tests/run_tests.py --coverage -v
 
 | 模型 | NPU (tok/s) | CPU (tok/s) | 加速比 |
 |------|:-----------:|:-----------:|:------:|
-| OPT-125M | 102.8 | 33.2 | 3.1x |
-| Qwen3-0.6B | 46.4 | 8.2 | 5.7x |
-| Qwen3-1.7B | 45.8 | 3.0 | **15.1x** |
-| Qwen3-4B | 39.9 | 1.5 | **27.2x** |
+| GPT2 | 84.0 | — | — |
+| OPT-125M | 89.5 | 28.6 | 3.1x |
+| Qwen3-0.6B | 39.9 | 8.7 | 4.6x |
+| Qwen3-1.7B | 43.5 | 3.1 | **14.0x** |
+| Qwen3-4B | 32.9 | — | — |
+
+Eager vs Flash-Attention 对比:
+
+| 模型 | Eager (tok/s) | FA (tok/s) | 加速比 |
+|------|:------------:|:----------:|:------:|
+| OPT-125M | 63.5 | 78.4 | 1.1x |
+| Qwen3-0.6B | 34.4 | 39.2 | 1.1x |
+| Qwen3-1.7B | 32.3 | 37.2 | **1.2x** |
 
 详见 [NPU Benchmark 报告](docs/npu_benchmark_report.md) 和 [NPU 优化文档](docs/npu_optimization.md)。
 
