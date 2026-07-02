@@ -23,16 +23,14 @@ from torch import Tensor
 
 
 class PageAttention:
-    """Page attention that allocates fresh gather buffers each call.
+    """Page attention that caches position grids for NPU efficiency.
 
-    Stateless — each __call__ allocates new tensors for the gather step.
-    Unlike BufferedPageAttention, this does not hold any internal state
-    or memory between calls.
-
-    Usage:
-        attn = PageAttention()
-        output = attn(q, k_cache, v_cache, block_tables, context_lens, scale)
+    Optimized with cached seq_pos tensors to avoid per-call arange allocation
+    on NPU, which has high kernel launch overhead.
     """
+
+    def __init__(self) -> None:
+        self._seq_pos_cache: dict[tuple[int, torch.device], Tensor] = {}
 
     def __call__(
         self,
@@ -43,30 +41,7 @@ class PageAttention:
         context_lens: Tensor,
         scale: float,
     ) -> Tensor:
-        """Compute attention over paged KV cache for the decode phase.
-
-        Gathers K/V from non-contiguous cache blocks specified by
-        block_tables, then computes scaled dot-product attention.
-        One query token per sequence.
-
-        Args:
-            q: Query tensor of shape (batch_size, num_heads, head_dim).
-            k_cache: Key cache of shape (num_blocks, block_size,
-                num_kv_heads, head_dim).
-            v_cache: Value cache of shape (num_blocks, block_size,
-                num_kv_heads, head_dim).
-            block_tables: Block table of shape (batch_size, max_blocks_per_seq).
-                Maps logical block index to physical block ID. -1 = padding.
-            context_lens: Context lengths of shape (batch_size,). Number of
-                valid K/V tokens per sequence.
-            scale: Attention scaling factor (typically 1/sqrt(head_dim)).
-
-        Returns:
-            Attention output of shape (batch_size, num_heads, head_dim).
-
-        Raises:
-            ValueError: If KV cache is empty.
-        """
+        """Compute attention over paged KV cache for the decode phase."""
         if k_cache.numel() == 0 or v_cache.numel() == 0:
             raise ValueError("KV cache is empty — cannot compute page attention")
 
@@ -84,7 +59,6 @@ class PageAttention:
         if block_tables.device != device:
             block_tables = block_tables.to(device)
 
-        # Guard: empty block tables (warmup path, no blocks allocated yet)
         if block_tables.size(1) == 0:
             return torch.zeros(
                 batch_size, num_heads, head_dim, device=device, dtype=dtype
@@ -92,10 +66,15 @@ class PageAttention:
 
         max_context = int(context_lens.max().item())
 
-        # ---------- Vectorized block gather ----------
-        seq_pos = torch.arange(max_context, dtype=torch.int64, device=device).unsqueeze(
-            0
-        )
+        # Cache position grid per (max_context, device)
+        cache_key = (max_context, device)
+        if cache_key in self._seq_pos_cache:
+            seq_pos = self._seq_pos_cache[cache_key]
+        else:
+            seq_pos = torch.arange(
+                max_context, dtype=torch.int64, device=device
+            ).unsqueeze(0)
+            self._seq_pos_cache[cache_key] = seq_pos
 
         block_indices = seq_pos // block_size
         block_offsets = seq_pos % block_size
@@ -133,7 +112,7 @@ class PageAttention:
         cached_k[mask] = k_cache[active_block_ids, active_offsets]
         cached_v[mask] = v_cache[active_block_ids, active_offsets]
 
-        # ---------- SDPA ----------
+        # SDPA
         if num_kv_heads != num_heads:
             k_sdpa = cached_k.repeat_interleave(num_heads // num_kv_heads, dim=2)
             v_sdpa = cached_v.repeat_interleave(num_heads // num_kv_heads, dim=2)

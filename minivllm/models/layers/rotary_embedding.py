@@ -24,8 +24,8 @@ if is_torch_npu_available():
         pass
 
 _USE_NPU_ROPE = _NPU_ROPE_AVAILABLE and os.getenv(
-    "MINIVLLM_USE_NPU_ROPE", "0"
-).lower() in {"1", "true", "yes"}
+    "MINIVLLM_USE_NPU_ROPE", "1"
+).lower() not in {"0", "false", "no"}
 
 
 def apply_rotary_emb(
@@ -33,68 +33,39 @@ def apply_rotary_emb(
 ) -> torch.Tensor:
     """Apply rotary positional embeddings to last dimension of `x`.
 
-    This function implements the core rotary embedding transformation:
-    - Split input tensor into real and imaginary parts along last dimension
-    - Apply rotation using trigonometric interpolation
-    - Concatenate results while preserving original dtype
-
-    The rotation formula for position m is:
-    [cos(mθ)  -sin(mθ)] [x₁]
-    [sin(mθ)   cos(mθ)] [x₂]
-
-    where x₁, x₂ are the split halves and θ are the base frequencies.
-
-    Args:
-        x: Tensor of shape (..., dim), where dim is even and split into two
-           halves for rotary rotation. The first half represents the real part
-           and the second half represents the imaginary part.
-        cos: Cosine terms broadcastable to `x`'s last-half shape.
-        sin: Sine terms broadcastable to `x`'s last-half shape.
-
-    Returns:
-        Tensor with rotary embeddings applied, preserving original dtype.
-
-    Examples:
-        >>> x = torch.randn(2, 8, 64)  # (batch, seq_len, hidden_dim)
-        >>> cos = torch.randn(8, 32)   # (seq_len, rotary_dim//2)
-        >>> sin = torch.randn(8, 32)   # (seq_len, rotary_dim//2)
-        >>> rotated = apply_rotary_emb(x, cos, sin)
-        >>> print(rotated.shape)  # torch.Size([2, 8, 64])
+    Optimized for NPU with minimized shape manipulation overhead.
     """
     if _USE_NPU_ROPE and x.device.type == "npu":
         needs_unsqueeze = x.dim() == 3
         if needs_unsqueeze:
             x = x.unsqueeze(1)
 
-        if cos.shape[-1] != x.shape[-1]:
+        head_dim = x.shape[-1]
+        if cos.shape[-1] != head_dim:
             cos = torch.cat([cos, cos], dim=-1)
-        if sin.shape[-1] != x.shape[-1]:
             sin = torch.cat([sin, sin], dim=-1)
 
+        # Reshape cos/sin to match x: (batch, 1, seq, head_dim) or broadcastable
         if cos.dim() == 2:
             cos = cos.unsqueeze(0).unsqueeze(1)
+            sin = sin.unsqueeze(0).unsqueeze(1)
         elif cos.dim() == 3:
             cos = cos.unsqueeze(1)
-
-        if sin.dim() == 2:
-            sin = sin.unsqueeze(0).unsqueeze(1)
-        elif sin.dim() == 3:
             sin = sin.unsqueeze(1)
 
+        # Expand only if shapes don't match (avoid unnecessary memory allocation)
         if cos.shape != x.shape:
-            cos = cos.expand_as(x)
-        if sin.shape != x.shape:
-            sin = sin.expand_as(x)
+            cos = cos.expand_as(x).contiguous()
+            sin = sin.expand_as(x).contiguous()
+        else:
+            if not cos.is_contiguous():
+                cos = cos.contiguous()
+            if not sin.is_contiguous():
+                sin = sin.contiguous()
 
         if cos.dtype != x.dtype:
             cos = cos.to(x.dtype)
-        if sin.dtype != x.dtype:
             sin = sin.to(x.dtype)
-
-        if not cos.is_contiguous():
-            cos = cos.contiguous()
-        if not sin.is_contiguous():
-            sin = sin.contiguous()
 
         out = torch_npu.npu_rotary_mul(x, cos, sin)
 
@@ -103,17 +74,10 @@ def apply_rotary_emb(
 
         return out
 
-    # Convert to float for stable mathematical operations
-    # The rotation uses trigonometric functions that work best in float precision
+    # Fallback: compute in float for numerical stability
     x1, x2 = torch.chunk(x.float(), 2, dim=-1)
-
-    # Apply rotary transformation using the rotation matrix:
-    # [cos  -sin] [x1] = x1*cos - x2*sin
-    # [sin   cos] [x2] = x2*cos + x1*sin
     y1 = x1 * cos - x2 * sin
     y2 = x2 * cos + x1 * sin
-
-    # Concatenate rotated halves and restore original dtype
     return torch.cat((y1, y2), dim=-1).to(x.dtype)
 
 

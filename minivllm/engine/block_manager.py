@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import struct
 from collections import deque
-from contextlib import suppress
 
 import xxhash
 
@@ -190,8 +189,7 @@ class BlockManager:
             raise RuntimeError(f"Block {block_id} not in free blocks")
 
         self._free_set.remove(block_id)
-        with suppress(ValueError):
-            self.free_block_ids.remove(block_id)
+        # Lazy tombstone: don't remove from deque (O(n)), just rely on _free_set check
         actual_id: int = block_id
 
         block: Block = self.blocks[actual_id]

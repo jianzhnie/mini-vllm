@@ -1,5 +1,5 @@
 """
-Example of running facebook/opt-125m on CPU using mini-vLLM.
+Example of running LLM inference on CPU using mini-vLLM.
 
 This script demonstrates how to:
 1. Force execution on CPU by hiding GPU devices
@@ -9,10 +9,14 @@ This script demonstrates how to:
 
 Usage:
     python examples/cpu_inference_opt.py
+    python examples/cpu_inference_opt.py --model /path/to/model
+    python examples/cpu_inference_opt.py --model qwen3
 """
 
+import argparse
 import os
 import sys
+from pathlib import Path
 from time import perf_counter
 
 # Force CPU execution by hiding other devices (must be done before importing torch)
@@ -27,6 +31,23 @@ from minivllm.utils.example_utils import format_prompts_with_chat_template
 from minivllm.utils.logger_utils import get_logger
 
 logger = get_logger(__name__)
+
+_MODEL_PATHS: dict[str, str] = {
+    "opt": "facebook/opt-125m",
+    "qwen": "Qwen/Qwen3-0.6B",
+    "qwen3": "Qwen/Qwen3-0.6B",
+    "qwen3-1.7b": "Qwen/Qwen3-1.7B",
+    "qwen3-4b": "Qwen/Qwen3-4B",
+}
+
+
+def resolve_model(name_or_path: str) -> str:
+    if name_or_path in _MODEL_PATHS:
+        return _MODEL_PATHS[name_or_path]
+    if Path(name_or_path).is_dir():
+        return name_or_path
+    return name_or_path
+
 
 prompts = [
     "Hello, who are you?",
@@ -115,10 +136,12 @@ def format_output_box(
     return "\n".join(lines)
 
 
-def run_inference() -> None:
+def run_inference(model_path: str = "") -> None:
     """Run the inference pipeline."""
+    if not model_path:
+        model_path = _MODEL_PATHS["opt"]
     config = Config(
-        model="/home/jianzhnie/llmtuner/hfhub/models/facebook/opt-125m",
+        model=model_path,
         max_num_seqs=8,
         max_model_len=1024,
         enforce_eager=True,
@@ -166,7 +189,7 @@ def run_inference() -> None:
 
     # Print summary
     print("\n" + "=" * 80)
-    print("              INFERENCE RESULTS (OPT-125M on CPU)")
+    print("              INFERENCE RESULTS (CPU)")
     print("=" * 80)
     print(f"Model:        {config.model}")
     print("Device:       CPU")
@@ -194,8 +217,18 @@ def run_inference() -> None:
 
 def main() -> int:
     """Main entry point for the example script."""
+    parser = argparse.ArgumentParser(description="CPU Inference Example")
+    parser.add_argument(
+        "--model",
+        default="opt",
+        help=f"Model short name ({', '.join(_MODEL_PATHS)}) or path",
+    )
+    args = parser.parse_args()
+
+    model_path = resolve_model(args.model)
+
     try:
-        run_inference()
+        run_inference(model_path)
         return 0
 
     except ValueError as e:

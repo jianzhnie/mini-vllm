@@ -103,14 +103,14 @@ class DistributedManager:
             error_msg = str(e)
             if self.backend == "hccl" and "error code is 7" in error_msg:
                 raise RuntimeError(
-                    f"HCCL multi-process init failed (error code 7): HCCL P2P "
-                    f"networking is not configured on this machine. NPU devices "
-                    f"have P2P access but HCCL requires additional network setup.\n"
+                    f"HCCL initialization failed (error code 7 — socket/port error).\n"
+                    f"Port 16666 may still be bound from a previous HCCL session.\n"
+                    f"This is a driver-level resource issue on Ascend NPU.\n\n"
                     f"Workarounds:\n"
-                    f"  1. Set MINIVLLM_TP_BACKEND=gloo for CPU-based TP "
-                    f"(slow, testing only)\n"
-                    f"  2. Use TP=1 (single-device inference)\n"
-                    f"  3. Configure HCCL networking (HCCL_IF_IP, etc.)\n"
+                    f"  1. Use a fresh Docker container or wait ~30s for the port to release\n"
+                    f"  2. Set MINIVLLM_TP_BACKEND=gloo for CPU-based TP (testing only)\n"
+                    f"  3. Use TP=1 (single-device inference)\n"
+                    f"  4. Run: python examples/npu_tp_example.py --tp {self.world_size} (standalone)\n"
                     f"Original error: {e}"
                 ) from e
             raise RuntimeError(f"Failed to setup distributed backend: {e}") from e

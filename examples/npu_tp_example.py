@@ -22,7 +22,11 @@ from pathlib import Path
 
 _MODEL_PATHS: dict[str, str] = {
     "opt": "/home/jianzhnie/llmtuner/hfhub/models/facebook/opt-125m",
+    "gpt2": "/home/jianzhnie/llmtuner/hfhub/models/openai-community/gpt2",
     "qwen": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-0.6B",
+    "qwen3": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-0.6B",
+    "qwen3-1.7b": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-1.7B",
+    "qwen3-4b": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-4B",
 }
 
 _DEFAULT_MODEL = "opt"
@@ -51,7 +55,9 @@ def parse_args() -> argparse.Namespace:
         "--all", action="store_true", help="Test TP=1, TP=2, TP=4 sequentially"
     )
     p.add_argument("--max-tokens", type=int, default=48)
-    p.add_argument("--dtype", default="float16", choices=["float16", "float32"])
+    p.add_argument(
+        "--dtype", default="float16", choices=["float16", "float32", "bfloat16"]
+    )
     return p.parse_args()
 
 
@@ -150,18 +156,23 @@ def main() -> int:
             print_result(r)
         except Exception as e:
             print(f"  TP={tp} FAILED: {e}")
-            if tp > 2 and "HCCL" in str(e):
+            if "HCCL" in str(e) or "port" in str(e).lower():
                 print(
-                    f"  NOTE: TP={tp} may require HCCL cross-device links not available"
+                    f"  NOTE: HCCL port conflict — try running TP={tp} as a standalone invocation:"
+                    f"\n         python examples/npu_tp_example.py --model <model> --tp {tp}"
                 )
-                print(f"  on this machine. Try running TP={tp} independently.")
-        # Allow time for worker processes to fully terminate between runs
+        # Allow time for worker processes and HCCL to fully release resources
         if len(tp_sizes) > 1:
+            import socket
             import torch.distributed as dist
 
             if dist.is_initialized():
                 dist.destroy_process_group()
-            time.sleep(1)
+
+            # Reset MASTER_PORT so the next run gets a fresh free port
+            # (avoids HCCL "port already bound" errors on Ascend)
+            os.environ.pop("MASTER_PORT", None)
+            time.sleep(3)
 
     # Summary
     if len(results) > 1:

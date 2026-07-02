@@ -96,7 +96,7 @@ class RMSNorm(nn.Module):
         self, x: torch.Tensor, residual: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if _NPU_RMS_NORM_AVAILABLE and x.device.type == "npu":
-            x = x + residual
+            x = x.add_(residual) if x.is_contiguous() else x + residual
             return torch_npu.npu_rms_norm(x, self.weight, epsilon=self.eps)[0], x
 
         orig_dtype = x.dtype

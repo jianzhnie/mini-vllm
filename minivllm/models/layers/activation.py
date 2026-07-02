@@ -80,14 +80,14 @@ class SiluAndMul(nn.Module):
         Raises:
             ValueError: If the last dimension of x is not even.
         """
-        # NPU optimization
-        if _NPU_SWIGLU_AVAILABLE and x.device.type == "npu":
-            return torch_npu.npu_swiglu(x, dim=-1)
-
         if x.size(-1) % 2 != 0:
             raise ValueError(
                 f"Input last dimension must be even for SiluAndMul, got {x.size(-1)}"
             )
+
+        # NPU optimization (after validation)
+        if _NPU_SWIGLU_AVAILABLE and x.device.type == "npu":
+            return torch_npu.npu_swiglu(x, dim=-1)
 
         # Split input into two halves along the last dimension
         x1, x2 = x.chunk(2, dim=-1)

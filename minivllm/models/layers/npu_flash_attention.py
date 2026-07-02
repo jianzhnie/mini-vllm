@@ -36,25 +36,13 @@ ATTN_MASK_NPU_CACHE: dict[torch.device, Tensor] = {}
 def get_attn_mask_npu(device: torch.device, size: int = 2048) -> Tensor:
     """Get or create attention mask for the specified device and size.
 
-    This function maintains a cache of attention masks to avoid unnecessary
-    memory allocations. It automatically expands the mask if the requested
-    size is larger than the cached one.
-
-    Args:
-        device: Device to create mask on
-        size: Size of the mask (default: 2048, but will expand if needed)
-
-    Returns:
-        Triangular causal mask tensor
+    Caches masks rounded up to powers of 2 for efficient reuse across
+    varying sequence lengths.
     """
     if device not in ATTN_MASK_NPU_CACHE or ATTN_MASK_NPU_CACHE[device].size(0) < size:
-        # Round up size to next power of 2 or multiple of 2048 for efficiency
-        # For now, just ensure it's large enough
+        # Round up to next power of 2 for better cache hit rate
         new_size = max(size, 2048)
-        if device in ATTN_MASK_NPU_CACHE:
-            current_size = ATTN_MASK_NPU_CACHE[device].size(0)
-            if current_size >= new_size:
-                return ATTN_MASK_NPU_CACHE[device][:size, :size]
+        new_size = 1 << (new_size - 1).bit_length()
 
         mask = torch.triu(
             torch.ones((new_size, new_size), dtype=torch.bool, device=device),

@@ -159,7 +159,7 @@ class TestLLMEngineInferenceStep:
         engine.add_request([1, 2, 3], SamplingParams(max_tokens=10))
 
         # Mock the model runner's call method to return tokens
-        with patch.object(engine.model_runner, "call", return_value=[4, 5, 6]):
+        with patch.object(engine.model_runner, "call", return_value=[4]):
             output, num_tokens = engine.step()
             assert isinstance(output, list)
             assert isinstance(num_tokens, int | float)

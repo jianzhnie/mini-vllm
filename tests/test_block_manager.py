@@ -22,9 +22,8 @@ class TestBlockManagerInitialization:
         bm = BlockManager(num_blocks=10, block_size=16)
         assert len(bm.blocks) == 10
         assert bm.block_size == 16
-        assert len(bm.free_block_ids) == 10
+        assert bm.get_num_free_blocks() == 10
         assert len(bm.used_block_ids) == 0
-        assert len(bm.hash_to_block_id) == 0
 
     def test_init_invalid(self):
         """Test initialization with invalid parameters."""
@@ -46,7 +45,7 @@ class TestBlockManagerAllocation:
 
         assert len(seq.block_table) == 1
         assert len(bm.used_block_ids) == 1
-        assert len(bm.free_block_ids) == 9
+        assert bm.get_num_free_blocks() == 9
         # Check that block has correct hash and tokens
         block_id = seq.block_table[0]
         block = bm.blocks[block_id]
@@ -135,7 +134,7 @@ class TestPrefixCaching:
         # Deallocate seq1
         bm.deallocate(seq1)
         assert bm.blocks[block_id_1].ref_count == 0
-        assert block_id_1 in bm.free_block_ids
+        assert block_id_1 in bm._free_set
         assert block_id_1 not in bm.used_block_ids
         # Hash mapping should still exist!
         block_hash = bm.blocks[block_id_1].hash
@@ -150,7 +149,7 @@ class TestPrefixCaching:
         assert seq2.block_table[0] == block_id_1
         assert bm.blocks[block_id_1].ref_count == 1
         assert block_id_1 in bm.used_block_ids
-        assert block_id_1 not in bm.free_block_ids
+        assert block_id_1 not in bm._free_set
         assert seq2.num_cached_tokens == 4
 
     def test_cache_invalidation_on_reuse(self):

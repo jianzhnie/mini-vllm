@@ -278,7 +278,7 @@ class Scheduler:
             sequences: Sequences that were just processed.
             token_ids: Newly generated token IDs for each sequence.
         """
-        for sequence, token_id in zip(sequences, token_ids, strict=False):
+        for sequence, token_id in zip(sequences, token_ids, strict=True):
             # Append new token to sequence
             sequence.append_token(token_id)
 

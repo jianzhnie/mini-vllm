@@ -140,9 +140,11 @@ MINIVLLM_MODEL=/path/to/model python examples.py
 
 更多示例请参考 [examples/](examples/) 目录：
 
-- `cpu_inference_opt.py` — CPU 推理示例
-- `npu_inference_example.py` — NPU 推理示例
-- `npu_flash_attention_example.py` — NPU Flash Attention 示例
+- `cpu_inference_opt.py` — CPU 推理示例（支持 `--model` 选择模型）
+- `npu_inference_example.py` — NPU 推理示例（支持 TP、Flash Attention）
+- `npu_flash_attention_example.py` — NPU Flash Attention 性能对比
+- `npu_tp_example.py` — 张量并行验证（TP=1/2/4）
+- `check_npu_graph.py` — NPU 环境检测
 
 ### 高级配置
 
@@ -220,9 +222,36 @@ python tests/run_tests.py --coverage -v
 
 ## 📚 支持的模型
 
-- **Qwen2** — 推荐
-- **Qwen3** — 推荐
-- **OPT**
+| 模型 | 参数量 | NPU 推荐 | 说明 |
+|------|--------|:--------:|------|
+| **Qwen3-4B** | 4B | ✅ | 高质量中英文对话 |
+| **Qwen3-1.7B** | 1.7B | ✅ | 轻量高性能 |
+| **Qwen3-0.6B** | 600M | ✅ | 超轻量部署 |
+| **Qwen2** | 0.5B-72B | ✅ | 稳定可靠 |
+| **OPT** | 125M-66B | ✅ | 英文基准测试 |
+| **GPT2** | 117M-1.5B | ✅ | 经典英文模型 |
+
+## 🚀 NPU 推理性能
+
+在华为昇腾 Ascend 910 (CANN 9.0, torch 2.12) 上的实测性能：
+
+| 模型 | NPU (tok/s) | CPU (tok/s) | 加速比 |
+|------|:-----------:|:-----------:|:------:|
+| GPT2 | 84.0 | — | — |
+| OPT-125M | 89.5 | 28.6 | 3.1x |
+| Qwen3-0.6B | 39.9 | 8.7 | 4.6x |
+| Qwen3-1.7B | 43.5 | 3.1 | **14.0x** |
+| Qwen3-4B | 32.9 | — | — |
+
+Eager vs Flash-Attention 对比:
+
+| 模型 | Eager (tok/s) | FA (tok/s) | 加速比 |
+|------|:------------:|:----------:|:------:|
+| OPT-125M | 63.5 | 78.4 | 1.1x |
+| Qwen3-0.6B | 34.4 | 39.2 | 1.1x |
+| Qwen3-1.7B | 32.3 | 37.2 | **1.2x** |
+
+详见 [NPU Benchmark 报告](docs/npu_benchmark_report.md) 和 [NPU 优化文档](docs/npu_optimization.md)。
 
 ## 📄 许可证
 

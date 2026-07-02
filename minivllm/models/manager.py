@@ -144,7 +144,7 @@ class ModelManager:
 
             load_model(self.model, self.config.model)
 
-            # Apply configured dtype if not auto
+            # Apply configured dtype and move to device in one call
             if self.config.dtype != "auto":
                 dtype_map = {
                     "float16": torch.float16,
@@ -152,10 +152,13 @@ class ModelManager:
                     "float32": torch.float32,
                 }
                 target_dtype = dtype_map.get(str(self.config.dtype).lower())
-                if target_dtype is not None:
+                if target_dtype is not None and self.device:
+                    self.model = self.model.to(device=self.device, dtype=target_dtype)
+                elif target_dtype is not None:
                     self.model = self.model.to(target_dtype)
-
-            if self.device:
+                elif self.device:
+                    self.model.to(self.device)
+            elif self.device:
                 self.model.to(self.device)
 
             self._model_config = self.model.config
@@ -171,8 +174,16 @@ class ModelManager:
             raise RuntimeError("Model not loaded properly")
 
         vocab_size = getattr(self._model_config, "vocab_size", 0)
-        hidden_size = getattr(self._model_config, "hidden_size", 0)
-        num_heads = getattr(self._model_config, "num_attention_heads", 0)
+        hidden_size = getattr(
+            self._model_config,
+            "hidden_size",
+            getattr(self._model_config, "n_embd", 0),
+        )
+        num_heads = getattr(
+            self._model_config,
+            "num_attention_heads",
+            getattr(self._model_config, "n_head", 0),
+        )
 
         if vocab_size <= 0:
             raise ValueError(f"Invalid vocab_size: {vocab_size}")

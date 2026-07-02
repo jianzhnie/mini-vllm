@@ -9,7 +9,6 @@ This module provides the InferenceExecutor class which handles:
 - Input preparation for both prefill and decode phases
 """
 
-import time
 from typing import Any
 
 import torch
@@ -146,6 +145,39 @@ class InferenceExecutor:
         self.total_prefill_tokens = 0
         self.total_decode_tokens = 0
         self.inference_count = 0
+
+        # Pre-allocated tensors for decode phase reuse (avoids per-step allocation)
+        max_seqs = self.config.max_num_seqs
+        # CPU staging buffers — filled each step then copied to device in one shot
+        self._decode_input_ids_cpu = torch.zeros(max_seqs, dtype=torch.long)
+        self._decode_positions_cpu = torch.zeros(max_seqs, dtype=torch.long)
+        self._decode_slot_mapping_cpu = torch.zeros(max_seqs, dtype=torch.int32)
+        self._decode_context_lens_cpu = torch.zeros(max_seqs, dtype=torch.int32)
+        # Device-side buffers that receive the bulk copy
+        self._decode_input_ids = torch.zeros(
+            max_seqs, dtype=torch.long, device=self.device
+        )
+        self._decode_positions = torch.zeros(
+            max_seqs, dtype=torch.long, device=self.device
+        )
+        self._decode_slot_mapping = torch.zeros(
+            max_seqs, dtype=torch.int32, device=self.device
+        )
+        self._decode_context_lens = torch.zeros(
+            max_seqs, dtype=torch.int32, device=self.device
+        )
+
+        # Pre-allocated block tables buffer for decode (avoids per-step allocation)
+        max_blocks = (
+            self.config.max_model_len + self.config.kvcache_block_size - 1
+        ) // self.config.kvcache_block_size
+        self._decode_block_tables_cpu = torch.full(
+            (max_seqs, max_blocks), -1, dtype=torch.int32
+        )
+        self._decode_block_tables = torch.full(
+            (max_seqs, max_blocks), -1, dtype=torch.int32, device=self.device
+        )
+        self._max_blocks_per_seq = max_blocks
 
         logger.debug("InferenceExecutor initialized on device %s", self.device)
 
@@ -313,7 +345,7 @@ class InferenceExecutor:
         logger.debug("Token sampler initialized")
 
     def _optimize_model(self) -> None:
-        """Apply model optimizations."""
+        """Apply model optimizations for inference."""
         # Set model to evaluation mode
         self.model.eval()
 
@@ -324,6 +356,17 @@ class InferenceExecutor:
         # Disable gradient checkpointing if present
         if hasattr(self.model, "gradient_checkpointing_disable"):
             self.model.gradient_checkpointing_disable()
+
+        # NPU-specific optimizations
+        if self.device.type == "npu":
+            try:
+                import torch_npu
+
+                # Enable NPU optimized execution
+                if hasattr(torch_npu, "npu_set_compile_mode"):
+                    torch_npu.npu_set_compile_mode(jit_compile=False)
+            except (ImportError, AttributeError):
+                pass
 
         logger.debug("Model optimizations applied")
 
@@ -371,24 +414,10 @@ class InferenceExecutor:
     ) -> tuple[torch.Tensor, list[int]]:
         """Execute inference for a batch of sequences.
 
-        Args:
-            sequences: List of sequences to process.
-            prefill: Whether this is a prefill step.
-
-        Returns:
-            Tuple of (logits, next_tokens).
+        Optimized for NPU with reduced overhead in the hot path.
         """
         if not sequences:
             return torch.empty(0, device=self.device), []
-
-        # Use CUDA events for timing if available
-        use_cuda_events = self.device.type == "cuda"
-        if use_cuda_events:
-            start_time = torch.cuda.Event(enable_timing=True)
-            end_time = torch.cuda.Event(enable_timing=True)
-            start_time.record()
-        else:
-            start_time = time.perf_counter()
 
         try:
             # Prepare batch inputs
@@ -399,7 +428,6 @@ class InferenceExecutor:
 
             # Sample next tokens (only need last token logits for prefill)
             if prefill and logits.size(0) > len(sequences):
-                # Get logits for last token of each sequence
                 seq_lengths = [len(seq) for seq in sequences]
                 last_indices = (
                     torch.cumsum(torch.tensor(seq_lengths, device=logits.device), dim=0)
@@ -411,10 +439,6 @@ class InferenceExecutor:
 
             # Update metrics
             self._update_metrics(sequences, prefill)
-
-            if use_cuda_events:
-                end_time.record()
-                torch.cuda.synchronize()
             self.inference_count += 1
             return logits, next_tokens
 
@@ -529,53 +553,54 @@ class InferenceExecutor:
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Prepare input tensors for decode phase.
 
-        Args:
-            sequences: List of sequences in decode phase.
-
-        Returns:
-            Tuple of (input_ids, positions) tensors.
+        Uses pre-allocated CPU staging buffers filled each step, then copied
+        to device-side buffers in one shot to avoid per-element H2D transfers.
         """
-        # For decode, only process the last token of each sequence
-        input_ids = [seq.last_token for seq in sequences]
-        positions = [len(seq) - 1 for seq in sequences]
-        context_lens = [len(seq) for seq in sequences]
+        batch_size = len(sequences)
 
-        # Handle empty block tables during warmup
-        slot_mapping = []
+        # Stage values on CPU tensors (no H2D overhead per element)
         has_empty_block_table = False
-        for seq in sequences:
+        for i, seq in enumerate(sequences):
+            self._decode_input_ids_cpu[i] = seq.last_token
+            self._decode_positions_cpu[i] = len(seq) - 1
+            self._decode_context_lens_cpu[i] = len(seq)
             if seq.block_table:
-                slot = (
+                self._decode_slot_mapping_cpu[i] = (
                     seq.block_table[-1] * self.block_size
                     + seq.last_block_num_tokens
                     - 1
                 )
-                slot_mapping.append(slot)
             else:
-                # No block assigned yet - use a dummy slot (will be ignored)
-                slot_mapping.append(0)
+                self._decode_slot_mapping_cpu[i] = 0
                 has_empty_block_table = True
 
         if has_empty_block_table:
             logger.debug(
                 "Some sequences have empty block tables during decode. "
-                "This is expected during warmup but may indicate an issue during actual inference."
+                "This is expected during warmup but may indicate an issue "
+                "during actual inference."
             )
 
-        pin_mem = should_use_pin_memory(self.device)
-
-        input_ids_tensor = self._list_to_device_tensor(input_ids, torch.long, pin_mem)
-        positions_tensor = self._list_to_device_tensor(positions, torch.long, pin_mem)
-
-        slot_mapping_tensor = self._list_to_device_tensor(
-            slot_mapping, torch.int32, pin_mem
+        # Bulk copy from CPU staging buffers to device in one shot
+        self._decode_input_ids[:batch_size].copy_(
+            self._decode_input_ids_cpu[:batch_size], non_blocking=True
+        )
+        self._decode_positions[:batch_size].copy_(
+            self._decode_positions_cpu[:batch_size], non_blocking=True
+        )
+        self._decode_slot_mapping[:batch_size].copy_(
+            self._decode_slot_mapping_cpu[:batch_size], non_blocking=True
+        )
+        self._decode_context_lens[:batch_size].copy_(
+            self._decode_context_lens_cpu[:batch_size], non_blocking=True
         )
 
-        context_lens_tensor = self._list_to_device_tensor(
-            context_lens, torch.int32, pin_mem
-        )
+        input_ids_buf = self._decode_input_ids[:batch_size]
+        positions_buf = self._decode_positions[:batch_size]
+        slot_mapping_buf = self._decode_slot_mapping[:batch_size]
+        context_lens_buf = self._decode_context_lens[:batch_size]
 
-        block_tables = self._prepare_block_tables(sequences)
+        block_tables = self._prepare_block_tables_decode(sequences)
 
         # Set context for attention kernels
         set_context(
@@ -584,12 +609,12 @@ class InferenceExecutor:
             max_seqlen_k=0,
             cum_seqlens_q=None,
             cum_seqlens_k=None,
-            slot_mapping=slot_mapping_tensor,
-            context_lens=context_lens_tensor,
+            slot_mapping=slot_mapping_buf,
+            context_lens=context_lens_buf,
             block_tables=block_tables,
         )
 
-        return input_ids_tensor, positions_tensor
+        return input_ids_buf, positions_buf
 
     def _prepare_block_tables(self, sequences: list[Sequence]) -> torch.Tensor:
         """Prepare block tables for sequences.
@@ -623,6 +648,45 @@ class InferenceExecutor:
             block_tables_tensor, self.device, non_blocking=True
         )
 
+    def _prepare_block_tables_decode(
+        self, sequences: list[Sequence]
+    ) -> torch.Tensor:
+        """Prepare block tables for decode using pre-allocated buffers.
+
+        Avoids per-step tensor allocation by reusing pre-allocated CPU/device
+        buffers and only copying the active region.
+        """
+        batch_size = len(sequences)
+        if batch_size == 0:
+            return torch.empty((0, 0), dtype=torch.int32, device=self.device)
+
+        max_blocks = max(
+            (len(seq.block_table) for seq in sequences), default=0
+        )
+        if max_blocks == 0:
+            return torch.empty(
+                (batch_size, 0), dtype=torch.int32, device=self.device
+            )
+
+        # Use pre-allocated buffers when possible
+        if (
+            batch_size <= self._decode_block_tables_cpu.size(0)
+            and max_blocks <= self._decode_block_tables_cpu.size(1)
+        ):
+            buf = self._decode_block_tables_cpu[:batch_size, :max_blocks]
+            buf.fill_(-1)
+            for i, seq in enumerate(sequences):
+                bt = seq.block_table
+                if bt:
+                    buf[i, : len(bt)] = torch.tensor(bt, dtype=torch.int32)
+            self._decode_block_tables[:batch_size, :max_blocks].copy_(
+                buf, non_blocking=True
+            )
+            return self._decode_block_tables[:batch_size, :max_blocks]
+
+        # Fallback to dynamic allocation for oversized batches
+        return self._prepare_block_tables(sequences)
+
     def _execute_model(
         self, input_ids: torch.Tensor, positions: torch.Tensor, is_prefill: bool
     ) -> torch.Tensor:
@@ -643,9 +707,11 @@ class InferenceExecutor:
             not is_prefill
             and not self.enforce_eager
             and supports_cuda_graph()
-            and batch_size in self.graphs
+            and self.graphs
         ):
-            return self._execute_with_cuda_graph(input_ids, positions)
+            graph_bs = next((bs for bs in self.graph_bs if bs >= batch_size), None)
+            if graph_bs is not None and graph_bs in self.graphs:
+                return self._execute_with_cuda_graph(input_ids, positions)
 
         return self._execute_eager(input_ids, positions)
 
@@ -710,20 +776,12 @@ class InferenceExecutor:
     def _sample_tokens(
         self, logits: torch.Tensor, sequences: list[Sequence]
     ) -> list[int]:
-        """Sample next tokens from logits.
-
-        Args:
-            logits: Model output logits.
-            sequences: Input sequences for sampling parameters.
-
-        Returns:
-            List of sampled token IDs.
-        """
+        """Sample next tokens from logits."""
         if self.sampler is None:
             return []
 
-        # Extract sampling parameters
         device = logits.device
+
         temperatures = torch.tensor(
             [seq.temperature for seq in sequences], device=device, dtype=torch.float32
         )
@@ -737,7 +795,6 @@ class InferenceExecutor:
             [seq.min_p for seq in sequences], device=device, dtype=torch.float32
         )
 
-        # Sample tokens
         next_tokens = self.sampler(
             logits,
             temperatures=temperatures,
@@ -780,6 +837,7 @@ class InferenceExecutor:
         try:
             # Determine batch sizes to capture
             self.graph_bs = [1, 2, 4, 8]
+            self.graph_bs.extend(range(8 + 4, 16, 4))
             self.graph_bs.extend(range(16, min(max_batch_size, 512) + 1, 16))
 
             max_blocks = (

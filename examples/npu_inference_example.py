@@ -28,6 +28,8 @@ _MODEL_PATHS: dict[str, str] = {
     "opt": "/home/jianzhnie/llmtuner/hfhub/models/facebook/opt-125m",
     "qwen": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-0.6B",
     "qwen3": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-0.6B",
+    "qwen3-1.7b": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-1.7B",
+    "qwen3-4b": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-4B",
     "gpt2": "/home/jianzhnie/llmtuner/hfhub/models/openai-community/gpt2",
 }
 
@@ -72,7 +74,9 @@ def parse_args() -> argparse.Namespace:
         "--flash-attn", action="store_true", help="Enable NPU flash attention"
     )
     p.add_argument(
-        "--eager", action="store_true", default=True, help="Force eager mode (default)"
+        "--no-eager",
+        action="store_true",
+        help="Disable eager mode (enable graph capture)",
     )
     p.add_argument("--prompt", action="append", help="Add a prompt (repeatable)")
     return p.parse_args()
@@ -101,7 +105,7 @@ def main() -> int:
         max_num_seqs=args.max_seqs,
         max_model_len=args.max_model_len,
         tensor_parallel_size=args.tp,
-        enforce_eager=args.eager,
+        enforce_eager=not args.no_eager,
         trust_remote_code=True,
         device_memory_utilization=0.85,
         dtype=args.dtype,
@@ -124,7 +128,7 @@ def main() -> int:
     print(f"  Dtype:         {args.dtype}")
     print(f"  Flash-Attn:    {fa_status}")
     print(f"  TP size:       {args.tp}")
-    print(f"  Eager mode:    {args.eager}")
+    print(f"  Eager mode:    {not args.no_eager}")
     print(f"  Max tokens:    {args.max_tokens}")
     print(f"  Prompts:       {len(prompts)}")
 

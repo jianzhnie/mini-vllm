@@ -15,11 +15,8 @@ from torch import Tensor
 class BufferedPageAttention:
     """Page attention with reusable gather buffers.
 
-    Unlike page_attention_decode which allocates fresh buffers each call,
-    this class keeps internal K/V buffers and reuses them across calls,
-    avoiding per-step allocation overhead. This was the original decode
-    fallback path in Attention._fallback_attention.
-
+    Optimized with cached position grids and pre-allocated K/V buffers
+    to minimize per-step allocation overhead on NPU.
     Usage:
         attn = BufferedPageAttention()
         output = attn(q, k_cache, v_cache, block_tables, context_lens, scale)
@@ -28,6 +25,7 @@ class BufferedPageAttention:
     def __init__(self) -> None:
         self._buf_k: Tensor | None = None
         self._buf_v: Tensor | None = None
+        self._seq_pos_cache: dict[tuple[int, torch.device], Tensor] = {}
 
     def __call__(
         self,
@@ -82,10 +80,15 @@ class BufferedPageAttention:
         # Vectorized KV cache gather
         block_size = k_cache.size(1)
 
-        # Position grid: [1, max_seqlen]
-        seq_pos = torch.arange(max_seqlen, dtype=torch.int64, device=device).unsqueeze(
-            0
-        )
+        # Cache position grid per (max_seqlen, device)
+        cache_key = (max_seqlen, device)
+        if cache_key in self._seq_pos_cache:
+            seq_pos = self._seq_pos_cache[cache_key]
+        else:
+            seq_pos = torch.arange(
+                max_seqlen, dtype=torch.int64, device=device
+            ).unsqueeze(0)
+            self._seq_pos_cache[cache_key] = seq_pos
 
         # Map token positions to block index and intra-block offset
         block_indices = seq_pos // block_size

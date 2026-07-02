@@ -81,11 +81,13 @@ class LLMEngine:
 
         if config.tensor_parallel_size > 1:
             os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
-            if "MASTER_PORT" not in os.environ:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                    sock.bind(("127.0.0.1", 0))
-                    port = sock.getsockname()[1]
-                os.environ["MASTER_PORT"] = str(port)
+            # Always pick a fresh free port for each TP session to avoid
+            # HCCL "port already bound" errors when running multiple TP
+            # sessions sequentially in the same process or container.
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.bind(("127.0.0.1", 0))
+                port = sock.getsockname()[1]
+            os.environ["MASTER_PORT"] = str(port)
 
             ctx: mp.context.SpawnContext = mp.get_context("spawn")
             for i in range(1, config.tensor_parallel_size):

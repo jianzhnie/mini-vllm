@@ -277,30 +277,22 @@ class TestSchedulerErrorHandling:
             scheduler.schedule()
 
     def test_postprocess_with_fewer_tokens(self, default_config: Config) -> None:
-        """Test postprocess handles fewer tokens than sequences gracefully.
+        """Test postprocess raises when token count mismatches sequence count.
 
-        The postprocess method uses zip() which silently truncates to the shorter
-        iterable. This test documents this behavior.
+        The postprocess method uses strict=True zip to catch length mismatches
+        that would otherwise silently drop tokens for some sequences.
         """
         scheduler = Scheduler(default_config)
 
-        # Create multiple sequences
         seqs = []
         for _i in range(3):
             seq = Sequence(token_ids=[1, 2, 3], sampling_params=SamplingParams())
-            # Move to RUNNING status to allow token appending
             seq.status = SequenceStatus.RUNNING
             seqs.append(seq)
             scheduler.running.append(seq)
 
-        # Postprocess with fewer tokens than sequences - zip truncates silently
-        scheduler.postprocess(seqs, [4, 5])  # Only 2 tokens for 3 sequences
-
-        # Only first 2 sequences get tokens (zip behavior)
-        assert seqs[0].token_ids[-1] == 4
-        assert seqs[1].token_ids[-1] == 5
-        # Third sequence doesn't get a token due to zip truncation
-        assert seqs[2].num_tokens == 3  # Unchanged
+        with pytest.raises(ValueError):
+            scheduler.postprocess(seqs, [4, 5])  # Mismatched lengths
 
 
 if __name__ == "__main__":

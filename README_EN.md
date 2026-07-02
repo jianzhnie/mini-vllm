@@ -218,9 +218,36 @@ python tests/run_tests.py --coverage -v
 
 ## 📚 Supported Models
 
-- **Qwen2** — Recommended
-- **Qwen3** — Recommended
-- **OPT**
+| Model | Parameters | NPU Optimized | Notes |
+|-------|:----------:|:-------------:|-------|
+| **Qwen3-4B** | 4B | ✅ | High-quality multilingual |
+| **Qwen3-1.7B** | 1.7B | ✅ | Lightweight high-performance |
+| **Qwen3-0.6B** | 600M | ✅ | Ultra-lightweight |
+| **Qwen2** | 0.5B-72B | ✅ | Stable and reliable |
+| **OPT** | 125M-66B | ✅ | English benchmarks |
+| **GPT2** | 117M-1.5B | ✅ | Classic English model |
+
+## 🚀 NPU Inference Performance
+
+Benchmarked on Huawei Ascend 910 (CANN 9.0, torch 2.12):
+
+| Model | NPU (tok/s) | CPU (tok/s) | Speedup |
+|-------|:-----------:|:-----------:|:-------:|
+| GPT2 | 84.0 | — | — |
+| OPT-125M | 89.5 | 28.6 | 3.1x |
+| Qwen3-0.6B | 39.9 | 8.7 | 4.6x |
+| Qwen3-1.7B | 43.5 | 3.1 | **14.0x** |
+| Qwen3-4B | 32.9 | — | — |
+
+Eager vs Flash-Attention:
+
+| Model | Eager (tok/s) | FA (tok/s) | Speedup |
+|-------|:------------:|:----------:|:-------:|
+| OPT-125M | 63.5 | 78.4 | 1.1x |
+| Qwen3-0.6B | 34.4 | 39.2 | 1.1x |
+| Qwen3-1.7B | 32.3 | 37.2 | **1.2x** |
+
+See [NPU Benchmark Report](docs/npu_benchmark_report.md) and [NPU Optimization Guide](docs/npu_optimization.md) for details.
 
 ## 📄 License
 

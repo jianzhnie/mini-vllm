@@ -72,15 +72,12 @@ def temp_model_dir(tmp_path: Path, model_config_json: str) -> Path:
 
 @pytest.fixture
 def temp_model_dir_with_blocks(tmp_path: Path, model_config_json: str) -> Path:
-    """Create a temporary model directory with config.json and num_kvcache_blocks.
-
-    This fixture creates a model directory that works with LLMEngine initialization
-    by ensuring proper KV cache block configuration.
+    """Create a temporary model directory with config.json and extra KV cache blocks.
 
     Returns:
-        Path to the temporary model directory.
+        Path to the temporary model directory with more cache blocks.
     """
-    model_dir = tmp_path / "test_model"
+    model_dir = tmp_path / "test_model_blocks"
     model_dir.mkdir()
     (model_dir / "config.json").write_text(model_config_json)
     return model_dir

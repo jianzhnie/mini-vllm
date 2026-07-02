@@ -8,7 +8,8 @@ import torch
 from transformers.utils import is_torch_npu_available
 
 from minivllm.models.layers.activation import SiluAndMul
-from minivllm.models.layers.attention import Attention, NPUAttentionBackend
+from minivllm.models.layers.attention import Attention
+from minivllm.models.layers.attention_backend import NPUAttentionBackend
 from minivllm.models.layers.layernorm import RMSNorm
 from minivllm.models.qwen3 import Qwen3ForCausalLM
 
@@ -84,16 +85,6 @@ class TestQwen3NPUIntegration:
         """Test that RMSNorm dispatches to NPU kernel."""
         layer = RMSNorm(hidden_size=4096)
         x = torch.randn(1, 10, 4096)
-        # Mock device to be NPU
-        x.device.type = "npu"
-
-        # We need to mock the import inside the method or rely on the patch in fixture
-        # The method in RMSNorm does: import torch_npu
-        # Since we patch _NPU_RMS_NORM_AVAILABLE=True, it will try to import.
-        # We need to make sure 'import torch_npu' works or is mocked.
-        # Python's sys.modules patching is tricky.
-        # Instead, we can rely on the fact that if it tries to use torch_npu.npu_rms_norm,
-        # we can mock that call if we can intercept the import.
 
         with patch.dict("sys.modules", {"torch_npu": MagicMock()}):
             import torch_npu
@@ -106,8 +97,7 @@ class TestQwen3NPUIntegration:
     def test_silu_and_mul_npu_dispatch(self, mock_npu_environment):
         """Test that SiluAndMul dispatches to NPU kernel."""
         layer = SiluAndMul()
-        x = torch.randn(1, 10, 8192)  # 2 * 4096
-        x.device.type = "npu"
+        x = torch.randn(1, 10, 8192)
 
         with patch.dict("sys.modules", {"torch_npu": MagicMock()}):
             import torch_npu
@@ -150,67 +140,9 @@ class TestQwen3NPUIntegration:
 
         rope = RotaryEmbedding(head_size, rotary_dim, max_position, base)
 
-        # Check if caches are registered
         assert hasattr(rope, "cos_cache")
         assert hasattr(rope, "sin_cache")
-        assert not hasattr(rope, "cos_sin_cache")  # Should be removed
-
-        # Check shapes
-        # cos/sin cache should be (max_position, rotary_dim)
-        # Note: In implementation, freqs.cos() results in shape (max_position, rotary_dim) if not chunked?
-        # Wait, implementation:
-        # inv_freq: (rotary_dim // 2)
-        # freqs = outer(t, inv_freq) -> (max_pos, rotary_dim // 2)
-        # cos = freqs.cos() -> (max_pos, rotary_dim // 2)
-        # Wait, let's re-read RotaryEmbedding implementation.
-        # It says:
-        # inv_freq = 1.0 / (base ** (arange(0, rotary_dim, 2) / rotary_dim))
-        # This has size rotary_dim // 2.
-        # freqs = einsum(t, inv_freq) -> (max_pos, rotary_dim // 2)
-        # cos = freqs.cos()
-        # sin = freqs.sin()
-        #
-        # But `apply_rotary_emb` expects `cos` broadcastable to `x`'s last half shape.
-        # If `x` is (..., dim), last half is dim/2.
-        # So `cos` should be (..., dim/2).
-        # But wait, `RotaryEmbedding` implementation usually repeats cos/sin to match dim?
-        #
-        # In `RotaryEmbedding.__init__`:
-        # cache = torch.cat((cos, sin), dim=-1)
-        # No, wait.
-        #
-        # Standard RoPE:
-        # x = [x1, x2]
-        # x_rotated = [x1*cos - x2*sin, x2*cos + x1*sin]
-        # Here `cos` and `sin` apply to x1 and x2.
-        # If x1 has size dim/2, then cos has size dim/2.
-        #
-        # Let's check `apply_rotary_emb`:
-        # x1, x2 = chunk(x, 2, dim=-1)
-        # y1 = x1*cos - x2*sin
-        #
-        # So `cos` must be broadcastable to `x1` which is (..., dim/2).
-        # My implementation of `__init__`:
-        # inv_freq size is dim/2.
-        # freqs size is (max_pos, dim/2).
-        # cos size is (max_pos, dim/2).
-        #
-        # But wait, in `RotaryEmbedding.__init__` before my change:
-        # cache = torch.cat((cos, sin), dim=-1) -> (max_pos, dim)
-        # In `forward`:
-        # cos_sin = cache[positions] -> (..., dim)
-        # cos, sin = cos_sin.chunk(2, dim=-1) -> (..., dim/2)
-        #
-        # So `cos` was (..., dim/2).
-        #
-        # In my NEW implementation:
-        # self.register_buffer('cos_cache', cos) -> cos is (max_pos, dim/2)
-        # self.register_buffer('sin_cache', sin) -> sin is (max_pos, dim/2)
-        #
-        # In `forward`:
-        # cos = self.cos_cache[positions] -> (..., dim/2)
-        #
-        # So `cos_cache` shape should be (max_position, rotary_dim // 2).
+        assert not hasattr(rope, "cos_sin_cache")
 
         expected_shape = (max_position, rotary_dim // 2)
         assert rope.cos_cache.shape == expected_shape

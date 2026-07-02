@@ -6,11 +6,21 @@ This directory contains comprehensive tests for the mini-vLLM library.
 
 ### Test Modules
 
-- **test_config.py**: Tests for the Config class validation and initialization
-- **test_sampling_params.py**: Tests for SamplingParams class and constraints
-- **test_sequence.py**: Tests for Sequence class and token management
-- **test_device_compatibility.py**: Tests for device detection and management
-- **test_integration.py**: Integration tests for component interaction
+- **test_config.py**: Config class validation and initialization
+- **test_sampling_params.py**: SamplingParams class and constraints
+- **test_sequence.py**: Sequence class and token management
+- **test_device.py**: Device detection and management
+- **test_linear.py**: Tensor-parallel linear layers
+- **test_page_attention.py**: Page attention correctness vs reference implementation
+- **test_rotary_embedding.py**: RoPE computation and caching
+- **test_sampler.py**: Token sampling pipeline
+- **test_npu_attention.py**: NPU flash attention integration (CPU fallback when no NPU)
+- **test_npu_backend.py**: NPU attention backend dispatch logic
+- **test_qwen3_npu.py**: Qwen3 + NPU backend initialization and kernel dispatch
+- **test_qwen3_logit_match.py**: Qwen3 logit reproducibility
+- **test_integration.py**: Component interaction integration tests
+- **test_llm.py** / **test_llm_engine.py**: End-to-end inference pipeline
+- **test_scheduler.py** / **test_block_manager.py**: Scheduling and memory management
 
 ### Test Fixtures
 
