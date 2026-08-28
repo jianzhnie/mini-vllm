@@ -1,0 +1,6 @@
+interface:
+  display_name: "Mini Vllm"
+  short_description: "Repo-specific patterns and workflows for mini-vllm"
+  default_prompt: "Use the mini-vllm repo skill to follow existing architecture, testing, and workflow conventions."
+policy:
+  allow_implicit_invocation: true
