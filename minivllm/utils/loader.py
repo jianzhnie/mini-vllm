@@ -119,6 +119,22 @@ def load_weight(
     return apply_weight_loader(param, tensor, weight_name)
 
 
+def _collect_state_dict(
+    safetensor_files: list[Path], bin_files: list[Path]
+) -> dict[str, torch.Tensor]:
+    """Read every weight from the checkpoint files into a single state dict."""
+    state_dict: dict[str, torch.Tensor] = {}
+    for file_path in safetensor_files:
+        with safe_open(str(file_path), framework="pt", device="cpu") as f:
+            for key in f.keys():  # noqa: SIM118 — safe_open is not a dict
+                state_dict[key] = f.get_tensor(key)
+    for file_path in bin_files:
+        state_dict.update(
+            torch.load(str(file_path), map_location="cpu", weights_only=True)
+        )
+    return state_dict
+
+
 def load_model(model: nn.Module, model_path: str | Path) -> None:
     """Load model weights from safetensors files in the specified directory.
 
@@ -165,6 +181,21 @@ def load_model(model: nn.Module, model_path: str | Path) -> None:
         len(bin_files),
         base_path,
     )
+
+    # Prefer a model-specific loader: it handles name remaps, weight transposes
+    # and packed-module splitting the generic per-weight path cannot express
+    # (e.g. GPT2's Conv1D fused QKV). Without this, GPT2 loads no weights and
+    # silently runs on uninitialized parameters.
+    load_weights = getattr(model, "load_weights", None)
+    if callable(load_weights):
+        state_dict = _collect_state_dict(safetensor_files, bin_files)
+        load_weights(state_dict)
+        logger.info(
+            "Loaded %d checkpoint weights via model-specific load_weights from %s",
+            len(state_dict),
+            base_path,
+        )
+        return
 
     # Get packed modules mapping
     packed_modules_mapping = getattr(model, "packed_modules_mapping", {})

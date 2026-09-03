@@ -7,28 +7,19 @@ without creating circular imports.
 
 from typing import Any
 
-from minivllm.models.gpt2 import GPT2ForCausalLM
-from minivllm.models.opt import OPTForCausalLM
-from minivllm.models.qwen2 import Qwen2ForCausalLM
 from minivllm.models.qwen3 import Qwen3ForCausalLM
 
 SUPPORTED_MODELS = {
-    "Qwen2ForCausalLM": Qwen2ForCausalLM,
     "Qwen3ForCausalLM": Qwen3ForCausalLM,
-    "OPTForCausalLM": OPTForCausalLM,
-    "GPT2LMHeadModel": GPT2ForCausalLM,
 }
 
 TYPE_TO_ARCH = {
-    "qwen2": "Qwen2ForCausalLM",
     "qwen3": "Qwen3ForCausalLM",
-    "opt": "OPTForCausalLM",
-    "gpt2": "GPT2LMHeadModel",
 }
 
 
 def create_model(hf_config: Any) -> Any:
-    """Instantiate a model from an HuggingFace config object.
+    """Instantiate a model from a HuggingFace config object.
 
     Detects the architecture from ``hf_config.architectures`` or
     ``hf_config.model_type`` and returns the corresponding model.

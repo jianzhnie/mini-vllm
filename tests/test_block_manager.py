@@ -193,6 +193,28 @@ class TestBlockBoundary:
         assert len(seq.block_table) == 2
         assert len(bm.used_block_ids) == 2
 
+    def test_can_append_matches_may_append_boundary(self):
+        """can_append must report False exactly when may_append would allocate
+        from an empty free pool (the decode crash path at len % block_size == 1)."""
+        bm = BlockManager(num_blocks=4, block_size=4)
+        seqs = [
+            Sequence(list(range(i * 4, i * 4 + 4)), SamplingParams()) for i in range(4)
+        ]
+        for s in seqs:
+            bm.allocate(s)
+        assert bm.get_num_free_blocks() == 0
+
+        # Grow seqs[0] to len 5 -> 5 % 4 == 1: may_append WILL allocate a new block.
+        seqs[0].append_token(999)
+        assert len(seqs[0]) == 5
+
+        # Pool is empty, so can_append must be False (scheduler should preempt first).
+        assert bm.can_append(seqs[0]) is False
+
+        # With a free block available, the same boundary is appendable.
+        bm.deallocate(seqs[1])
+        assert bm.can_append(seqs[0]) is True
+
     def test_may_append_finalizes_hash(self):
         """Test may_append finalizes hash when block fills up."""
         bm = BlockManager(num_blocks=10, block_size=2)

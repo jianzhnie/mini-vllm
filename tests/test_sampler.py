@@ -214,6 +214,45 @@ class TestSamplerEdgeCases:
             self.sampler(logits, temperatures=temperatures)
 
 
+class TestGreedyAndScalarRobustness:
+    """temperature=0 must be deterministic greedy on the engine path (per-batch
+    Tensor temps), and integer scalars must not crash the functional filters."""
+
+    def setup_method(self):
+        self.sampler = Sampler()
+
+    def test_temperature_zero_tensor_greedy(self):
+        """Engine always passes a temperatures Tensor; T=0 rows must argmax, not
+        fall through to a uniform-random NaN fallback."""
+        logits = torch.tensor([[10.0, 1.0, 0.5, -3.0]], dtype=torch.float16)
+        temperatures = torch.tensor([0.0])
+        for _ in range(30):
+            tok = self.sampler(logits, temperatures=temperatures)
+            assert tok.item() == 0
+
+    def test_temperature_zero_mixed_batch(self):
+        """A batch with some T=0 and some T>0 must greedy-sample the T=0 rows
+        (deterministic across repeated draws)."""
+        logits = torch.tensor([[10.0, 5.0, 1.0], [1.0, 10.0, 5.0]], dtype=torch.float16)
+        temperatures = torch.tensor([0.0, 1.0])
+        row0 = {self.sampler(logits, temperatures=temperatures)[0].item() for _ in range(20)}
+        assert row0 == {0}  # greedy row is always 0 (uniform fallback would vary)
+        assert self.sampler(logits, temperatures=temperatures)[1].item() == 1
+
+    def test_scalar_int_temperature_zero_greedy(self):
+        """Scalar int temperature=0 must also take the greedy path."""
+        logits = torch.tensor([[3.0, 9.0, 1.0]])
+        sampler = Sampler(SamplingConfig(temperature=0))
+        assert sampler(logits).item() == 1
+
+    def test_int_scalar_filters_no_crash(self):
+        """Integer scalars must not crash the functional filters."""
+        logits = torch.tensor([[4.0, 2.0, 1.0], [1.0, 3.0, 2.0]])
+        assert self.sampler(logits, top_ps=torch.tensor([1, 1])).shape == (2,)
+        assert self.sampler(logits, min_ps=torch.tensor([0, 0])).shape == (2,)
+        assert self.sampler(logits, typical_ps=torch.tensor([1, 1])).shape == (2,)
+
+
 class TestMirostat:
     """Tests for Mirostat samplers."""
 

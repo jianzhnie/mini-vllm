@@ -52,7 +52,7 @@ def apply_temperature(logits: Tensor, temperature: Tensor) -> Tensor:
         raise ValueError(
             f"logits must be 2D [batch_size, vocab_size], got {logits.shape}"
         )
-    if isinstance(temperature, float):
+    if isinstance(temperature, (int, float)):
         if temperature == 1.0:
             return logits
         temp = torch.tensor(temperature, device=logits.device, dtype=logits.dtype)
@@ -157,7 +157,7 @@ def apply_top_p(
         )
 
     # Handle scalar p
-    if isinstance(top_p, float):
+    if isinstance(top_p, (int, float)):
         if top_p >= 1.0 or top_p <= 0.0:
             return logits
         top_p = torch.full(
@@ -213,7 +213,7 @@ def apply_min_p(
         )
 
     # Handle scalar min_p
-    if isinstance(min_p, float):
+    if isinstance(min_p, (int, float)):
         if min_p <= 0.0:
             return logits
         min_p = torch.full(
@@ -248,7 +248,10 @@ def apply_typical_filtering(
         tau: float, typical threshold (default 1.0).
              When tau >= 1.0, typical sampling is effectively disabled (returns original logits).
     """
-    if tau >= 1.0:
+    if isinstance(tau, (int, float)):
+        if tau >= 1.0:
+            return logits
+    elif not (tau < 1.0).any():
         return logits
 
     logits = logits.clone()

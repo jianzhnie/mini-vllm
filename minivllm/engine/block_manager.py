@@ -366,28 +366,29 @@ class BlockManager:
     def can_append(self, sequence: Sequence) -> bool:
         """Check if a new block can be allocated for a sequence.
 
-        During decode, sequences grow token by token. When a sequence's
-        token count crosses a block boundary (len(seq) % block_size == 0),
-        a new block is needed on the next append.
+        During decode, sequences grow token by token. The token being written
+        next sits at index len(seq); it starts a new block when
+        (len(seq) - 1) % block_size == 0, i.e. len(seq) % block_size == 1 —
+        the same condition may_append uses to actually allocate.
 
         This method checks if there are enough free blocks to accommodate
-        the next block allocation when needed.
+        that allocation when needed.
 
         Args:
             sequence: Sequence to check append feasibility for.
 
         Returns:
-            True if a new block can be allocated when the next boundary
-            is crossed, False otherwise.
+            True if a new block can be allocated when may_append would
+            request one, False otherwise.
 
         Note:
             This returns True most of the time (when we're not at a boundary).
             Only when at a block boundary and low on free blocks does it
             return False, triggering sequence preemption.
         """
-        # A new block is needed only when crossing a block boundary
-        # This happens when: len(sequence) % block_size == 0 -> len(sequence) + 1
-        needs_new_block: bool = len(sequence) % self.block_size == 0
+        # A new block is allocated by may_append exactly when
+        # len(sequence) % block_size == 1 (the next token starts a new block).
+        needs_new_block: bool = len(sequence) % self.block_size == 1
         required_blocks = 1 if needs_new_block else 0
 
         return len(self._free_set) >= required_blocks

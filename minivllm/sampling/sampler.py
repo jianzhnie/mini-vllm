@@ -81,33 +81,48 @@ class Sampler(nn.Module):
             # Per-batch tensor avoid_k not yet supported — silently skip
             logits = F.apply_top_token_restriction(logits, avoid_k)
 
-        # 3. Apply Temperature
-        # Use provided tensor or config value
+        # 3. Resolve temperature and identify greedy (T==0) rows. This must happen
+        #    before apply_temperature: a per-batch Tensor of zeros would otherwise
+        #    hit the MIN_TEMPERATURE clamp and overflow to NaN on fp16/bf16, and
+        #    the engine always passes a Tensor (so the old scalar-only check never
+        #    fired). Greedy rows bypass the stochastic pipeline and take argmax.
         temp = temperatures if temperatures is not None else cfg.temperature
-        logits = F.apply_temperature(logits, temp)
+        if isinstance(temp, (int, float)):
+            if temp == 0:
+                return torch.argmax(logits, dim=-1)
+            greedy = None
+        else:
+            greedy = temp.to(torch.float32) == 0
+            if not greedy.any():
+                greedy = None
+            elif greedy.all():
+                return torch.argmax(logits, dim=-1)
 
-        # 4. Apply Typical Sampling
-        typ_p = typical_ps if typical_ps is not None else cfg.typical_p
-        logits = F.apply_typical_filtering(logits, typ_p)
+        if greedy is None:
+            # No greedy rows: run the full pipeline over the whole batch.
+            logits = F.apply_temperature(logits, temp)
+            logits = F.apply_typical_filtering(
+                logits, typical_ps if typical_ps is not None else cfg.typical_p
+            )
+            logits = F.apply_top_k(logits, top_ks if top_ks is not None else cfg.top_k)
+            logits = F.apply_top_p(logits, top_ps if top_ps is not None else cfg.top_p)
+            logits = F.apply_min_p(logits, min_ps if min_ps is not None else cfg.min_p)
+            return F.sample_from_logits(logits, generator=generator)
 
-        # 5. Apply Top-K
-        k = top_ks if top_ks is not None else cfg.top_k
-        logits = F.apply_top_k(logits, k)
-
-        # 6. Apply Top-P
-        p = top_ps if top_ps is not None else cfg.top_p
-        logits = F.apply_top_p(logits, p)
-
-        # 7. Apply Min-P
-        mp = min_ps if min_ps is not None else cfg.min_p
-        logits = F.apply_min_p(logits, mp)
-
-        # 8. Sample
-        # Greedy: temperature=0 → argmax (deterministic, no randomization)
-        if isinstance(temp, int | float) and temp == 0:
-            return torch.argmax(logits, dim=-1)
-
-        return F.sample_from_logits(logits, generator=generator)
+        # Mixed batch: greedy rows argmax, remaining rows run the pipeline.
+        non_greedy = ~greedy
+        out = logits.new_empty(logits.size(0), dtype=torch.long)
+        out[greedy] = torch.argmax(logits[greedy], dim=-1)
+        sub = logits[non_greedy]
+        sub = F.apply_temperature(sub, temp[non_greedy])
+        sub = F.apply_typical_filtering(
+            sub, typical_ps[non_greedy] if typical_ps is not None else cfg.typical_p
+        )
+        sub = F.apply_top_k(sub, top_ks[non_greedy] if top_ks is not None else cfg.top_k)
+        sub = F.apply_top_p(sub, top_ps[non_greedy] if top_ps is not None else cfg.top_p)
+        sub = F.apply_min_p(sub, min_ps[non_greedy] if min_ps is not None else cfg.min_p)
+        out[non_greedy] = F.sample_from_logits(sub, generator=generator)
+        return out
 
 
 # Legacy aliases for backward compatibility if needed,

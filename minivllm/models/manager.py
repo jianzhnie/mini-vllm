@@ -39,7 +39,7 @@ class ModelManager:
         device: Device where the model is loaded.
         model: The loaded language model.
         tokenizer: Tokenizer for text processing.
-        model_type: Type of model (qwen2, qwen3, opt).
+        model_type: Type of model (qwen3).
     """
 
     def __init__(self, config: Config) -> None:

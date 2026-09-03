@@ -426,11 +426,17 @@ class InferenceExecutor:
             # Execute model
             logits = self._execute_model(input_ids, positions, prefill)
 
-            # Sample next tokens (only need last token logits for prefill)
+            # Sample next tokens (only need last token logits for prefill).
+            # The flat prefill logits hold one row per *uncached* token (see
+            # _prepare_batch_input), so index each sequence's last row by its
+            # contributed length, not its full prompt length.
             if prefill and logits.size(0) > len(sequences):
-                seq_lengths = [len(seq) for seq in sequences]
+                contributed = [
+                    len(seq) - min(seq.num_cached_tokens, len(seq) - 1)
+                    for seq in sequences
+                ]
                 last_indices = (
-                    torch.cumsum(torch.tensor(seq_lengths, device=logits.device), dim=0)
+                    torch.cumsum(torch.tensor(contributed, device=logits.device), dim=0)
                     - 1
                 )
                 logits = logits[last_indices]
@@ -486,7 +492,11 @@ class InferenceExecutor:
 
         for seq in sequences:
             seqlen = len(seq)
-            num_cached = seq.num_cached_tokens
+            # Cap cached tokens so the last prompt position is always re-run;
+            # otherwise a fully-cached prefill sequence contributes zero rows and
+            # has nothing to sample from. This must stay consistent with the
+            # contributed-length index computed in execute_batch.
+            num_cached = min(seq.num_cached_tokens, seqlen - 1)
 
             # Only process uncached tokens
             input_ids.extend(seq.token_ids[num_cached:])
