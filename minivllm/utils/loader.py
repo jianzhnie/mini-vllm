@@ -34,13 +34,14 @@ def get_default_weight_loader() -> WeightLoader:
     def default_loader(
         param: nn.Parameter, tensor: torch.Tensor, shard_id: Any = None
     ) -> None:
-        if param.data.shape == tensor.shape:
-            param.data.copy_(tensor)
-        else:
-            logger.warning(
+        if param.data.shape != tensor.shape:
+            # A silently-skipped weight would leave the parameter randomly
+            # initialized and the model would "run" on garbage — fail loud.
+            raise ValueError(
                 f"Shape mismatch for parameter: expected {param.data.shape}, "
-                f"got {tensor.shape}. Skipping."
+                f"got {tensor.shape}"
             )
+        param.data.copy_(tensor)
 
     return default_loader
 
@@ -74,17 +75,19 @@ def apply_weight_loader(
             weight_loader(param, tensor, shard_id)
         else:
             weight_loader(param, tensor)
-
-        packed_prefix = "packed " if is_packed else ""
-        shard_suffix = (
-            f" (shard_id: {shard_id})" if is_packed and shard_id is not None else ""
-        )
-        logger.debug("Loaded %sweight '%s'%s", packed_prefix, weight_name, shard_suffix)
-        return True
-
     except Exception as e:
-        logger.warning("Failed to load weight '%s': %s", weight_name, e)
-        return False
+        # Let a failing weight loader abort the load: swallowing it here would
+        # leave a parameter at its random init and the model would produce
+        # plausible-looking garbage instead of an error.
+        logger.exception("Failed to load weight '%s'", weight_name)
+        raise RuntimeError(f"Failed to load weight '{weight_name}': {e}") from e
+
+    packed_prefix = "packed " if is_packed else ""
+    shard_suffix = (
+        f" (shard_id: {shard_id})" if is_packed and shard_id is not None else ""
+    )
+    logger.debug("Loaded %sweight '%s'%s", packed_prefix, weight_name, shard_suffix)
+    return True
 
 
 def load_weight(

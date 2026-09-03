@@ -62,13 +62,11 @@ try:
         "SequenceStatus",
     ]
 except ImportError as e:
-    import warnings
-
-    warnings.warn(
-        f"Failed to import some modules from minivllm: {e}. "
+    # Re-raise with the cause preserved. Silently setting __all__ = [] turns a
+    # broken install into an opaque "cannot import name 'LLM'" downstream with
+    # the original traceback destroyed.
+    raise ImportError(
+        f"minivllm failed to import: {e}. "
         f"Make sure all required dependencies are installed: "
-        f"torch, transformers, flash-attn, triton, xxhash. "
-        f"Some functionality may be unavailable.",
-        stacklevel=2,
-    )
-    __all__ = []
+        f"torch, transformers, flash-attn, triton, xxhash."
+    ) from e

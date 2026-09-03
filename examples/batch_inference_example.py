@@ -52,7 +52,7 @@ def run_strategy(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Batch inference comparison")
-    parser.add_argument("--model", default="facebook/opt-125m")
+    parser.add_argument("--model", default="Qwen/Qwen3-0.6B")
     parser.add_argument("--dtype", default="float32", choices=["float16", "float32"])
     parser.add_argument("--max-model-len", type=int, default=512)
     parser.add_argument(

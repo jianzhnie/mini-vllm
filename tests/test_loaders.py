@@ -140,10 +140,13 @@ class TestShapeValidation:
         default_weight_loader(param, correct_tensor)
         assert torch.allclose(param.data, correct_tensor)
 
-    def test_wrong_shape_warns_and_skips(self):
+    def test_wrong_shape_raises(self):
+        """A shape mismatch must fail loud, not silently skip (which would leave
+        the parameter randomly initialized)."""
         default_weight_loader = get_default_weight_loader()
         param = nn.Parameter(torch.randn(5, 3))
         original = param.data.clone()
         wrong_tensor = torch.randn(4, 2)
-        default_weight_loader(param, wrong_tensor)
+        with pytest.raises(ValueError):
+            default_weight_loader(param, wrong_tensor)
         assert torch.equal(param.data, original)

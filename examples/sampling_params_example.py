@@ -30,7 +30,7 @@ PROMPT = "Once upon a time in a magical kingdom,"
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Sampling params exploration")
-    parser.add_argument("--model", default="facebook/opt-125m")
+    parser.add_argument("--model", default="Qwen/Qwen3-0.6B")
     parser.add_argument("--dtype", default="float32")
     parser.add_argument("--max-tokens", type=int, default=40)
     args = parser.parse_args()

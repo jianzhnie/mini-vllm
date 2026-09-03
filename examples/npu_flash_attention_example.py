@@ -23,14 +23,13 @@ from pathlib import Path
 # Constants
 # ---------------------------------------------------------------------------
 _MODEL_PATHS: dict[str, str] = {
-    "opt": "/home/jianzhnie/llmtuner/hfhub/models/facebook/opt-125m",
     "qwen": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-0.6B",
     "qwen3": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-0.6B",
     "qwen3-1.7b": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-1.7B",
     "qwen3-4b": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-4B",
 }
 
-_DEFAULT_MODEL = "opt"
+_DEFAULT_MODEL = "qwen3"
 _PROMPTS = [
     "Hello, who are you?",
     "What is the capital of China?",
