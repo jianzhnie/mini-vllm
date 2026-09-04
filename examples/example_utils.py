@@ -5,8 +5,10 @@ name resolution, a ``Config`` factory, a result banner, and the macOS CPU
 fallback. Examples import from here rather than redeclaring these.
 """
 
+import argparse
 import os
 import platform
+import time
 from pathlib import Path
 
 from minivllm.utils.logger_utils import get_logger
@@ -78,6 +80,89 @@ def print_banner(title: str, width: int = 70) -> None:
     print(f"\n{'=' * width}")
     print(f"  {title}")
     print(f"{'=' * width}")
+
+
+# ---------------------------------------------------------------------------
+# Shared CLI + run scaffolding (removes the boilerplate each example repeated)
+# ---------------------------------------------------------------------------
+
+
+def add_common_args(
+    parser: argparse.ArgumentParser,
+    *,
+    default_dtype: str = "float16",
+    dtype_choices: tuple[str, ...] = ("float16", "float32", "bfloat16"),
+) -> argparse.ArgumentParser:
+    """Add the CLI args shared by the inference examples.
+
+    Keeps the ``--model/--dtype/--max-tokens/--temperature/--top-p/--top-k/
+    --max-model-len`` declarations in one place. Returns ``parser`` for chaining.
+    """
+    parser.add_argument(
+        "--model",
+        default=DEFAULT_MODEL,
+        help=f"Model short name ({', '.join(MODEL_PATHS)}) or path",
+    )
+    parser.add_argument("--dtype", default=default_dtype, choices=list(dtype_choices))
+    parser.add_argument("--max-tokens", type=int, default=64)
+    parser.add_argument("--temperature", type=float, default=0.7)
+    parser.add_argument("--top-p", type=float, default=0.95)
+    parser.add_argument("--top-k", type=int, default=40)
+    parser.add_argument("--max-model-len", type=int, default=512)
+    return parser
+
+
+def sample_params(args: argparse.Namespace, **overrides):
+    """Build a ``SamplingParams`` from the common sampling args.
+
+    ``**overrides`` lets an example pin specific values (e.g. greedy
+    ``temperature=0.0``) on top of the CLI defaults.
+    """
+    from minivllm import SamplingParams
+
+    kwargs = {
+        "temperature": args.temperature,
+        "top_p": args.top_p,
+        "top_k": args.top_k,
+        "max_tokens": args.max_tokens,
+    }
+    kwargs.update(overrides)
+    return SamplingParams(**kwargs)
+
+
+def build_llm(args: argparse.Namespace, **config_overrides):
+    """Create the ``Config`` from the common args and return ``(llm, config)``.
+
+    The ``minivllm`` import is deferred so examples that set env vars
+    (e.g. ``MINIVLLM_USE_NPU_FA``) can do so first.
+    """
+    from minivllm import LLM
+
+    config = make_config(
+        args.model,
+        dtype=args.dtype,
+        max_model_len=args.max_model_len,
+        **config_overrides,
+    )
+    return LLM(config), config
+
+
+def timed_generate(llm, prompts: list[str], params, use_tqdm: bool = True):
+    """Run ``llm.generate`` with timing; return ``(outputs, stats)``.
+
+    ``stats`` = ``{"tokens", "elapsed_s", "tok_s"}`` — the one throughput
+    calculation every example was re-deriving.
+    """
+    t0 = time.perf_counter()
+    outputs = llm.generate(prompts, params, use_tqdm=use_tqdm)
+    elapsed = time.perf_counter() - t0
+    tokens = sum(len(o["token_ids"]) for o in outputs)
+    stats = {
+        "tokens": tokens,
+        "elapsed_s": elapsed,
+        "tok_s": tokens / elapsed if elapsed > 0 else 0.0,
+    }
+    return outputs, stats
 
 
 def apply_darwin_cpu_fallback() -> None:

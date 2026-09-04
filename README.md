@@ -131,11 +131,11 @@ outputs = llm.generate(["Hello, world!"], SamplingParams(max_tokens=64))
 ### 运行示例脚本
 
 ```bash
-# 使用默认模型（facebook/opt-125m）
-python examples.py
+# 使用默认模型（Qwen3-0.6B）
+python examples/inference_example.py
 
-# 通过环境变量指定模型
-MINIVLLM_MODEL=/path/to/model python examples.py
+# 指定其他模型 / 更长的输出
+python examples/inference_example.py --model qwen3-4b --max-tokens 128
 ```
 
 更多示例请参考 [examples/](examples/) 目录：

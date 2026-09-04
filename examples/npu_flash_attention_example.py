@@ -1,14 +1,14 @@
-"""
-NPU Flash Attention Example — compare eager vs NPU flash attention.
+"""NPU Flash Attention Example — compare eager vs NPU flash attention.
 
-Runs the same prompts with and without NPU flash attention and reports
-speedup. Also exercises the low-level attention layer on NPU.
+Runs the same prompts with and without NPU flash attention and reports the
+speedup. Also exercises the low-level ``Attention`` layer (prefill + decode)
+directly on NPU.
 
 Usage:
-    python examples/npu_flash_attention_example.py                        # quick check
-    python examples/npu_flash_attention_example.py --benchmark            # full bench
+    python examples/npu_flash_attention_example.py                     # quick check
+    python examples/npu_flash_attention_example.py --benchmark         # full bench
     python examples/npu_flash_attention_example.py --model qwen3-4b --benchmark
-    python examples/npu_flash_attention_example.py --skip-low-level       # LLM only
+    python examples/npu_flash_attention_example.py --skip-low-level    # LLM only
 """
 
 from __future__ import annotations
@@ -19,12 +19,14 @@ import sys
 import time
 from pathlib import Path
 
-from minivllm.utils.example_utils import (
+from example_utils import (
     DEFAULT_MODEL,
     DEFAULT_PROMPTS,
     MODEL_PATHS,
     make_config,
+    print_banner,
     resolve_model,
+    timed_generate,
 )
 
 
@@ -35,29 +37,21 @@ def check_npu() -> bool:
     if not hasattr(torch, "npu") or not torch.npu.is_available():
         print("ERROR: NPU not available.")
         return False
-    count = torch.npu.device_count()
-    print(f"NPU: {torch.npu.get_device_name(0)}, {count} device(s)")
+    print(f"NPU: {torch.npu.get_device_name(0)}, {torch.npu.device_count()} device(s)")
     return True
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="NPU Flash Attention Example")
     p.add_argument(
-        "--model",
-        default=DEFAULT_MODEL,
+        "--model", default=DEFAULT_MODEL,
         help=f"Model short name ({', '.join(MODEL_PATHS)}) or path",
     )
     p.add_argument("--max-tokens", type=int, default=48)
-    p.add_argument(
-        "--skip-low-level",
-        action="store_true",
-        help="Skip low-level attention layer demos",
-    )
-    p.add_argument(
-        "--benchmark",
-        action="store_true",
-        help="Run full benchmark (eager vs FA comparison)",
-    )
+    p.add_argument("--skip-low-level", action="store_true",
+                   help="Skip low-level attention layer demos")
+    p.add_argument("--benchmark", action="store_true",
+                   help="Run full benchmark (eager vs FA comparison)")
     return p.parse_args()
 
 
@@ -71,9 +65,7 @@ def demo_attention_prefill_decode() -> None:
     from minivllm.models.layers.attention import Attention
     from minivllm.utils.context import reset_context, set_context
 
-    print("\n" + "=" * 60)
-    print("  Low-level: Attention Layer (Prefill + Decode)")
-    print("=" * 60)
+    print_banner("Low-level: Attention Layer (Prefill + Decode)")
 
     import torch
 
@@ -81,12 +73,7 @@ def demo_attention_prefill_decode() -> None:
     scale = 1.0 / (head_dim**0.5)
     device = torch.device("npu:0")
 
-    attn = Attention(
-        num_heads=num_heads,
-        head_dim=head_dim,
-        scale=scale,
-        num_kv_heads=num_kv_heads,
-    )
+    attn = Attention(num_heads=num_heads, head_dim=head_dim, scale=scale, num_kv_heads=num_kv_heads)
     print(f"  Backend: {attn.backend.__class__.__name__}")
 
     # --- Prefill ---
@@ -95,23 +82,14 @@ def demo_attention_prefill_decode() -> None:
     total_tokens = sum(batch_sizes)
     max_s = max(batch_sizes)
 
-    q = torch.randn(
-        total_tokens, num_heads, head_dim, device=device, dtype=torch.float16
-    )
-    k = torch.randn(
-        total_tokens, num_kv_heads, head_dim, device=device, dtype=torch.float16
-    )
-    v = torch.randn(
-        total_tokens, num_kv_heads, head_dim, device=device, dtype=torch.float16
-    )
+    q = torch.randn(total_tokens, num_heads, head_dim, device=device, dtype=torch.float16)
+    k = torch.randn(total_tokens, num_kv_heads, head_dim, device=device, dtype=torch.float16)
+    v = torch.randn(total_tokens, num_kv_heads, head_dim, device=device, dtype=torch.float16)
 
     cum = torch.tensor([0, 4, 10], dtype=torch.int32, device=device)
     set_context(
-        is_prefill=True,
-        max_seqlen_q=max_s,
-        max_seqlen_k=max_s,
-        cum_seqlens_q=cum,
-        cum_seqlens_k=cum,
+        is_prefill=True, max_seqlen_q=max_s, max_seqlen_k=max_s,
+        cum_seqlens_q=cum, cum_seqlens_k=cum,
         slot_mapping=torch.arange(total_tokens, device=device),
     )
     with torch.no_grad():
@@ -123,22 +101,10 @@ def demo_attention_prefill_decode() -> None:
     # --- Decode ---
     print("\n  --- Decode (batch=2, block_size=16) ---")
     block_size, num_blocks = 16, 4
-    attn.k_cache = torch.randn(
-        num_blocks,
-        block_size,
-        num_kv_heads,
-        head_dim,
-        device=device,
-        dtype=torch.float16,
-    )
-    attn.v_cache = torch.randn(
-        num_blocks,
-        block_size,
-        num_kv_heads,
-        head_dim,
-        device=device,
-        dtype=torch.float16,
-    )
+    attn.k_cache = torch.randn(num_blocks, block_size, num_kv_heads, head_dim,
+                               device=device, dtype=torch.float16)
+    attn.v_cache = torch.randn(num_blocks, block_size, num_kv_heads, head_dim,
+                               device=device, dtype=torch.float16)
     attn._cache_initialized = True
 
     q_d = torch.randn(2, num_heads, head_dim, device=device, dtype=torch.float16)
@@ -173,78 +139,51 @@ def run_llm_benchmark(model_path: str, max_tokens: int, use_fa: bool) -> dict:
     from minivllm import LLM, SamplingParams
 
     config = make_config(
-        model_path,
-        dtype="float16",
-        device_memory_utilization=0.85,
-        enforce_eager=True,
+        model_path, dtype="float16", device_memory_utilization=0.85, enforce_eager=True
     )
-
-    params = SamplingParams(
-        temperature=0.7, top_p=0.95, top_k=40, max_tokens=max_tokens
-    )
+    params = SamplingParams(temperature=0.7, top_p=0.95, top_k=40, max_tokens=max_tokens)
 
     t0 = time.perf_counter()
     llm = LLM(config)
     init_t = time.perf_counter() - t0
 
-    t1 = time.perf_counter()
-    outputs = llm.generate(DEFAULT_PROMPTS, params, use_tqdm=False)
-    infer_t = time.perf_counter() - t1
-
-    total_tokens = sum(len(o["token_ids"]) for o in outputs)
+    outputs, stats = timed_generate(llm, DEFAULT_PROMPTS, params, use_tqdm=False)
     llm.exit()
-    del llm
 
     return {
         "init_s": init_t,
-        "infer_s": infer_t,
-        "tokens": total_tokens,
-        "tok_s": total_tokens / infer_t if infer_t > 0 else 0,
+        "infer_s": stats["elapsed_s"],
+        "tokens": stats["tokens"],
+        "tok_s": stats["tok_s"],
         "texts": [o["text"].strip()[:80] for o in outputs],
     }
 
 
 def demo_llm_benchmark(model_path: str, max_tokens: int) -> None:
     """Compare eager vs NPU flash attention."""
-    print("\n" + "=" * 60)
-    print("  LLM Benchmark: Eager vs Flash-Attention")
-    print("=" * 60)
+    print_banner("LLM Benchmark: Eager vs Flash-Attention")
 
     model_name = Path(model_path).name
     print(f"  Model: {model_name}  Prompts: {len(DEFAULT_PROMPTS)}  Max tokens: {max_tokens}")
 
-    # Eager (no FA)
     print("\n  [1/2] Running in EAGER mode (no flash-attn)...")
     eager = run_llm_benchmark(model_path, max_tokens, use_fa=False)
-    print(
-        f"  Init: {eager['init_s']:.1f}s  Inference: {eager['infer_s']:.2f}s  "
-        f"Tokens: {eager['tokens']}  Throughput: {eager['tok_s']:.1f} tok/s"
-    )
+    print(f"  Init: {eager['init_s']:.1f}s  Inference: {eager['infer_s']:.2f}s  "
+          f"Tokens: {eager['tokens']}  Throughput: {eager['tok_s']:.1f} tok/s")
 
-    # Flash-Attention
     print("  [2/2] Running with NPU Flash-Attention...")
     fa = run_llm_benchmark(model_path, max_tokens, use_fa=True)
-    print(
-        f"  Init: {fa['init_s']:.1f}s  Inference: {fa['infer_s']:.2f}s  "
-        f"Tokens: {fa['tokens']}  Throughput: {fa['tok_s']:.1f} tok/s"
-    )
+    print(f"  Init: {fa['init_s']:.1f}s  Inference: {fa['infer_s']:.2f}s  "
+          f"Tokens: {fa['tokens']}  Throughput: {fa['tok_s']:.1f} tok/s")
 
-    # Comparison
     print("\n  --- Comparison ---")
     if eager["infer_s"] > 0:
-        speedup = (
-            eager["infer_s"] / fa["infer_s"] if fa["infer_s"] > 0 else float("inf")
-        )
-        label = (
-            f"FA is {speedup:.1f}x faster"
-            if speedup >= 1
-            else f"FA is {1 / speedup:.1f}x slower"
-        )
+        speedup = eager["infer_s"] / fa["infer_s"] if fa["infer_s"] > 0 else float("inf")
+        label = f"FA is {speedup:.1f}x faster" if speedup >= 1 else f"FA is {1 / speedup:.1f}x slower"
         print(f"  Eager:  {eager['infer_s']:.2f}s  ({eager['tok_s']:.1f} tok/s)")
         print(f"  FA:     {fa['infer_s']:.2f}s  ({fa['tok_s']:.1f} tok/s)")
         print(f"  Result: {label}")
 
-    # Show first output from each
     if eager["texts"]:
         print(f"\n  Eager sample: {eager['texts'][0][:100]!r}")
     if fa["texts"]:
@@ -267,14 +206,12 @@ def main() -> int:
 
     model_path = resolve_model(args.model)
 
-    # Low-level demos (skip with --skip-low-level)
     if not args.skip_low_level:
         try:
             demo_attention_prefill_decode()
         except Exception as e:
             print(f"\n  Low-level demo skipped: {e}")
 
-    # LLM benchmark
     if args.benchmark:
         try:
             demo_llm_benchmark(model_path, args.max_tokens)
@@ -283,33 +220,22 @@ def main() -> int:
             return 1
     else:
         # Quick run: single inference with FA
-        print("\n" + "=" * 60)
-        print("  Quick Inference (Eager, no FA)")
-        print("=" * 60)
+        print_banner("Quick Inference (Eager, no FA)")
         os.environ.pop("MINIVLLM_USE_NPU_FA", None)
         from minivllm import LLM, SamplingParams
 
         config = make_config(
-            model_path,
-            dtype="float16",
-            device_memory_utilization=0.85,
-            enforce_eager=True,
+            model_path, dtype="float16", device_memory_utilization=0.85, enforce_eager=True
         )
-        params = SamplingParams(
-            temperature=0.7, top_p=0.95, top_k=40, max_tokens=args.max_tokens
-        )
+        params = SamplingParams(temperature=0.7, top_p=0.95, top_k=40, max_tokens=args.max_tokens)
 
         llm = LLM(config)
-        t0 = time.perf_counter()
-        outputs = llm.generate(DEFAULT_PROMPTS[:2], params, use_tqdm=True)
-        elapsed = time.perf_counter() - t0
-        total = sum(len(o["token_ids"]) for o in outputs)
-        for p, o in zip(DEFAULT_PROMPTS[:2], outputs, strict=False):
-            print(f"\n  Q: {p}")
-            print(f"  A: {o['text'].strip()[:150]} ({len(o['token_ids'])} tokens)")
-        print(f"\n  {total} tokens in {elapsed:.2f}s ({total / elapsed:.1f} tok/s)")
+        outputs, stats = timed_generate(llm, DEFAULT_PROMPTS[:2], params)
+        for p, o in zip(DEFAULT_PROMPTS[:2], outputs, strict=True):
+            print(f"\n  Q: {p}\n  A: {o['text'].strip()[:150]} ({len(o['token_ids'])} tokens)")
+        print(f"\n  {stats['tokens']} tokens in {stats['elapsed_s']:.2f}s "
+              f"({stats['tok_s']:.1f} tok/s)")
         llm.exit()
-        del llm
 
     return 0
 

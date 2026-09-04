@@ -1,129 +1,91 @@
-"""
-Example of running LLM inference on CPU using mini-vLLM.
+"""CPU inference example — mini-vLLM on CPU (golden reference).
 
-This script demonstrates how to:
-1. Force execution on CPU by hiding GPU devices
-2. Use the LLM high-level API with Config for simplified inference
-3. Format prompts with chat template support
-4. Run batch inference with progress tracking
+Forces CPU execution (hides every accelerator) and prints results in a
+nicely-boxed layout. Useful as a device-agnostic golden reference for
+comparing NPU/GPU output.
 
 Usage:
     python examples/cpu_inference_opt.py
-    python examples/cpu_inference_opt.py --model /path/to/model
     python examples/cpu_inference_opt.py --model qwen3
+    python examples/cpu_inference_opt.py --model /path/to/model
 """
 
 import argparse
 import os
 import sys
-from time import perf_counter
 
-# Force CPU execution by hiding other devices (must be done before importing torch)
+# Force CPU execution by hiding other devices (must be done before importing torch).
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 os.environ["ASCEND_RT_VISIBLE_DEVICES"] = ""
 os.environ["XPU_VISIBLE_DEVICES"] = ""
 os.environ["MINIVLLM_DEVICE"] = "cpu"
 
-from minivllm import LLM, SamplingParams
-from minivllm.utils.example_utils import (
+from example_utils import (
     DEFAULT_MODEL,
+    DEFAULT_PROMPTS,
     format_prompts_with_chat_template,
     make_config,
     resolve_model,
+    timed_generate,
 )
+
+from minivllm import LLM, SamplingParams
 from minivllm.utils.logger_utils import get_logger
 
 logger = get_logger(__name__)
 
-prompts = [
-    "Hello, who are you?",
-    "What is your name?",
-    "Where are you from?",
-    "Where is the capital of France?",
-    "Tell me a joke.",
-]
-
 
 def deduplicate_text(text: str, max_repeat: int = 3) -> str:
-    """Remove excessive repetition from generated text."""
-    lines = text.split("\n")
-    seen = {}
+    """Drop lines that repeat more than ``max_repeat`` times (model artifacts)."""
+    seen: dict[str, int] = {}
     result = []
-
-    for line in lines:
-        line_stripped = line.strip()
-        if not line_stripped:
+    for line in text.split("\n"):
+        key = line.strip()
+        if not key:
             continue
-        count = seen.get(line_stripped, 0)
-        if count < max_repeat:
+        if seen.get(key, 0) < max_repeat:
             result.append(line)
-            seen[line_stripped] = count + 1
-
+            seen[key] = seen.get(key, 0) + 1
     return "\n".join(result) if result else text
 
 
 def wrap_text(text: str, width: int) -> list[str]:
-    """Wrap text into multiple lines of specified width."""
-    words = text.split()
-    lines = []
-    current_line = []
-    current_length = 0
-
-    for word in words:
-        word_len = len(word)
-        if current_length + word_len + len(current_line) <= width:
-            current_line.append(word)
-            current_length += word_len
+    """Word-wrap text into lines of at most ``width`` characters."""
+    lines: list[str] = []
+    current: list[str] = []
+    length = 0
+    for word in text.split():
+        if length + len(word) + len(current) <= width:
+            current.append(word)
+            length += len(word)
         else:
-            if current_line:
-                lines.append(" ".join(current_line))
-            current_line = [word]
-            current_length = word_len
-
-    if current_line:
-        lines.append(" ".join(current_line))
-
-    return lines if lines else [text[:width]]
+            lines.append(" ".join(current))
+            current, length = [word], len(word)
+    if current:
+        lines.append(" ".join(current))
+    return lines or [text[:width]]
 
 
-def format_output_box(
-    prompt: str, output: str, index: int, token_count: int = 0
-) -> str:
-    """Format a single prompt-output pair in a nice box."""
-    WIDTH = 76
-    CONTENT_WIDTH = WIDTH - 4
-
-    lines = [
-        f"┌{'─' * WIDTH}┐",
-        f"│ [{index}] Prompt: {prompt[: CONTENT_WIDTH - 12]:<{CONTENT_WIDTH - 12}} │",
-        f"├{'─' * WIDTH}┤",
-        f"│{' ' * CONTENT_WIDTH} │",
-    ]
-
+def format_output_box(prompt: str, output: str, index: int, token_count: int) -> str:
+    """Render one prompt/output pair inside a fixed-width box."""
+    width = 76
+    inner = width - 4
     output_clean = output.strip().replace("\n", " ")
-    wrapped_lines = wrap_text(output_clean, CONTENT_WIDTH - 2)
-
-    for wrapped in wrapped_lines[:10]:
-        lines.append(f"│  {wrapped:<{CONTENT_WIDTH - 2}} │")
-
-    if len(wrapped_lines) > 10:
-        lines.append(
-            f"│  ... ({len(wrapped_lines) - 10} more lines) {' ' * (CONTENT_WIDTH - 25)} │"
-        )
-
-    lines.append(f"│{' ' * CONTENT_WIDTH} │")
-
-    if token_count > 0:
-        token_info = f"Tokens: {token_count}"
-        lines.append(f"│ {token_info:<{CONTENT_WIDTH}} │")
-
-    lines.append(f"└{'─' * WIDTH}┘")
-
-    return "\n".join(lines)
+    wrapped = wrap_text(output_clean, inner - 2)[:10]
+    box = [
+        f"┌{'─' * width}┐",
+        f"│ [{index}] Prompt: {prompt[: inner - 12]:<{inner - 12}} │",
+        f"├{'─' * width}┤",
+        f"│{' ' * inner} │",
+    ]
+    box += [f"│  {line:<{inner - 2}} │" for line in wrapped]
+    if len(wrapped) == 10:
+        box.append(f"│  {' ' * (inner - 2)} │")
+    box += [f"│{' ' * inner} │", f"│ {'Tokens: ' + str(token_count):<{inner}} │", f"└{'─' * width}┘"]
+    return "\n".join(box)
 
 
 def run_inference(model_path: str) -> None:
-    """Run the inference pipeline."""
     config = make_config(
         model_path,
         dtype="float32",
@@ -131,96 +93,43 @@ def run_inference(model_path: str) -> None:
         device_memory_utilization=0.9,
         enforce_eager=True,
     )
+    params = SamplingParams(temperature=0.6, top_p=0.95, top_k=40, max_tokens=50)
 
-    sampling_params = SamplingParams(
-        temperature=0.6,
-        top_p=0.95,
-        top_k=40,
-        max_tokens=50,
-    )
-
-    start_time = perf_counter()
-
-    logger.info("Starting CPU inference with mini-vLLM")
-    logger.info("Model: %s", config.model)
-    logger.info(
-        "Configuration: max_seqs=%d, max_tokens=%d",
-        config.max_num_seqs,
-        sampling_params.max_tokens,
-    )
-
-    # Initialize LLM engine
-    logger.info("Initializing LLM engine...")
+    logger.info("Starting CPU inference with mini-vLLM (model=%s)", config.model)
     llm = LLM(config)
-    logger.info("LLM engine initialized successfully.")
 
-    # Prepare prompts with optional chat template
-    formatted_prompts = format_prompts_with_chat_template(llm.tokenizer, prompts)
+    prompts = format_prompts_with_chat_template(llm.tokenizer, DEFAULT_PROMPTS)
+    outputs, stats = timed_generate(llm, prompts, params)
 
-    if formatted_prompts:
-        logger.info("First prompt: %r", formatted_prompts[0])
-
-    # Run inference
-    logger.info("Generating completions for %d prompts...", len(formatted_prompts))
-    inference_start = perf_counter()
-    outputs = llm.generate(formatted_prompts, sampling_params, use_tqdm=True)
-    inference_time = perf_counter() - inference_start
-    total_time = perf_counter() - start_time
-
-    total_tokens = sum(len(output["token_ids"]) for output in outputs)
-
-    # Print summary
     print("\n" + "=" * 80)
     print("              INFERENCE RESULTS (CPU)")
     print("=" * 80)
-    print(f"Model:        {config.model}")
-    print("Device:       CPU")
-    print(f"Prompts:      {len(prompts)}")
-    print(f"Inference:    {inference_time:.2f}s")
-    print(f"Total time:   {total_time:.2f}s")
-    print(f"Tokens:       {total_tokens}")
-    print(f"Throughput:   {total_tokens / inference_time:.1f} tokens/s")
+    print(f"Model:      {config.model}")
+    print(f"Prompts:    {len(prompts)}   Tokens: {stats['tokens']}")
+    print(f"Inference:  {stats['elapsed_s']:.2f}s   Throughput: {stats['tok_s']:.1f} tok/s")
     print("=" * 80 + "\n")
-
-    # Print detailed results
-    for idx, (formatted_prompt, output) in enumerate(
-        zip(formatted_prompts, outputs, strict=False)
-    ):
-        original_prompt = prompts[idx] if idx < len(prompts) else formatted_prompt
-        output_text = deduplicate_text(output["text"])
-        token_count = len(output["token_ids"])
-
-        print(format_output_box(original_prompt, output_text, idx, token_count))
+    for idx, (prompt, output) in enumerate(zip(prompts, outputs, strict=True)):
+        print(
+            format_output_box(
+                prompt, deduplicate_text(output["text"]), idx, len(output["token_ids"])
+            )
+        )
         print()
-
-    print("=" * 80)
     logger.info("Inference completed successfully.")
+    llm.exit()
 
 
 def main() -> int:
-    """Main entry point for the example script."""
     parser = argparse.ArgumentParser(description="CPU Inference Example")
-    parser.add_argument(
-        "--model",
-        default=DEFAULT_MODEL,
-        help="Model short name or path (see example_utils.MODEL_PATHS)",
-    )
+    parser.add_argument("--model", default=DEFAULT_MODEL)
     args = parser.parse_args()
 
-    model_path = resolve_model(args.model)
-
     try:
-        run_inference(model_path)
+        run_inference(resolve_model(args.model))
         return 0
-
-    except ValueError as e:
-        logger.error("Configuration error: %s", e)
+    except (ValueError, KeyboardInterrupt) as e:
+        logger.error("Interrupted or misconfigured: %s", e)
         return 1
-
-    except KeyboardInterrupt:
-        logger.info("Interrupted by user.")
-        return 1
-
     except Exception as e:
         logger.error("Unexpected error: %s", e, exc_info=True)
         return 1

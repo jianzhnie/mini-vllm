@@ -9,7 +9,7 @@ Example scripts demonstrating inference, flash attention, and tensor parallelism
 source set_env.sh
 
 # Quick inference (auto-detects NPU)
-python examples.py
+python examples/inference_example.py
 
 # NPU inference with Qwen3
 python examples/npu_inference_example.py --model qwen3
@@ -49,16 +49,19 @@ You can also pass a full path to any local HuggingFace-format model directory.
 
 ## Examples
 
-### 1. `examples.py` — Main Example
+### 1. `inference_example.py` — Main Example
 
-Auto-detects NPU and runs inference. The simplest entry point.
+Auto-detects the device (NPU/CUDA/CPU) and runs inference. The simplest entry
+point. All scripts share the scaffolding in `example_utils.py` (model
+registry, `make_config`, the common `--model/--dtype/--max-tokens/...` args, and
+`timed_generate`).
 
 ```bash
-python examples.py                          # default: Qwen3-0.6B, float16
-python examples.py --model qwen3-4b         # a different Qwen3 size
-python examples.py --model /path/to/model  # custom model
-python examples.py --dtype float32          # float32 precision
-python examples.py --max-tokens 128         # longer output
+python examples/inference_example.py                          # default: Qwen3-0.6B, float16
+python examples/inference_example.py --model qwen3-4b         # a different Qwen3 size
+python examples/inference_example.py --model /path/to/model  # custom model
+python examples/inference_example.py --dtype float32          # float32 precision
+python examples/inference_example.py --max-tokens 128         # longer output
 ```
 
 **Options**

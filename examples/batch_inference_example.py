@@ -1,26 +1,24 @@
-"""Batch inference example with timing and comparison.
+"""Batch inference example — compare sampling strategies side by side.
 
-Demonstrates:
-- Running batch inference with different sampling strategies
-- Comparing greedy vs creative generation
-- Per-prompt timing and throughput reporting
+Runs the same batch of prompts under different sampling strategies (greedy /
+creative / balanced) and reports per-strategy timing and throughput.
 
 Usage:
     python examples/batch_inference_example.py
-    python examples/batch_inference_example.py --model Qwen/Qwen3-0.6B
+    python examples/batch_inference_example.py --strategies greedy balanced creative
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
-from time import perf_counter
 
-from minivllm import LLM, SamplingParams
-from minivllm.utils.example_utils import (
+from example_utils import (
     DEFAULT_MODEL,
     apply_darwin_cpu_fallback,
-    make_config,
+    build_llm,
+    print_banner,
+    timed_generate,
 )
 
 apply_darwin_cpu_fallback()
@@ -35,67 +33,48 @@ PROMPTS = [
 ]
 
 STRATEGIES = {
-    "greedy": SamplingParams(temperature=0.0, max_tokens=64),
-    "creative": SamplingParams(temperature=0.9, top_p=0.95, top_k=50, max_tokens=64),
-    "balanced": SamplingParams(temperature=0.6, top_p=0.9, top_k=40, max_tokens=64),
+    "greedy": {"temperature": 0.0, "max_tokens": 64},
+    "creative": {"temperature": 0.9, "top_p": 0.95, "top_k": 50, "max_tokens": 64},
+    "balanced": {"temperature": 0.6, "top_p": 0.9, "top_k": 40, "max_tokens": 64},
 }
 
 
-def run_strategy(
-    llm: LLM, prompts: list[str], name: str, params: SamplingParams
-) -> tuple[list[dict], float]:
-    """Run inference with a given strategy and return results + elapsed time."""
-    start = perf_counter()
-    outputs = llm.generate(prompts, params, use_tqdm=False)
-    elapsed = perf_counter() - start
-    return outputs, elapsed
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Batch inference comparison")
+    p.add_argument("--model", default=DEFAULT_MODEL)
+    p.add_argument("--dtype", default="float32", choices=("float16", "float32"))
+    p.add_argument("--max-model-len", type=int, default=512)
+    p.add_argument(
+        "--strategies", nargs="+", choices=list(STRATEGIES), default=["greedy", "balanced"]
+    )
+    return p.parse_args()
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Batch inference comparison")
-    parser.add_argument("--model", default=DEFAULT_MODEL)
-    parser.add_argument("--dtype", default="float32", choices=["float16", "float32"])
-    parser.add_argument("--max-model-len", type=int, default=512)
-    parser.add_argument(
-        "--strategies",
-        nargs="+",
-        choices=list(STRATEGIES),
-        default=["greedy", "balanced"],
-    )
-    args = parser.parse_args()
+    args = parse_args()
 
-    config = make_config(
-        args.model,
-        dtype=args.dtype,
-        max_model_len=args.max_model_len,
-        enforce_eager=True,
-    )
+    from minivllm import SamplingParams
 
-    llm = LLM(config)
+    llm, config = build_llm(args, enforce_eager=True)
 
-    print(f"\n{'=' * 70}")
-    print(f"  Batch Inference  |  {args.model}  |  {args.dtype}")
+    print_banner(f"Batch Inference  |  {config.model}  |  {args.dtype}")
     print(f"  Prompts: {len(PROMPTS)}  |  Strategies: {', '.join(args.strategies)}")
-    print(f"{'=' * 70}")
 
-    for strategy_name in args.strategies:
-        params = STRATEGIES[strategy_name]
-        outputs, elapsed = run_strategy(llm, PROMPTS, strategy_name, params)
-        total_tokens = sum(len(o["token_ids"]) for o in outputs)
+    for name in args.strategies:
+        params = SamplingParams(**STRATEGIES[name])
+        outputs, stats = timed_generate(llm, PROMPTS, params, use_tqdm=False)
 
-        print(f"\n--- {strategy_name.upper()} (temp={params.temperature}) ---")
-        print(f"    Time: {elapsed:.2f}s | Tokens: {total_tokens} | "
-              f"Throughput: {total_tokens / elapsed:.0f} tok/s")
-
+        print(f"\n--- {name.upper()} (temp={params.temperature}) ---")
+        print(
+            f"    Time: {stats['elapsed_s']:.2f}s | Tokens: {stats['tokens']} | "
+            f"Throughput: {stats['tok_s']:.0f} tok/s"
+        )
         for i, (prompt, output) in enumerate(zip(PROMPTS, outputs, strict=True)):
             text = output["text"].strip().replace("\n", " ")
-            if len(text) > 120:
-                text = text[:117] + "..."
-            print(f"\n  [{i}] {prompt}")
-            print(f"      {text}")
+            print(f"\n  [{i}] {prompt}\n      {text[:120]}{'...' if len(text) > 120 else ''}")
 
     print(f"\n{'=' * 70}")
-    del llm
+    llm.exit()
     return 0
 
 

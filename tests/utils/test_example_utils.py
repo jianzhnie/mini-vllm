@@ -1,10 +1,15 @@
-"""Tests for minivllm.utils.example_utils (shared example helpers)."""
+"""Tests for examples/example_utils (shared example helpers)."""
 
 from __future__ import annotations
 
 import os
+import sys
+from pathlib import Path
 
-from minivllm.utils.example_utils import (
+# example_utils lives in examples/ (not the minivllm package); put it on the path.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "examples"))
+
+from example_utils import (  # noqa: E402
     DEFAULT_MODEL,
     MODEL_PATHS,
     apply_darwin_cpu_fallback,

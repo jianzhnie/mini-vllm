@@ -1,15 +1,14 @@
-"""
-Tensor Parallelism Example — verify TP=1/2/4 correctness on NPU.
+"""Tensor Parallelism Example — verify TP=1/2/4 correctness on NPU.
 
-Runs the same prompt across different TP sizes and compares output quality.
-Each TP run produces different random output (no seed synchronization), so
-this checks for semantic coherence rather than exact token match.
+Runs the same prompts across different TP sizes and compares output quality.
+Each TP run produces different random output (no seed synchronization), so this
+checks semantic coherence rather than exact token match.
 
 Usage:
-    python examples/npu_tp_example.py                       # TP=1 baseline
-    python examples/npu_tp_example.py --all                 # TP=1,2,4
-    python examples/npu_tp_example.py --tp 2                # TP=2 only
-    python examples/npu_tp_example.py --tp 4 --model qwen   # TP=4 + Qwen
+    python examples/npu_tp_example.py            # TP=1 baseline
+    python examples/npu_tp_example.py --all      # TP=1,2,4
+    python examples/npu_tp_example.py --tp 2     # TP=2 only
+    python examples/npu_tp_example.py --tp 4 --model qwen3
 """
 
 from __future__ import annotations
@@ -20,32 +19,26 @@ import sys
 import time
 from pathlib import Path
 
-from minivllm.utils.example_utils import (
+from example_utils import (
     DEFAULT_MODEL,
     DEFAULT_PROMPTS,
     MODEL_PATHS,
     make_config,
     resolve_model,
+    timed_generate,
 )
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="mini-vLLM Tensor Parallelism Example")
     p.add_argument(
-        "--model",
-        default=DEFAULT_MODEL,
+        "--model", default=DEFAULT_MODEL,
         help=f"Model short name ({', '.join(MODEL_PATHS)}) or path",
     )
-    p.add_argument(
-        "--tp", type=int, default=0, help="Single TP size to test (overrides --all)"
-    )
-    p.add_argument(
-        "--all", action="store_true", help="Test TP=1, TP=2, TP=4 sequentially"
-    )
+    p.add_argument("--tp", type=int, default=0, help="Single TP size to test (overrides --all)")
+    p.add_argument("--all", action="store_true", help="Test TP=1, TP=2, TP=4 sequentially")
     p.add_argument("--max-tokens", type=int, default=48)
-    p.add_argument(
-        "--dtype", default="float16", choices=["float16", "float32", "bfloat16"]
-    )
+    p.add_argument("--dtype", default="float16", choices=("float16", "float32", "bfloat16"))
     return p.parse_args()
 
 
@@ -54,35 +47,24 @@ def run_tp_inference(model_path: str, tp: int, max_tokens: int, dtype: str) -> d
     from minivllm import LLM, SamplingParams
 
     config = make_config(
-        model_path,
-        dtype=dtype,
-        tp=tp,
-        device_memory_utilization=0.8,
-        enforce_eager=True,
+        model_path, dtype=dtype, tp=tp,
+        device_memory_utilization=0.8, enforce_eager=True,
     )
-
-    params = SamplingParams(
-        temperature=0.7, top_p=0.95, top_k=40, max_tokens=max_tokens
-    )
+    params = SamplingParams(temperature=0.7, top_p=0.95, top_k=40, max_tokens=max_tokens)
 
     t0 = time.perf_counter()
     llm = LLM(config)
     init_t = time.perf_counter() - t0
 
-    t1 = time.perf_counter()
-    outputs = llm.generate(DEFAULT_PROMPTS, params, use_tqdm=False)
-    infer_t = time.perf_counter() - t1
-
-    total_tokens = sum(len(o["token_ids"]) for o in outputs)
+    outputs, stats = timed_generate(llm, DEFAULT_PROMPTS, params, use_tqdm=False)
     llm.exit()
-    del llm
 
     return {
         "tp": tp,
         "init_s": round(init_t, 1),
-        "infer_s": round(infer_t, 2),
-        "tokens": total_tokens,
-        "tok_s": round(total_tokens / infer_t, 1) if infer_t > 0 else 0,
+        "infer_s": round(stats["elapsed_s"], 2),
+        "tokens": stats["tokens"],
+        "tok_s": round(stats["tok_s"], 1),
         "texts": [o["text"].strip() for o in outputs],
     }
 
@@ -103,10 +85,9 @@ def print_result(r: dict) -> None:
         f"  TP={r['tp']}: init={r['init_s']}s  infer={r['infer_s']}s  "
         f"tokens={r['tokens']}  throughput={r['tok_s']} tok/s"
     )
-    for i, (prompt, text) in enumerate(zip(DEFAULT_PROMPTS, r["texts"], strict=False)):
-        snippet = text[:120]
+    for i, (prompt, text) in enumerate(zip(DEFAULT_PROMPTS, r["texts"], strict=True)):
         print(f"    [{i}] Q: {prompt[:60]}")
-        print(f"        A: {snippet}{'...' if len(text) > 120 else ''}")
+        print(f"        A: {text[:120]}{'...' if len(text) > 120 else ''}")
 
 
 def main() -> int:
@@ -116,7 +97,6 @@ def main() -> int:
     model_path = resolve_model(args.model)
     model_name = Path(model_path).name
 
-    # Determine which TP sizes to test
     if args.tp > 0:
         tp_sizes = [args.tp]
     elif args.all:
@@ -142,31 +122,22 @@ def main() -> int:
         except Exception as e:
             print(f"  TP={tp} FAILED: {e}")
             if "HCCL" in str(e) or "port" in str(e).lower():
-                print(
-                    f"  NOTE: HCCL port conflict — try running TP={tp} as a standalone invocation:"
-                    f"\n         python examples/npu_tp_example.py --model <model> --tp {tp}"
-                )
-        # Allow time for worker processes and HCCL to fully release resources
+                print(f"  NOTE: HCCL port conflict — try standalone:\n"
+                      f"         python examples/npu_tp_example.py --model <model> --tp {tp}")
+
+        # Let worker processes + HCCL release resources between runs.
         if len(tp_sizes) > 1:
             import torch.distributed as dist
 
             if dist.is_initialized():
                 dist.destroy_process_group()
-
-            # Reset MASTER_PORT so the next run gets a fresh free port
-            # (avoids HCCL "port already bound" errors on Ascend)
             os.environ.pop("MASTER_PORT", None)
             time.sleep(3)
 
-    # Summary
     if len(results) > 1:
-        print(f"\n{'=' * 70}")
-        print("  Summary")
-        print(f"{'=' * 70}")
+        print(f"\n{'=' * 70}\n  Summary\n{'=' * 70}")
         for r in results:
-            print(
-                f"  TP={r['tp']}: {r['tok_s']} tok/s  ({r['tokens']} tokens, {r['infer_s']}s)"
-            )
+            print(f"  TP={r['tp']}: {r['tok_s']} tok/s  ({r['tokens']} tokens, {r['infer_s']}s)")
 
     return 0 if results else 1
 
