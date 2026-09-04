@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-mini-vLLM — lightweight LLM inference engine (inspired by vLLM). Python 3.10–3.12, setuptools via `pyproject.toml`.
+mini-vLLM — lightweight LLM inference engine (inspired by vLLM). Python 3.10–3.13, setuptools via `pyproject.toml`.
 Code conventions: `@.claude/rules/`.
 
 ## Workflow
@@ -78,15 +78,15 @@ User Prompt → LLM → LLMEngine → Scheduler (prefill+decode) → BlockManage
 ```
 
 - **Engine**: `llm_engine.py`, `scheduler.py` (two-phase), `block_manager.py` (block-based KV), `model_runner.py`, `inference_executor.py`, `distributed_manager.py` (nccl/hccl), `sequence.py`
-- **Models**: `manager.py` + `__init__.py` (`MODEL_REGISTRY`). Supported: Qwen2, Qwen3, OPT, GPT2.
-- **Layers**: `attention.py` (FlashAttention + SDPA fallback), `linear.py` (column/row/QKV parallel), `rotary_embedding.py`, `layernorm.py` (RMSNorm), `activation.py` (SiluAndMul)
-- **Sampling**: `sampler.py` (penalties→temperature→top_k→top_p→min_p→multinomial), `mirostat.py` (standalone, not wired)
+- **Models**: `registry.py` (`SUPPORTED_MODELS` / `create_model`) + `manager.py` (load/lifecycle). Supported: Qwen3 only (GPT2/OPT/Qwen2 were dropped). `qwen_base.py` is the shared Qwen backbone; `qwen3.py` specializes it.
+- **Layers**: `attention.py` (FlashAttention + SDPA fallback), `linear.py` (column/row/QKV parallel), `rotary_embedding.py`, `layernorm.py` (RMSNorm), `activation.py` (SiluAndMul), `attention_backend.py` (NPU/CUDA/SDPA backends), `page_attention.py` (paged decode)
+- **Sampling**: `sampler.py` (penalties→temperature→top_k→top_p→min_p→multinomial, wired from `SamplingParams`), `mirostat.py` (standalone, not wired into the engine)
 - **Utils**: `device.py`, `context.py` (contextvars), `loader.py` (safetensors), `logger_utils.py`
 
 ## Non-obvious rules
 
 - `gpu_memory_utilization` is a backward-compat alias for `device_memory_utilization`.
-- `SamplingConfig` has `repetition_penalty`, `frequency_penalty`, `typical_p`, `seed` — but these are NOT wired from user-facing `SamplingParams`.
+- `SamplingParams` exposes `temperature/top_p/top_k/min_p/typical_p/repetition_penalty/frequency_penalty/presence_penalty/seed`; the executor forwards per-request penalties/typical-p/prev-tokens and a persistent per-request RNG (seeded) to the `Sampler`.
 - KV cache block size must be divisible by 64.
 - Rank 0 in main process, ranks 1-N as spawned workers; shared-memory IPC + event sync.
 - `enforce_eager=True` disables CUDA Graph capture/replay.
@@ -94,9 +94,9 @@ User Prompt → LLM → LLMEngine → Scheduler (prefill+decode) → BlockManage
 
 ## Adding a new model
 
-1. Create `minivllm/models/<name>.py` (reference: `qwen2.py`)
-2. Register in `MODEL_REGISTRY` in `minivllm/models/__init__.py`
-3. Add detection in `minivllm/models/manager.py` → `_detect_model_type()`
+1. Create `minivllm/models/<name>.py` (reference: `qwen_base.py` / `qwen3.py`)
+2. Register the class + its `model_type` in `SUPPORTED_MODELS` / `TYPE_TO_ARCH` in `minivllm/models/registry.py`
+3. Ensure `manager.py`'s `create_model` resolves the architecture from `hf_config`
 
 ## NPU Optimizations
 

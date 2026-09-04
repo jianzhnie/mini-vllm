@@ -109,9 +109,11 @@ class TestErrorHandling:
 
     def test_empty_directory_raises(self):
         model = DemoModel()
-        with tempfile.TemporaryDirectory() as temp_dir:
-            with pytest.raises(ValueError):
-                load_model(model, temp_dir)
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            pytest.raises(ValueError),
+        ):
+            load_model(model, temp_dir)
 
 
 class TestCustomWeightLoader:

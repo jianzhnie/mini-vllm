@@ -370,7 +370,8 @@ class NPUAttentionBackend(AttentionBackend):
         self._v_buffer: torch.Tensor | None = None
         self._buffer_shape: tuple[int, ...] | None = None
         self._attn_mask_cache: dict[int, torch.Tensor] = {}
-        self._seq_pos_cache: dict[tuple[int, torch.device], torch.Tensor] = {}
+        # One grow-once position grid per device (see prepare_npu_cache).
+        self._seq_pos_cache: dict[torch.device, torch.Tensor] = {}
 
         if not self._npu_available:
             logger.warning("NPU not available, falling back to standard attention")
@@ -603,17 +604,21 @@ class NPUAttentionBackend(AttentionBackend):
             if not self._handle_oom(e):
                 raise e
             logger.warning("Retrying NPU inference after OOM handling")
+            # Retry the IDENTICAL call (same causal mask + sparse_mode): dropping
+            # the mask on prefill would compute non-causal attention over the full
+            # K/V and silently corrupt the logits. _handle_oom freed memory, so a
+            # masked retry is valid; if it OOMs again we let it raise.
             out = self.npu_fused_infer_attention_score(
                 query,
                 key_cache,
                 value_cache,
-                atten_mask=None,
+                atten_mask=atten_mask,
                 actual_seq_lengths=q_seq_lens,
                 actual_seq_lengths_kv=kv_seq_lens,
                 num_heads=query.shape[1],
                 num_key_value_heads=num_kv_heads,
                 input_layout="BNSD",
-                sparse_mode=SPARSE_MODE,
+                sparse_mode=0 if is_prefill else SPARSE_MODE,
                 pre_tokens=65535,
                 next_tokens=0,
                 scale=scale,
@@ -716,15 +721,16 @@ class NPUAttentionBackend(AttentionBackend):
 
             block_size = k_cache.size(1)
 
-            # Cache position grid per (max_seqlen, device) to avoid re-creation
-            cache_key = (max_seqlen, k.device)
-            if cache_key in self._seq_pos_cache:
-                seq_pos = self._seq_pos_cache[cache_key]
-            else:
-                seq_pos = torch.arange(
+            # Reuse one position grid per device, growing it only when a longer
+            # context appears (keying by (max_seqlen, device) would accumulate a
+            # grid per length and grow memory quadratically over a session).
+            grid = self._seq_pos_cache.get(k.device)
+            if grid is None or grid.shape[1] < max_seqlen:
+                grid = torch.arange(
                     max_seqlen, dtype=torch.int64, device=k.device
                 ).unsqueeze(0)
-                self._seq_pos_cache[cache_key] = seq_pos
+                self._seq_pos_cache[k.device] = grid
+            seq_pos = grid[:, :max_seqlen]
 
             # 2. Map to block indices and offsets
             block_table_indices = seq_pos // block_size

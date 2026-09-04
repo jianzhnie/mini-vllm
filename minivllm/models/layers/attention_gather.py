@@ -25,7 +25,8 @@ class BufferedPageAttention:
     def __init__(self) -> None:
         self._buf_k: Tensor | None = None
         self._buf_v: Tensor | None = None
-        self._seq_pos_cache: dict[tuple[int, torch.device], Tensor] = {}
+        # One grow-once position grid per device (see __call__).
+        self._seq_pos_cache: dict[torch.device, Tensor] = {}
 
     def __call__(
         self,
@@ -80,15 +81,16 @@ class BufferedPageAttention:
         # Vectorized KV cache gather
         block_size = k_cache.size(1)
 
-        # Cache position grid per (max_seqlen, device)
-        cache_key = (max_seqlen, device)
-        if cache_key in self._seq_pos_cache:
-            seq_pos = self._seq_pos_cache[cache_key]
-        else:
-            seq_pos = torch.arange(
+        # Reuse one position grid per device, growing it only when a longer
+        # context appears (keying by (max_seqlen, device) would accumulate a
+        # grid per length and grow memory quadratically over a session).
+        grid = self._seq_pos_cache.get(device)
+        if grid is None or grid.shape[1] < max_seqlen:
+            grid = torch.arange(
                 max_seqlen, dtype=torch.int64, device=device
             ).unsqueeze(0)
-            self._seq_pos_cache[cache_key] = seq_pos
+            self._seq_pos_cache[device] = grid
+        seq_pos = grid[:, :max_seqlen]
 
         # Map token positions to block index and intra-block offset
         block_indices = seq_pos // block_size
@@ -121,11 +123,13 @@ class BufferedPageAttention:
             k_sdpa = cached_k
             v_sdpa = cached_v
 
-        # Permute from [batch, seqlen, heads, dim] to [batch, heads, seqlen, dim]
-        k_sdpa = k_sdpa.permute(0, 2, 1, 3)
-        v_sdpa = v_sdpa.permute(0, 2, 1, 3)
+        # Permute from [batch, seqlen, heads, dim] to [batch, heads, seqlen, dim].
+        # .contiguous() is required: a permuted view pushes SDPA onto the slow
+        # "math" backend, so the buffered path could be slower than the stateless one.
+        k_sdpa = k_sdpa.permute(0, 2, 1, 3).contiguous()
+        v_sdpa = v_sdpa.permute(0, 2, 1, 3).contiguous()
 
-        q_sdpa = q.unsqueeze(2)  # [batch, heads, 1, dim]
+        q_sdpa = q.unsqueeze(2).contiguous()  # [batch, heads, 1, dim]
 
         # SDPA mask: True = attend, False = masked (padding)
         sdpa_mask = torch.arange(max_seqlen, device=device).expand(

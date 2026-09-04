@@ -165,16 +165,17 @@ class TestNPUUnifiedInference:
         # Verify the function was called
         backend.npu_fused_infer_attention_score.assert_called_once()
 
-        # Verify argument shapes
+        # Verify argument shapes: 3 positional args (query expanded to BNSD,
+        # key, value); seq lengths / head counts / scale are passed as kwargs.
         args = backend.npu_fused_infer_attention_score.call_args[0]
-        assert args[0].shape == (2, 4, 1, 16)  # Query expanded
+        assert args[0].shape == (2, 4, 1, 16)  # query expanded to (b, h, 1, d)
         assert args[1].shape == key_cache.shape
         assert args[2].shape == value_cache.shape
-        assert args[4] == seq_len
-        assert args[5] == num_kv_heads
+        assert len(args) == 3
 
-        # Verify scale kwarg
         kwargs = backend.npu_fused_infer_attention_score.call_args[1]
+        assert kwargs["num_key_value_heads"] == num_kv_heads
+        assert kwargs["actual_seq_lengths_kv"] == [seq_len] * 2
         assert kwargs["scale"] == 1.0
 
 

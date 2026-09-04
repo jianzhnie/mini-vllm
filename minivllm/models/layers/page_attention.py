@@ -30,7 +30,8 @@ class PageAttention:
     """
 
     def __init__(self) -> None:
-        self._seq_pos_cache: dict[tuple[int, torch.device], Tensor] = {}
+        # One grow-once position grid per device (see __call__).
+        self._seq_pos_cache: dict[torch.device, Tensor] = {}
 
     def __call__(
         self,
@@ -66,15 +67,16 @@ class PageAttention:
 
         max_context = int(context_lens.max().item())
 
-        # Cache position grid per (max_context, device)
-        cache_key = (max_context, device)
-        if cache_key in self._seq_pos_cache:
-            seq_pos = self._seq_pos_cache[cache_key]
-        else:
-            seq_pos = torch.arange(
+        # Reuse one position grid per device, growing it only when a longer
+        # context appears. Keying by (max_context, device) would retain a grid
+        # per length and grow memory quadratically over a session.
+        grid = self._seq_pos_cache.get(device)
+        if grid is None or grid.shape[1] < max_context:
+            grid = torch.arange(
                 max_context, dtype=torch.int64, device=device
             ).unsqueeze(0)
-            self._seq_pos_cache[cache_key] = seq_pos
+            self._seq_pos_cache[device] = grid
+        seq_pos = grid[:, :max_context]
 
         block_indices = seq_pos // block_size
         block_offsets = seq_pos % block_size

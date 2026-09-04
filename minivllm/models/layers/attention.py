@@ -476,6 +476,13 @@ class Attention(nn.Module):
             batch_size = context.cum_seqlens_q.size(0) - 1
             outputs = []
 
+            # With prefix caching, the freshly computed k/v hold only the NEW
+            # tokens, but cum_seqlens_k counts the FULL context. So when a
+            # block table is present we gather the full K/V from the paged
+            # cache (which now holds prefix + just-stored new tokens) instead of
+            # slicing the short new-only tensors out of range.
+            use_paged = context.block_tables is not None and self._cache_initialized
+
             for i in range(batch_size):
                 # Extract sequence i from concatenated batch
                 q_start = context.cum_seqlens_q[i].item()
@@ -484,8 +491,14 @@ class Attention(nn.Module):
                 k_end = context.cum_seqlens_k[i + 1].item()
 
                 q_seq = q[q_start:q_end]  # [seqlen_q, num_heads, head_dim]
-                k_seq = k[k_start:k_end]  # [seqlen_k, num_kv_heads, head_dim]
-                v_seq = v[k_start:k_end]  # [seqlen_k, num_kv_heads, head_dim]
+                if use_paged:
+                    full_len = k_end - k_start
+                    k_seq, v_seq = self._gather_full_context_kv(
+                        context.block_tables[i], full_len
+                    )  # [seqlen_k, num_kv_heads, head_dim]
+                else:
+                    k_seq = k[k_start:k_end]  # [seqlen_k, num_kv_heads, head_dim]
+                    v_seq = v[k_start:k_end]
 
                 # Expand for attention computation: [1, seqlen, num_heads, head_dim]
                 q_seq = q_seq.unsqueeze(0)
@@ -495,7 +508,11 @@ class Attention(nn.Module):
                 # Handle GQA/MQA: repeat k/v heads to match q heads
                 k_seq, v_seq = self._repeat_kv_heads(k_seq, v_seq)
 
-                # Compute attention for this sequence
+                # Compute attention for this sequence. For the paged case
+                # seqlen_q != seqlen_k, and _compute_attention_weights applies
+                # the bottom-right-aligned causal mask (offset = seqlen_k -
+                # seqlen_q = num_cached), so new tokens correctly attend over
+                # their full cached prefix.
                 out_seq = self._compute_attention_weights(q_seq, k_seq, v_seq, q.device)
                 outputs.append(out_seq)
 
@@ -526,6 +543,32 @@ class Attention(nn.Module):
             )
 
         return attn_out
+
+    def _gather_full_context_kv(
+        self, block_table: torch.Tensor, full_len: int
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Gather a sequence's full-context K/V densely from the paged cache.
+
+        Maps token positions ``[0, full_len)`` to their physical block via the
+        sequence's block table and returns contiguous K/V of shape
+        ``[full_len, num_kv_heads, head_dim]`` for the dense SDPA fallback.
+
+        Args:
+            block_table: This sequence's row of block table, ``[num_blocks]``.
+            full_len: Total context length to gather (prefix + new tokens).
+
+        Returns:
+            Tuple of (k_full, v_full), each ``[full_len, num_kv_heads, head_dim]``.
+        """
+        block_size = self.k_cache.size(1)
+        num_blocks = (full_len + block_size - 1) // block_size
+        rows = block_table[:num_blocks]
+        t = torch.arange(full_len, device=rows.device, dtype=rows.dtype)
+        block_idx = (t // block_size).clamp(max=num_blocks - 1)
+        offset = t % block_size
+        return self.k_cache[rows[block_idx], offset], self.v_cache[
+            rows[block_idx], offset
+        ]
 
     def _repeat_kv_heads(
         self,

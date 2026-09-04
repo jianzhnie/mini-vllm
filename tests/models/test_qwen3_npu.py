@@ -81,6 +81,10 @@ class TestQwen3NPUIntegration:
             assert isinstance(first_layer_attn.attn, Attention)
             assert isinstance(first_layer_attn.attn.backend, NPUAttentionBackend)
 
+    @pytest.mark.skipif(
+        not is_npu_available(),
+        reason="NPU not available - requires actual NPU hardware",
+    )
     def test_rmsnorm_npu_dispatch(self, mock_npu_environment):
         """Test that RMSNorm dispatches to NPU kernel."""
         layer = RMSNorm(hidden_size=4096)
@@ -94,6 +98,10 @@ class TestQwen3NPUIntegration:
             layer(x)
             torch_npu.npu_rms_norm.assert_called_once()
 
+    @pytest.mark.skipif(
+        not is_npu_available(),
+        reason="NPU not available - requires actual NPU hardware",
+    )
     def test_silu_and_mul_npu_dispatch(self, mock_npu_environment):
         """Test that SiluAndMul dispatches to NPU kernel."""
         layer = SiluAndMul()
@@ -107,6 +115,10 @@ class TestQwen3NPUIntegration:
             layer(x)
             torch_npu.npu_swiglu.assert_called_once()
 
+    @pytest.mark.skipif(
+        not is_npu_available(),
+        reason="NPU not available - requires actual NPU hardware",
+    )
     @patch("minivllm.models.layers.rotary_embedding._USE_NPU_ROPE", True)
     def test_rope_npu_dispatch(self, mock_npu_environment):
         """Test that RoPE dispatches to NPU kernel."""
