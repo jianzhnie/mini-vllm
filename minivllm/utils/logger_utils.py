@@ -13,13 +13,9 @@ Key features:
 Components:
 - ColorfulFormatter: Adds ANSI color codes and rank info to log messages
 - get_logger(): Factory function for properly configured loggers
-- setup_logging(): Global logging configuration setup
 
 Example usage:
-    >>> from minivllm.utils.logger_utils import get_logger, setup_logging
-    >>>
-    >>> # Setup global logging configuration
-    >>> setup_logging(level=logging.INFO)
+    >>> from minivllm.utils.logger_utils import get_logger
     >>>
     >>> # Get a logger for your module
     >>> logger = get_logger(__name__)
@@ -154,45 +150,40 @@ def get_logger(
     if logger.handlers:
         logger.handlers.clear()
 
-    # Only configure handlers for main process or if explicitly requested
-    if is_main_process or not force_main_process:
-        # Initialize handlers list
-        handlers = []
+    # When force_main_process is set, worker processes are intentionally muted.
+    if force_main_process and not is_main_process:
+        logger.setLevel(logging.CRITICAL + 1)
+        logger.propagate = False
+        logger_initialized[name] = True
+        return logger
 
-        # Add StreamHandler for main process only
-        if is_main_process:
-            stream_handler = logging.StreamHandler(sys.stdout)
-            handlers.append(stream_handler)
-
-        # Add FileHandler for rank 0 process if log_file is specified
-        if is_main_process and log_file is not None:
+    handlers = []
+    if is_main_process:
+        handlers.append(logging.StreamHandler(sys.stdout))
+        if log_file is not None:
             log_file = Path(log_file)
             log_file.parent.mkdir(parents=True, exist_ok=True)
             handlers.append(logging.FileHandler(str(log_file), file_mode))
-
-        # Configure formatter with rank information
-        if is_main_process:
-            fmt = "%(asctime)s - [Rank %(rank)d] - %(name)s.%(funcName)s:%(lineno)d - %(levelname)s - %(message)s"
-        else:
-            fmt = (
-                "%(asctime)s - [Rank %(rank)d] - %(name)s - %(levelname)s - %(message)s"
-            )
-
-        formatter = ColorfulFormatter(fmt=fmt, datefmt="%Y-%m-%d %H:%M:%S")
-
-        # Apply configuration to all handlers
-        for handler in handlers:
-            handler.setFormatter(formatter)
-            handler.setLevel(log_level if is_main_process else logging.ERROR)
-            logger.addHandler(handler)
-
-    # Set logger level based on rank and configuration
-    if force_main_process:
-        logger.setLevel(
-            log_level if is_main_process else logging.CRITICAL + 1
-        )  # Disable logging for non-main processes
     else:
-        logger.setLevel(log_level if is_main_process else logging.ERROR)
+        # Worker processes need a handler too: with propagate=False and no
+        # handler, their ERROR logs (OOM, NCCL/HCCL failures) were silently
+        # dropped. Route them to stderr at ERROR level.
+        handlers.append(logging.StreamHandler(sys.stderr))
+
+    fmt = (
+        "%(asctime)s - [Rank %(rank)d] - %(name)s.%(funcName)s:%(lineno)d - %(levelname)s - %(message)s"
+        if is_main_process
+        else "%(asctime)s - [Rank %(rank)d] - %(name)s - %(levelname)s - %(message)s"
+    )
+    formatter = ColorfulFormatter(fmt=fmt, datefmt="%Y-%m-%d %H:%M:%S")
+    level = log_level if is_main_process else logging.ERROR
+
+    for handler in handlers:
+        handler.setFormatter(formatter)
+        handler.setLevel(level)
+        logger.addHandler(handler)
+
+    logger.setLevel(level)
 
     # Prevent messages from being handled by both this logger and parent loggers
     logger.propagate = False

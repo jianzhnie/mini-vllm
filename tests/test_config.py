@@ -81,6 +81,14 @@ class TestConfigValidation:
         config.gpu_memory_utilization = 0.8
         assert config.device_memory_utilization == 0.8
 
+    def test_gpu_memory_utilization_constructor_kwarg(
+        self, temp_minimal_model_dir: Path
+    ) -> None:
+        """The backward-compat spelling must also work in the constructor."""
+        config = Config(str(temp_minimal_model_dir), gpu_memory_utilization=0.6)
+        assert config.device_memory_utilization == 0.6
+        assert config.gpu_memory_utilization == 0.6
+
 
 class TestConfigDefaults:
     """Test Config default values."""

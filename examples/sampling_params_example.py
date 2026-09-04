@@ -14,35 +14,28 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import os
-import platform
 import sys
-from time import perf_counter
-
-if platform.system() == "Darwin" and not os.environ.get("MINIVLLM_DEVICE"):
-    os.environ["MINIVLLM_DEVICE"] = "cpu"
 
 from minivllm import LLM, SamplingParams
-from minivllm.config import Config
+from minivllm.utils.example_utils import (
+    DEFAULT_MODEL,
+    apply_darwin_cpu_fallback,
+    make_config,
+)
+
+apply_darwin_cpu_fallback()
 
 PROMPT = "Once upon a time in a magical kingdom,"
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Sampling params exploration")
-    parser.add_argument("--model", default="Qwen/Qwen3-0.6B")
+    parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--dtype", default="float32")
     parser.add_argument("--max-tokens", type=int, default=40)
     args = parser.parse_args()
 
-    config = Config(
-        model=args.model,
-        max_num_seqs=8,
-        max_model_len=512,
-        enforce_eager=True,
-        trust_remote_code=True,
-        dtype=args.dtype,
-    )
+    config = make_config(args.model, dtype=args.dtype, enforce_eager=True)
     llm = LLM(config)
 
     experiments = [
@@ -56,7 +49,7 @@ def main() -> int:
     ]
 
     print(f"\n{'=' * 70}")
-    print(f"  Sampling Parameter Exploration")
+    print("  Sampling Parameter Exploration")
     print(f"  Model: {args.model}  |  Prompt: {PROMPT!r}")
     print(f"{'=' * 70}")
 

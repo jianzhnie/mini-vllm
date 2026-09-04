@@ -13,16 +13,17 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import os
-import platform
 import sys
 from time import perf_counter
 
-if platform.system() == "Darwin" and not os.environ.get("MINIVLLM_DEVICE"):
-    os.environ["MINIVLLM_DEVICE"] = "cpu"
-
 from minivllm import LLM, SamplingParams
-from minivllm.config import Config
+from minivllm.utils.example_utils import (
+    DEFAULT_MODEL,
+    apply_darwin_cpu_fallback,
+    make_config,
+)
+
+apply_darwin_cpu_fallback()
 
 PROMPTS = [
     "Explain quantum computing in one sentence.",
@@ -52,7 +53,7 @@ def run_strategy(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Batch inference comparison")
-    parser.add_argument("--model", default="Qwen/Qwen3-0.6B")
+    parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--dtype", default="float32", choices=["float16", "float32"])
     parser.add_argument("--max-model-len", type=int, default=512)
     parser.add_argument(
@@ -63,13 +64,11 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    config = Config(
-        model=args.model,
-        max_num_seqs=8,
+    config = make_config(
+        args.model,
+        dtype=args.dtype,
         max_model_len=args.max_model_len,
         enforce_eager=True,
-        trust_remote_code=True,
-        dtype=args.dtype,
     )
 
     llm = LLM(config)
@@ -88,7 +87,7 @@ def main() -> int:
         print(f"    Time: {elapsed:.2f}s | Tokens: {total_tokens} | "
               f"Throughput: {total_tokens / elapsed:.0f} tok/s")
 
-        for i, (prompt, output) in enumerate(zip(PROMPTS, outputs)):
+        for i, (prompt, output) in enumerate(zip(PROMPTS, outputs, strict=True)):
             text = output["text"].strip().replace("\n", " ")
             if len(text) > 120:
                 text = text[:117] + "..."

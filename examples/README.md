@@ -11,8 +11,8 @@ source set_env.sh
 # Quick inference (auto-detects NPU)
 python examples.py
 
-# NPU inference with Qwen
-python examples/npu_inference_example.py --model qwen
+# NPU inference with Qwen3
+python examples/npu_inference_example.py --model qwen3
 
 # Flash attention benchmark
 python examples/npu_flash_attention_example.py --benchmark
@@ -33,17 +33,17 @@ source /home/jianzhnie/llmtuner/llm/mini-vllm/set_env.sh
 
 ## Model Short Names
 
-All scripts accept the following short names (mapped to local model paths):
+The engine currently supports **Qwen3** only (see `minivllm/models/registry.py`).
+All scripts share one registry — `example_utils.MODEL_PATHS` — with these short
+names (mapped to local paths, so they run offline):
 
 | Short name | Path |
 |---|---|
-| `opt` (default) | `/home/jianzhnie/llmtuner/hfhub/models/facebook/opt-125m` |
-| `qwen` / `qwen3` | `/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-0.6B` |
+| `qwen3` (default) | `/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-0.6B` |
 | `qwen3-1.7b` | `/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-1.7B` |
 | `qwen3-4b` | `/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-4B` |
-| `gpt2` | `/home/jianzhnie/llmtuner/hfhub/models/openai-community/gpt2` |
 
-You can also pass a full path to any HuggingFace-format model directory.
+You can also pass a full path to any local HuggingFace-format model directory.
 
 ---
 
@@ -55,8 +55,8 @@ Auto-detects NPU and runs inference. The simplest entry point.
 
 ```bash
 python examples.py                          # default: Qwen3-0.6B, float16
-python examples.py --model opt              # opt-125m
-python examples.py --model /path/to/model   # custom model
+python examples.py --model qwen3-4b         # a different Qwen3 size
+python examples.py --model /path/to/model  # custom model
 python examples.py --dtype float32          # float32 precision
 python examples.py --max-tokens 128         # longer output
 ```
@@ -65,7 +65,7 @@ python examples.py --max-tokens 128         # longer output
 
 | Flag | Default | Description |
 |---|---|---|
-| `--model` | `qwen` | Model short name or path |
+| `--model` | `qwen3` | Model short name or path |
 | `--dtype` | `float16` | `float16`, `float32`, or `auto` |
 | `--max-tokens` | `64` | Max tokens to generate per prompt |
 | `--temperature` | `0.7` | Sampling temperature |
@@ -90,7 +90,7 @@ python examples/npu_inference_example.py --tp 2
 python examples/npu_inference_example.py --tp 4
 
 # Combined
-python examples/npu_inference_example.py --model qwen --tp 2 --flash-attn
+python examples/npu_inference_example.py --model qwen3 --tp 2 --flash-attn
 
 # Custom prompt
 python examples/npu_inference_example.py --prompt "What is AI?"
@@ -100,7 +100,7 @@ python examples/npu_inference_example.py --prompt "What is AI?"
 
 | Flag | Default | Description |
 |---|---|---|
-| `--model` | `opt` | Model short name or path |
+| `--model` | `qwen3` | Model short name or path |
 | `--dtype` | `float16` | `float16`, `float32`, `bfloat16` |
 | `--max-tokens` | `64` | Max tokens per prompt |
 | `--temperature` | `0.7` | Sampling temperature |
@@ -125,7 +125,7 @@ python examples/npu_flash_attention_example.py
 
 # Full benchmark (eager vs FA comparison)
 python examples/npu_flash_attention_example.py --benchmark
-python examples/npu_flash_attention_example.py --benchmark --model qwen
+python examples/npu_flash_attention_example.py --benchmark --model qwen3
 
 # Skip low-level layer demos
 python examples/npu_flash_attention_example.py --skip-low-level
@@ -135,7 +135,7 @@ python examples/npu_flash_attention_example.py --skip-low-level
 
 | Flag | Default | Description |
 |---|---|---|
-| `--model` | `opt` | Model short name or path |
+| `--model` | `qwen3` | Model short name or path |
 | `--max-tokens` | `48` | Max tokens per prompt |
 | `--skip-low-level` | off | Skip attention layer demos |
 | `--benchmark` | off | Run full eager vs FA comparison |
@@ -161,15 +161,15 @@ python examples/npu_tp_example.py --tp 4
 # Test all TP sizes sequentially
 python examples/npu_tp_example.py --all
 
-# TP with Qwen
-python examples/npu_tp_example.py --tp 2 --model qwen
+# TP with Qwen3
+python examples/npu_tp_example.py --tp 2 --model qwen3
 ```
 
 **Options**
 
 | Flag | Default | Description |
 |---|---|---|
-| `--model` | `opt` | Model short name or path |
+| `--model` | `qwen3` | Model short name or path |
 | `--tp` | `0` | Single TP size (1/2/4); overrides `--all` |
 | `--all` | off | Run TP=1, TP=2, TP=4 sequentially |
 | `--max-tokens` | `48` | Max tokens per prompt |
@@ -229,9 +229,9 @@ python examples/check_npu_graph.py
 ### Quick smoke test (all in one)
 
 ```bash
-# Eager mode with both models
-python examples/npu_inference_example.py --model opt --max-tokens 16
-python examples/npu_inference_example.py --model qwen --max-tokens 16
+# Eager mode with two Qwen3 sizes
+python examples/npu_inference_example.py --model qwen3 --max-tokens 16
+python examples/npu_inference_example.py --model qwen3-4b --max-tokens 16
 
 # Flash attention benchmark
 python examples/npu_flash_attention_example.py --benchmark
@@ -243,7 +243,7 @@ python examples/npu_tp_example.py --tp 2
 ### Performance comparison (eager vs flash attention)
 
 ```bash
-python examples/npu_flash_attention_example.py --benchmark --model qwen
+python examples/npu_flash_attention_example.py --benchmark --model qwen3
 ```
 
 ### Tensor parallelism verification
@@ -253,7 +253,7 @@ python examples/npu_flash_attention_example.py --benchmark --model qwen
 python examples/npu_tp_example.py --all --max-tokens 32
 
 # Individual TP sizes
-python examples/npu_tp_example.py --tp 2 --model qwen
+python examples/npu_tp_example.py --tp 2 --model qwen3
 ```
 
 ### Debug mode

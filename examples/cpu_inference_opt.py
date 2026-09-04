@@ -16,7 +16,6 @@ Usage:
 import argparse
 import os
 import sys
-from pathlib import Path
 from time import perf_counter
 
 # Force CPU execution by hiding other devices (must be done before importing torch)
@@ -26,28 +25,15 @@ os.environ["XPU_VISIBLE_DEVICES"] = ""
 os.environ["MINIVLLM_DEVICE"] = "cpu"
 
 from minivllm import LLM, SamplingParams
-from minivllm.config import Config
-from minivllm.utils.example_utils import format_prompts_with_chat_template
+from minivllm.utils.example_utils import (
+    DEFAULT_MODEL,
+    format_prompts_with_chat_template,
+    make_config,
+    resolve_model,
+)
 from minivllm.utils.logger_utils import get_logger
 
 logger = get_logger(__name__)
-
-_MODEL_PATHS: dict[str, str] = {
-    "opt": "facebook/opt-125m",
-    "qwen": "Qwen/Qwen3-0.6B",
-    "qwen3": "Qwen/Qwen3-0.6B",
-    "qwen3-1.7b": "Qwen/Qwen3-1.7B",
-    "qwen3-4b": "Qwen/Qwen3-4B",
-}
-
-
-def resolve_model(name_or_path: str) -> str:
-    if name_or_path in _MODEL_PATHS:
-        return _MODEL_PATHS[name_or_path]
-    if Path(name_or_path).is_dir():
-        return name_or_path
-    return name_or_path
-
 
 prompts = [
     "Hello, who are you?",
@@ -136,18 +122,14 @@ def format_output_box(
     return "\n".join(lines)
 
 
-def run_inference(model_path: str = "") -> None:
+def run_inference(model_path: str) -> None:
     """Run the inference pipeline."""
-    if not model_path:
-        model_path = _MODEL_PATHS["opt"]
-    config = Config(
-        model=model_path,
-        max_num_seqs=8,
-        max_model_len=1024,
-        enforce_eager=True,
-        trust_remote_code=True,
-        device_memory_utilization=0.9,
+    config = make_config(
+        model_path,
         dtype="float32",
+        max_model_len=1024,
+        device_memory_utilization=0.9,
+        enforce_eager=True,
     )
 
     sampling_params = SamplingParams(
@@ -220,8 +202,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="CPU Inference Example")
     parser.add_argument(
         "--model",
-        default="opt",
-        help=f"Model short name ({', '.join(_MODEL_PATHS)}) or path",
+        default=DEFAULT_MODEL,
+        help="Model short name or path (see example_utils.MODEL_PATHS)",
     )
     args = parser.parse_args()
 

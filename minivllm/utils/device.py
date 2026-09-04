@@ -3,6 +3,7 @@
 Supports CUDA, NPU, XPU, MPS, MLU, and MUSA accelerators.
 """
 
+import functools
 import os
 from typing import Any
 
@@ -24,35 +25,61 @@ logger = get_logger(__name__)
 # module so callers can use `from minivllm.utils.device import is_torch_npu_available`.
 
 # Device types with standard torch.{type} module and set_device/mem APIs.
-_ACCELERATOR_TYPES = frozenset(("cuda", "npu", "xpu"))
+ACCELERATOR_TYPES = frozenset(("cuda", "npu", "xpu", "mlu", "musa"))
+
+# Selection priority. NPU is checked first (matches this project's primary
+# target hardware); each backend is gated on actually having a device present,
+# so a CUDA-only box with `torch_npu` installed falls through to CUDA.
+DEVICE_PRIORITY = ("npu", "cuda", "musa", "mlu", "xpu", "mps")
+AVAILABILITY_CHECKS = {
+    "npu": is_torch_npu_available,
+    "cuda": is_torch_cuda_available,
+    "musa": is_torch_musa_available,
+    "mlu": is_torch_mlu_available,
+    "xpu": is_torch_xpu_available,
+    "mps": is_torch_mps_available,
+}
 
 
-def _get_device_type() -> str:
-    """Detect best available device type (priority order)."""
-    if is_torch_npu_available():
-        return "npu"
-    if is_torch_cuda_available():
-        return "cuda"
-    if is_torch_musa_available():
-        return "musa"
-    if is_torch_mlu_available():
-        return "mlu"
-    if is_torch_xpu_available():
-        return "xpu"
-    if is_torch_mps_available():
-        return "mps"
+def dtype_has_device(dtype: str) -> bool:
+    """True if backend `dtype` reports at least one device.
+
+    `is_torch_*_available()` only checks software (importability) for NPU, so
+    we additionally require a non-zero device count to avoid targeting an empty
+    accelerator. Backends without a `device_count` API fall back to trusting
+    the availability check.
+    """
+    module = getattr(torch, dtype, None)
+    count_fn = getattr(module, "device_count", None) if module else None
+    if count_fn is None:
+        return True
+    try:
+        return count_fn() > 0
+    except Exception:
+        return False
+
+
+@functools.cache
+def get_device_type() -> str:
+    """Detect best available device type (priority order, hardware-gated)."""
+    for device_type in DEVICE_PRIORITY:
+        if AVAILABILITY_CHECKS[device_type]() and dtype_has_device(device_type):
+            return device_type
     return "cpu"
 
 
 def get_visible_devices_keyword() -> str:
-    """Get the environment variable keyword for visible devices."""
-    if is_torch_cuda_available():
-        return "CUDA_VISIBLE_DEVICES"
-    if is_torch_npu_available():
-        return "ASCEND_RT_VISIBLE_DEVICES"
-    if is_torch_xpu_available():
-        return "XPU_VISIBLE_DEVICES"
-    return ""
+    """Get the environment variable keyword for visible devices.
+
+    Derived from the same priority order as `get_device_type` so the two can
+    never disagree about which accelerator is active.
+    """
+    known_keywords = {
+        "npu": "ASCEND_RT_VISIBLE_DEVICES",
+        "cuda": "CUDA_VISIBLE_DEVICES",
+        "xpu": "XPU_VISIBLE_DEVICES",
+    }
+    return known_keywords.get(get_device_type(), "")
 
 
 def get_dist_info() -> tuple[int, int, int]:
@@ -80,7 +107,7 @@ def get_current_device(use_cpu: bool = False) -> torch.device:
     if use_cpu:
         return torch.device("cpu")
 
-    dtype = _get_device_type()
+    dtype = get_device_type()
     if dtype == "mps":
         return torch.device("mps")
     if dtype == "cpu":
@@ -90,7 +117,7 @@ def get_current_device(use_cpu: bool = False) -> torch.device:
 
 def get_device_count() -> int:
     """Number of available devices for current device type."""
-    dtype = _get_device_type()
+    dtype = get_device_type()
     if dtype == "cpu":
         return 0
     module = getattr(torch, dtype, None)
@@ -111,12 +138,14 @@ def set_device(device: torch.device) -> None:
         try:
             set_fn(device)
         except Exception as e:
-            logger.warning("Failed to set device %s: %s", device, e)
+            # A worker that silently lands on the wrong device corrupts
+            # tensor parallelism — fail loudly instead of warning.
+            raise RuntimeError(f"Failed to set device {device}: {e}") from e
 
 
 def get_default_device_name() -> str:
     """Device name string: 'cuda', 'npu', 'xpu', 'mps', 'mlu', 'musa', 'cpu'."""
-    return _get_device_type()
+    return get_device_type()
 
 
 def get_distributed_backend() -> str:
@@ -133,7 +162,7 @@ def get_distributed_backend() -> str:
 
         if dist.is_available() and hasattr(dist, "Backend"):
             return override
-    dtype = _get_device_type()
+    dtype = get_device_type()
     backends = {
         "npu": "hccl",
         "cuda": "nccl",
@@ -146,8 +175,8 @@ def get_distributed_backend() -> str:
 
 def empty_cache() -> None:
     """Free unused cached memory on current device."""
-    dtype = _get_device_type()
-    if dtype in _ACCELERATOR_TYPES:
+    dtype = get_device_type()
+    if dtype in ACCELERATOR_TYPES:
         module = getattr(torch, dtype)
         fn = getattr(module, "empty_cache", None)
         if fn is not None:
@@ -158,7 +187,7 @@ def synchronize(device: torch.device | None = None) -> None:
     """Synchronize pending operations on device."""
     if device is None:
         device = get_current_device()
-    if device.type in _ACCELERATOR_TYPES:
+    if device.type in ACCELERATOR_TYPES:
         module = getattr(torch, device.type)
         fn = getattr(module, "synchronize", None)
         if fn is not None:
@@ -169,7 +198,7 @@ def reset_peak_memory_stats(device: torch.device | None = None) -> None:
     """Reset peak memory statistics for device."""
     if device is None:
         device = get_current_device()
-    if device.type in _ACCELERATOR_TYPES:
+    if device.type in ACCELERATOR_TYPES:
         module = getattr(torch, device.type)
         fn = getattr(module, "reset_peak_memory_stats", None)
         if fn is not None:
@@ -182,7 +211,7 @@ def mem_get_info(device: torch.device | None = None) -> tuple[int, int]:
         device = get_current_device()
 
     device_type = device.type
-    if device_type in _ACCELERATOR_TYPES:
+    if device_type in ACCELERATOR_TYPES:
         module = getattr(torch, device_type)
         fn = getattr(module, "mem_get_info", None)
         if fn is not None:
@@ -198,16 +227,20 @@ def mem_get_info(device: torch.device | None = None) -> tuple[int, int]:
         total = psutil.virtual_memory().total
         free = psutil.virtual_memory().available
         return (free, total)
-    except ImportError:
-        logger.warning("psutil not available, using default memory values")
-        return (10**12, 10**12)
+    except ImportError as e:
+        # Do NOT fake a huge value: the KV-cache budget would then attempt a
+        # hundreds-of-GB allocation and die with a confusing OOM.
+        raise RuntimeError(
+            "psutil is required to size the CPU KV cache "
+            "(install with the [dev] extra)"
+        ) from e
 
 
 def memory_stats(device: torch.device | None = None) -> dict[str, Any]:
     """Get memory statistics dict for device."""
     if device is None:
         device = get_current_device()
-    if device.type in _ACCELERATOR_TYPES:
+    if device.type in ACCELERATOR_TYPES:
         module = getattr(torch, device.type)
         fn = getattr(module, "memory_stats", None)
         if fn is not None:
@@ -220,7 +253,7 @@ def memory_stats(device: torch.device | None = None) -> dict[str, Any]:
 
 def supports_cuda_graph() -> bool:
     """Whether current device supports CUDA Graph optimization."""
-    dtype = _get_device_type()
+    dtype = get_device_type()
     return dtype in ("cuda", "npu")
 
 
@@ -235,7 +268,7 @@ def get_device_graph_class() -> type:
 
     Raises RuntimeError if device graph is not supported.
     """
-    dtype = _get_device_type()
+    dtype = get_device_type()
     if dtype == "cuda":
         import torch
 
@@ -262,7 +295,7 @@ class DeviceGraphContext:
     def __enter__(self) -> None:
         import torch
 
-        dtype = _get_device_type()
+        dtype = get_device_type()
         if dtype == "npu":
             self._orig_stream = torch.npu.current_stream()
             self._stream = torch.npu.Stream()
@@ -283,7 +316,7 @@ def get_device_capabilities(device: torch.device | None = None) -> dict[str, Any
     if device is None:
         device = get_current_device()
     dt = device.type
-    is_accel = dt in _ACCELERATOR_TYPES
+    is_accel = dt in ACCELERATOR_TYPES
     return {
         "device_type": dt,
         "supports_graph": supports_cuda_graph(),

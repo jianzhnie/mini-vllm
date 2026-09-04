@@ -7,7 +7,7 @@ speedup. Also exercises the low-level attention layer on NPU.
 Usage:
     python examples/npu_flash_attention_example.py                        # quick check
     python examples/npu_flash_attention_example.py --benchmark            # full bench
-    python examples/npu_flash_attention_example.py --model qwen --benchmark
+    python examples/npu_flash_attention_example.py --model qwen3-4b --benchmark
     python examples/npu_flash_attention_example.py --skip-low-level       # LLM only
 """
 
@@ -19,26 +19,13 @@ import sys
 import time
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-_MODEL_PATHS: dict[str, str] = {
-    "qwen": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-0.6B",
-    "qwen3": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-0.6B",
-    "qwen3-1.7b": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-1.7B",
-    "qwen3-4b": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-4B",
-}
-
-_DEFAULT_MODEL = "qwen3"
-_PROMPTS = [
-    "Hello, who are you?",
-    "What is the capital of China?",
-    "Tell me a short joke.",
-]
-
-
-def resolve_model(name: str) -> str:
-    return _MODEL_PATHS.get(name, name)
+from minivllm.utils.example_utils import (
+    DEFAULT_MODEL,
+    DEFAULT_PROMPTS,
+    MODEL_PATHS,
+    make_config,
+    resolve_model,
+)
 
 
 def check_npu() -> bool:
@@ -57,8 +44,8 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="NPU Flash Attention Example")
     p.add_argument(
         "--model",
-        default=_DEFAULT_MODEL,
-        help=f"Model short name ({', '.join(_MODEL_PATHS)}) or path",
+        default=DEFAULT_MODEL,
+        help=f"Model short name ({', '.join(MODEL_PATHS)}) or path",
     )
     p.add_argument("--max-tokens", type=int, default=48)
     p.add_argument(
@@ -184,16 +171,12 @@ def run_llm_benchmark(model_path: str, max_tokens: int, use_fa: bool) -> dict:
         os.environ.pop("MINIVLLM_USE_NPU_FA", None)
 
     from minivllm import LLM, SamplingParams
-    from minivllm.config import Config
 
-    config = Config(
-        model=model_path,
-        max_num_seqs=8,
-        max_model_len=512,
-        enforce_eager=True,
-        trust_remote_code=True,
-        device_memory_utilization=0.85,
+    config = make_config(
+        model_path,
         dtype="float16",
+        device_memory_utilization=0.85,
+        enforce_eager=True,
     )
 
     params = SamplingParams(
@@ -205,10 +188,11 @@ def run_llm_benchmark(model_path: str, max_tokens: int, use_fa: bool) -> dict:
     init_t = time.perf_counter() - t0
 
     t1 = time.perf_counter()
-    outputs = llm.generate(_PROMPTS, params, use_tqdm=False)
+    outputs = llm.generate(DEFAULT_PROMPTS, params, use_tqdm=False)
     infer_t = time.perf_counter() - t1
 
     total_tokens = sum(len(o["token_ids"]) for o in outputs)
+    llm.exit()
     del llm
 
     return {
@@ -227,7 +211,7 @@ def demo_llm_benchmark(model_path: str, max_tokens: int) -> None:
     print("=" * 60)
 
     model_name = Path(model_path).name
-    print(f"  Model: {model_name}  Prompts: {len(_PROMPTS)}  Max tokens: {max_tokens}")
+    print(f"  Model: {model_name}  Prompts: {len(DEFAULT_PROMPTS)}  Max tokens: {max_tokens}")
 
     # Eager (no FA)
     print("\n  [1/2] Running in EAGER mode (no flash-attn)...")
@@ -304,16 +288,12 @@ def main() -> int:
         print("=" * 60)
         os.environ.pop("MINIVLLM_USE_NPU_FA", None)
         from minivllm import LLM, SamplingParams
-        from minivllm.config import Config
 
-        config = Config(
-            model=model_path,
-            max_num_seqs=8,
-            max_model_len=512,
-            enforce_eager=True,
-            trust_remote_code=True,
-            device_memory_utilization=0.85,
+        config = make_config(
+            model_path,
             dtype="float16",
+            device_memory_utilization=0.85,
+            enforce_eager=True,
         )
         params = SamplingParams(
             temperature=0.7, top_p=0.95, top_k=40, max_tokens=args.max_tokens
@@ -321,13 +301,14 @@ def main() -> int:
 
         llm = LLM(config)
         t0 = time.perf_counter()
-        outputs = llm.generate(_PROMPTS[:2], params, use_tqdm=True)
+        outputs = llm.generate(DEFAULT_PROMPTS[:2], params, use_tqdm=True)
         elapsed = time.perf_counter() - t0
         total = sum(len(o["token_ids"]) for o in outputs)
-        for p, o in zip(_PROMPTS[:2], outputs, strict=False):
+        for p, o in zip(DEFAULT_PROMPTS[:2], outputs, strict=False):
             print(f"\n  Q: {p}")
             print(f"  A: {o['text'].strip()[:150]} ({len(o['token_ids'])} tokens)")
         print(f"\n  {total} tokens in {elapsed:.2f}s ({total / elapsed:.1f} tok/s)")
+        llm.exit()
         del llm
 
     return 0

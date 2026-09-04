@@ -792,17 +792,33 @@ class InferenceExecutor:
 
         device = logits.device
 
+        # Always build the temperature tensor. For the top_k / top_p / min_p
+        # filters, only allocate + pass a tensor when some sequence actually
+        # activates the filter; otherwise let the sampler fall back to its no-op
+        # config defaults (top_p=1.0, top_k=-1, min_p=0.0). This saves three
+        # per-step host->device copies and, on the common path, the per-filter
+        # device syncs and the full-vocab top-p sort.
+        top_p_vals = [seq.top_p for seq in sequences]
+        top_k_vals = [seq.top_k for seq in sequences]
+        min_p_vals = [seq.min_p for seq in sequences]
+
         temperatures = torch.tensor(
             [seq.temperature for seq in sequences], device=device, dtype=torch.float32
         )
-        top_ps = torch.tensor(
-            [seq.top_p for seq in sequences], device=device, dtype=torch.float32
+        top_ps = (
+            torch.tensor(top_p_vals, device=device, dtype=torch.float32)
+            if any(p < 1.0 for p in top_p_vals)
+            else None
         )
-        top_ks = torch.tensor(
-            [seq.top_k for seq in sequences], device=device, dtype=torch.int64
+        top_ks = (
+            torch.tensor(top_k_vals, device=device, dtype=torch.int64)
+            if any(k > 0 for k in top_k_vals)
+            else None
         )
-        min_ps = torch.tensor(
-            [seq.min_p for seq in sequences], device=device, dtype=torch.float32
+        min_ps = (
+            torch.tensor(min_p_vals, device=device, dtype=torch.float32)
+            if any(p > 0.0 for p in min_p_vals)
+            else None
         )
 
         next_tokens = self.sampler(
@@ -869,7 +885,10 @@ class InferenceExecutor:
                     max_bs, max_blocks, dtype=torch.int32, device=self.device
                 ),
                 "outputs": torch.zeros(
-                    max_bs, self.config.hf_config.hidden_size, device=self.device
+                    max_bs,
+                    self.config.hf_config.hidden_size,
+                    dtype=self.dtype,
+                    device=self.device,
                 ),
             }
 
@@ -883,7 +902,13 @@ class InferenceExecutor:
             )
 
         except Exception as e:
-            logger.warning("Failed to capture device graphs: %s", e)
+            # A silent warning meant NPU decode could fall back to always-eager
+            # (per-step device->host syncs) with nothing in the log to explain it.
+            logger.error(
+                "Failed to capture device graphs — decode will run in eager mode "
+                "(slower; each step pays device->host syncs). Cause: %s",
+                e,
+            )
             self.graphs.clear()
             self.graph_vars.clear()
 

@@ -13,7 +13,7 @@ from transformers import AutoConfig, PretrainedConfig
 __all__ = ["Config"]
 
 
-@dataclass
+@dataclass(init=False)
 class Config:
     """Configuration for the mini-vLLM engine.
 
@@ -72,6 +72,48 @@ class Config:
     trust_remote_code: bool = False
     dtype: str = "auto"
     seed: int | None = None
+
+    def __init__(
+        self,
+        model: str,
+        max_num_batched_tokens: int = 16384,
+        max_num_seqs: int = 512,
+        max_model_len: int = 4096,
+        device_memory_utilization: float = 0.9,
+        tensor_parallel_size: int = 1,
+        enforce_eager: bool = False,
+        use_buffered_page_attention: bool = False,
+        hf_config: PretrainedConfig | None = None,
+        eos: int = -1,
+        kvcache_block_size: int = 64,
+        num_kvcache_blocks: int = -1,
+        trust_remote_code: bool = False,
+        dtype: str = "auto",
+        seed: int | None = None,
+        gpu_memory_utilization: float | None = None,
+    ) -> None:
+        # gpu_memory_utilization is a backward-compat spelling for
+        # device_memory_utilization; accept it in the constructor too.
+        if gpu_memory_utilization is not None:
+            device_memory_utilization = gpu_memory_utilization
+
+        self.model = model
+        self.max_num_batched_tokens = max_num_batched_tokens
+        self.max_num_seqs = max_num_seqs
+        self.max_model_len = max_model_len
+        self.device_memory_utilization = device_memory_utilization
+        self.tensor_parallel_size = tensor_parallel_size
+        self.enforce_eager = enforce_eager
+        self.use_buffered_page_attention = use_buffered_page_attention
+        self.hf_config = hf_config
+        self.eos = eos
+        self.kvcache_block_size = kvcache_block_size
+        self.num_kvcache_blocks = num_kvcache_blocks
+        self.trust_remote_code = trust_remote_code
+        self.dtype = dtype
+        self.seed = seed
+
+        self.__post_init__()
 
     # Backward compatibility alias for gpu_memory_utilization
     @property

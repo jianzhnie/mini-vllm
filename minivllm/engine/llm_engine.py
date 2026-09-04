@@ -21,6 +21,7 @@ from minivllm.engine.scheduler import Scheduler
 from minivllm.engine.sequence import Sequence
 from minivllm.sampling_params import SamplingParams
 from minivllm.utils.logger_utils import get_logger
+from minivllm.utils.random_utils import set_random_seed
 
 logger = get_logger(__name__)
 
@@ -75,6 +76,11 @@ class LLMEngine:
 
         self.config = config
 
+        # Apply the configured seed before any RNG is used so runs are
+        # reproducible. Config.seed was documented but previously never applied.
+        if config.seed is not None:
+            set_random_seed(config.seed)
+
         # Initialize distributed processes for tensor parallelism
         self.ps: list[mp.Process] = []
         self.events: list[mp.Event] = []
@@ -128,6 +134,12 @@ class LLMEngine:
             forced termination as fallback. Errors are logged as warnings.
         """
         errors: list[str] = []
+
+        # Idempotent: atexit also calls this, and examples may call it explicitly
+        # between sequential engines.
+        if getattr(self, "_exited", False):
+            return
+        self._exited = True
 
         try:
             # Step 1: Signal model runner to exit

@@ -20,31 +20,21 @@ import sys
 import time
 from pathlib import Path
 
-_MODEL_PATHS: dict[str, str] = {
-    "qwen": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-0.6B",
-    "qwen3": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-0.6B",
-    "qwen3-1.7b": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-1.7B",
-    "qwen3-4b": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-4B",
-}
-
-_DEFAULT_MODEL = "qwen3"
-_PROMPTS = [
-    "Hello, who are you?",
-    "What is the capital of China?",
-    "Tell me a short joke.",
-]
-
-
-def resolve_model(name: str) -> str:
-    return _MODEL_PATHS.get(name, name)
+from minivllm.utils.example_utils import (
+    DEFAULT_MODEL,
+    DEFAULT_PROMPTS,
+    MODEL_PATHS,
+    make_config,
+    resolve_model,
+)
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="mini-vLLM Tensor Parallelism Example")
     p.add_argument(
         "--model",
-        default=_DEFAULT_MODEL,
-        help=f"Model short name ({', '.join(_MODEL_PATHS)}) or path",
+        default=DEFAULT_MODEL,
+        help=f"Model short name ({', '.join(MODEL_PATHS)}) or path",
     )
     p.add_argument(
         "--tp", type=int, default=0, help="Single TP size to test (overrides --all)"
@@ -62,17 +52,13 @@ def parse_args() -> argparse.Namespace:
 def run_tp_inference(model_path: str, tp: int, max_tokens: int, dtype: str) -> dict:
     """Run inference at a given TP size and collect stats."""
     from minivllm import LLM, SamplingParams
-    from minivllm.config import Config
 
-    config = Config(
-        model=model_path,
-        max_num_seqs=8,
-        max_model_len=512,
-        tensor_parallel_size=tp,
-        enforce_eager=True,
-        trust_remote_code=True,
-        device_memory_utilization=0.8,
+    config = make_config(
+        model_path,
         dtype=dtype,
+        tp=tp,
+        device_memory_utilization=0.8,
+        enforce_eager=True,
     )
 
     params = SamplingParams(
@@ -84,10 +70,11 @@ def run_tp_inference(model_path: str, tp: int, max_tokens: int, dtype: str) -> d
     init_t = time.perf_counter() - t0
 
     t1 = time.perf_counter()
-    outputs = llm.generate(_PROMPTS, params, use_tqdm=False)
+    outputs = llm.generate(DEFAULT_PROMPTS, params, use_tqdm=False)
     infer_t = time.perf_counter() - t1
 
     total_tokens = sum(len(o["token_ids"]) for o in outputs)
+    llm.exit()
     del llm
 
     return {
@@ -116,7 +103,7 @@ def print_result(r: dict) -> None:
         f"  TP={r['tp']}: init={r['init_s']}s  infer={r['infer_s']}s  "
         f"tokens={r['tokens']}  throughput={r['tok_s']} tok/s"
     )
-    for i, (prompt, text) in enumerate(zip(_PROMPTS, r["texts"], strict=False)):
+    for i, (prompt, text) in enumerate(zip(DEFAULT_PROMPTS, r["texts"], strict=False)):
         snippet = text[:120]
         print(f"    [{i}] Q: {prompt[:60]}")
         print(f"        A: {snippet}{'...' if len(text) > 120 else ''}")
@@ -140,7 +127,7 @@ def main() -> int:
     print(f"\n{'=' * 70}")
     print(f"  Tensor Parallelism Example — {model_name}")
     print(f"  Dtype: {args.dtype}   Max tokens: {args.max_tokens}")
-    print(f"  Prompts: {len(_PROMPTS)}")
+    print(f"  Prompts: {len(DEFAULT_PROMPTS)}")
     print(f"{'=' * 70}")
 
     results = []
@@ -161,7 +148,6 @@ def main() -> int:
                 )
         # Allow time for worker processes and HCCL to fully release resources
         if len(tp_sizes) > 1:
-            import socket
             import torch.distributed as dist
 
             if dist.is_initialized():

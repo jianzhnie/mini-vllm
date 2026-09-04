@@ -137,32 +137,43 @@ class ModelManager:
             self.config.hf_config.use_buffered_page_attention = (
                 self.config.use_buffered_page_attention
             )
-            self.model = create_model(self.config.hf_config)
+
+            # Build the model directly in the target dtype rather than fp32 and
+            # converting afterwards, so weight loading never carries a full fp32
+            # copy. "auto" resolves to the checkpoint's native dtype.
+            dtype_map = {
+                "float16": torch.float16,
+                "bfloat16": torch.bfloat16,
+                "float32": torch.float32,
+            }
+            dtype_str = str(self.config.dtype).lower()
+            if dtype_str == "auto":
+                target_dtype = getattr(self.config.hf_config, "torch_dtype", torch.float16)
+                if not isinstance(target_dtype, torch.dtype):
+                    target_dtype = torch.float16
+            else:
+                target_dtype = dtype_map.get(dtype_str, torch.float16)
+
+            # Set the default dtype for construction only, then restore it
+            # (torch.set_default_dtype is not a context manager in all builds).
+            prev_dtype = torch.get_default_dtype()
+            torch.set_default_dtype(target_dtype)
+            try:
+                self.model = create_model(self.config.hf_config)
+                load_model(self.model, self.config.model)
+            finally:
+                torch.set_default_dtype(prev_dtype)
+            self.model = self.model.to(device=self.device, dtype=target_dtype)
+
             self.model_type = (
                 type(self.model).__name__.replace("ForCausalLM", "").lower()
             )
-
-            load_model(self.model, self.config.model)
-
-            # Apply configured dtype and move to device in one call
-            if self.config.dtype != "auto":
-                dtype_map = {
-                    "float16": torch.float16,
-                    "bfloat16": torch.bfloat16,
-                    "float32": torch.float32,
-                }
-                target_dtype = dtype_map.get(str(self.config.dtype).lower())
-                if target_dtype is not None and self.device:
-                    self.model = self.model.to(device=self.device, dtype=target_dtype)
-                elif target_dtype is not None:
-                    self.model = self.model.to(target_dtype)
-                elif self.device:
-                    self.model.to(self.device)
-            elif self.device:
-                self.model.to(self.device)
-
             self._model_config = self.model.config
-            logger.info("Model loaded successfully: %s", self.model_type)
+            logger.info(
+                "Model loaded successfully: %s (dtype=%s)",
+                self.model_type,
+                target_dtype,
+            )
 
         except Exception as e:
             logger.exception("Failed to load model")

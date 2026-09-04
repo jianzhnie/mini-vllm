@@ -6,11 +6,10 @@ dtype, and execution mode. Use --flash-attn to enable NPU flash attention,
 or --tp N for tensor parallelism.
 
 Usage:
-    python examples/npu_inference_example.py                           # eager, opt-125m
-    python examples/npu_inference_example.py --model qwen              # Qwen3-0.6B
+    python examples/npu_inference_example.py                           # eager, qwen3
     python examples/npu_inference_example.py --flash-attn              # NPU FA
     python examples/npu_inference_example.py --tp 2                    # TP=2
-    python examples/npu_inference_example.py --model qwen --tp 4 --flash-attn
+    python examples/npu_inference_example.py --model qwen3-4b --tp 4 --flash-attn
 """
 
 from __future__ import annotations
@@ -21,42 +20,21 @@ import sys
 import time
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Model registry — add entries here to make models available via short names
-# ---------------------------------------------------------------------------
-_MODEL_PATHS: dict[str, str] = {
-    "qwen": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-0.6B",
-    "qwen3": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-0.6B",
-    "qwen3-1.7b": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-1.7B",
-    "qwen3-4b": "/home/jianzhnie/llmtuner/hfhub/models/Qwen/Qwen3-4B",
-}
-
-_DEFAULT_MODEL = "qwen3"
-
-_PROMPTS = [
-    "Hello, who are you?",
-    "What is the capital of China?",
-    "Tell me a short joke.",
-    "Explain quantum computing in one sentence.",
-]
-
-
-def resolve_model(name_or_path: str) -> str:
-    """Resolve a short name to a full path, or return the path unchanged."""
-    if name_or_path in _MODEL_PATHS:
-        return _MODEL_PATHS[name_or_path]
-    if Path(name_or_path).is_dir():
-        return name_or_path
-    # Allow HuggingFace hub IDs (e.g. facebook/opt-125m)
-    return name_or_path
+from minivllm.utils.example_utils import (
+    DEFAULT_MODEL,
+    DEFAULT_PROMPTS,
+    make_config,
+    print_banner,
+    resolve_model,
+)
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="mini-vLLM NPU Inference Example")
     p.add_argument(
         "--model",
-        default=_DEFAULT_MODEL,
-        help=f"Model short name ({', '.join(_MODEL_PATHS)}) or path",
+        default=DEFAULT_MODEL,
+        help="Model short name or path (see example_utils.MODEL_PATHS)",
     )
     p.add_argument(
         "--dtype", default="float16", choices=["float16", "float32", "bfloat16"]
@@ -80,12 +58,6 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def print_banner(title: str) -> None:
-    print(f"\n{'=' * 70}")
-    print(f"  {title}")
-    print(f"{'=' * 70}")
-
-
 def main() -> int:
     args = parse_args()
 
@@ -94,19 +66,16 @@ def main() -> int:
         os.environ["MINIVLLM_USE_NPU_FA"] = "1"
 
     from minivllm import LLM, SamplingParams
-    from minivllm.config import Config
 
     model_path = resolve_model(args.model)
-
-    config = Config(
-        model=model_path,
-        max_num_seqs=args.max_seqs,
-        max_model_len=args.max_model_len,
-        tensor_parallel_size=args.tp,
-        enforce_eager=not args.no_eager,
-        trust_remote_code=True,
-        device_memory_utilization=0.85,
+    config = make_config(
+        args.model,
         dtype=args.dtype,
+        tp=args.tp,
+        max_model_len=args.max_model_len,
+        max_num_seqs=args.max_seqs,
+        device_memory_utilization=0.85,
+        enforce_eager=not args.no_eager,
     )
 
     sampling_params = SamplingParams(
@@ -116,7 +85,7 @@ def main() -> int:
         max_tokens=args.max_tokens,
     )
 
-    prompts = args.prompt if args.prompt else _PROMPTS
+    prompts = args.prompt if args.prompt else DEFAULT_PROMPTS
 
     # Header
     model_short = Path(model_path).name

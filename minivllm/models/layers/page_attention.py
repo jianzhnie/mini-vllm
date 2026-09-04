@@ -120,9 +120,12 @@ class PageAttention:
             k_sdpa = cached_k
             v_sdpa = cached_v
 
-        k_sdpa = k_sdpa.permute(0, 2, 1, 3)
-        v_sdpa = v_sdpa.permute(0, 2, 1, 3)
-        q_sdpa = q.unsqueeze(2)
+        # Make SDPA inputs contiguous: permute/unsqueeze leave non-contiguous
+        # views that force scaled_dot_product_attention onto the slow math
+        # backend.
+        k_sdpa = k_sdpa.permute(0, 2, 1, 3).contiguous()
+        v_sdpa = v_sdpa.permute(0, 2, 1, 3).contiguous()
+        q_sdpa = q.unsqueeze(2).contiguous()
 
         sdpa_mask = seq_pos < context_lens.unsqueeze(1)
         sdpa_mask = sdpa_mask.unsqueeze(1).unsqueeze(2)

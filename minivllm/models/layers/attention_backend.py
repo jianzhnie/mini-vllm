@@ -261,9 +261,15 @@ class StandardAttentionBackend(AttentionBackend):
         k_cache_reshaped = k_cache.view(-1, hidden_size)
         v_cache_reshaped = v_cache.view(-1, hidden_size)
 
-        # Scatter update
-        k_cache_reshaped[valid_slots] = valid_key
-        v_cache_reshaped[valid_slots] = valid_value
+        # Scatter update. On NPU, index_copy_ is the fastest KV-cache scatter
+        # (and valid_slots is int32 there); it's numerically equivalent to the
+        # advanced-setitem for unique slots.
+        if k_cache.device.type == "npu":
+            k_cache_reshaped.index_copy_(0, valid_slots, valid_key)
+            v_cache_reshaped.index_copy_(0, valid_slots, valid_value)
+        else:
+            k_cache_reshaped[valid_slots] = valid_key
+            v_cache_reshaped[valid_slots] = valid_value
 
 
 class FlashAttentionBackend(AttentionBackend):

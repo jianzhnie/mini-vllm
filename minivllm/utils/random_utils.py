@@ -9,10 +9,7 @@ import random
 import numpy as np
 import torch
 
-try:
-    from minivllm.utils.device import is_torch_npu_available
-except ImportError:
-    from transformers.utils import is_torch_npu_available
+from minivllm.utils.device import is_torch_npu_available
 
 __all__ = ["set_random_seed"]
 
