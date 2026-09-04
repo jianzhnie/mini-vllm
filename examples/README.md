@@ -16,10 +16,10 @@ source set_env.sh
 python examples/inference_example.py
 
 # NPU flash-attention benchmark
-python examples/npu_flash_attention_example.py --benchmark
+python examples/npu_perf_example.py --fa --benchmark
 
 # Tensor parallelism TP=2
-python examples/npu_tp_example.py --tp 2
+python examples/npu_perf_example.py --tp 2
 
 # Force CPU
 MINIVLLM_DEVICE=cpu python examples/inference_example.py
@@ -97,49 +97,42 @@ python examples/sampling_example.py --model qwen3-4b --max-tokens 48
 
 ---
 
-### 3. `npu_tp_example.py` — Tensor Parallelism
+### 3. `npu_perf_example.py` — Flash Attention + Tensor Parallelism
 
-Verifies TP=1, TP=2, and TP=4 correctness and throughput.
+The NPU performance suite, with two sections:
+
+- **FA** (`--fa`): low-level `Attention` prefill+decode demo, then an
+  eager-vs-flash-attention benchmark (`--benchmark`) or a quick run.
+- **TP** (`--tp N ...`): TP-size correctness / throughput comparison.
+
+Default (no flags) runs the FA section.
 
 ```bash
-python examples/npu_tp_example.py            # TP=1 baseline
-python examples/npu_tp_example.py --tp 2     # TP=2 only
-python examples/npu_tp_example.py --all      # TP=1,2,4 sequentially
+python examples/npu_perf_example.py                     # FA section (quick)
+python examples/npu_perf_example.py --fa --benchmark    # full eager-vs-FA bench
+python examples/npu_perf_example.py --fa --skip-low-level
+python examples/npu_perf_example.py --tp 1 2 4          # TP comparison
+python examples/npu_perf_example.py --fa --benchmark --tp 1 2 4
 ```
 
 | Flag | Default | Description |
 |---|---|---|
 | `--model` | `qwen3` | Model short name or path |
-| `--tp` | `0` | Single TP size (1/2/4); overrides `--all` |
-| `--all` | off | Run TP=1, TP=2, TP=4 sequentially |
-| `--max-tokens` | `48` | Max tokens per prompt |
 | `--dtype` | `float16` | `float16`, `float32`, or `bfloat16` |
+| `--max-tokens` | `48` | Max tokens per prompt |
+| `--fa` | off | Run the flash-attention section |
+| `--benchmark` | off | FA: full eager-vs-FA benchmark (else quick run) |
+| `--skip-low-level` | off | FA: skip the low-level attention layer demos |
+| `--tp N ...` | — | Run the TP section for these sizes |
 
-**Note:** TP=4 requires 4 NPU devices with HCCL peer-to-peer connectivity. On
-some machines, TP=4 in `--all` mode may fail due to HCCL link timeouts between
-runs; run TP=4 standalone (`--tp 4`) if this occurs.
-
----
-
-### 4. `npu_flash_attention_example.py` — Flash Attention
-
-Exercises the low-level `Attention` layer (prefill + decode) on NPU and compares
-eager vs NPU flash attention.
-
-```bash
-python examples/npu_flash_attention_example.py                     # quick check
-python examples/npu_flash_attention_example.py --benchmark         # full bench
-python examples/npu_flash_attention_example.py --skip-low-level    # LLM only
-```
-
-**Note:** Flash attention is enabled via `MINIVLLM_USE_NPU_FA=1`. On CANN 8.2.RC1
-the `npu_fused_infer_attention_score` and `npu_incre_flash_attention` APIs have
-known compatibility issues, so the standard PyTorch SDPA path is the default and
-is well-optimized on NPU.
+**Notes:** Flash attention is enabled via `MINIVLLM_USE_NPU_FA=1` (on CANN 8.2.RC1
+the `npu_fused_infer_attention_score` / `npu_incre_flash_attention` APIs have known
+compatibility issues, so the SDPA path is the default). TP=4 requires 4 NPU devices
+with HCCL peer-to-peer connectivity; if it times out between runs, retry standalone.
 
 ---
 
-### 5. `check_npu_graph.py` — NPU Environment Check
+### 4. `check_npu_graph.py` — NPU Environment Check
 
 Quick diagnostic of NPU runtime and available flash-attention APIs: device
 count/name, FA API availability (fusion, incremental, unified), and a functional
@@ -151,7 +144,7 @@ python examples/check_npu_graph.py
 
 ---
 
-### 6. `mp_event_demo.py` — Multiprocessing Event Demo
+### 5. `mp_event_demo.py` — Multiprocessing Event Demo
 
 Demonstrates the `multiprocessing.Event` pattern used by the tensor-parallelism
 worker processes (no LLM involved).
@@ -173,8 +166,8 @@ python examples/inference_example.py --model qwen3 --max-tokens 16
 python examples/inference_example.py --model qwen3-4b --max-tokens 16
 
 # Flash-attention benchmark / TP verification
-python examples/npu_flash_attention_example.py --benchmark
-python examples/npu_tp_example.py --tp 2
+python examples/npu_perf_example.py --fa --benchmark
+python examples/npu_perf_example.py --tp 2
 
 # Verbose logs / force CPU
 MINIVLLM_LOG_LEVEL=DEBUG python examples/inference_example.py
