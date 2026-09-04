@@ -25,7 +25,6 @@ from .linear import (
     LinearBase,
     MergedColumnParallelLinear,
     QKVParallelLinear,
-    ReplicatedLinear,
     RowParallelLinear,
     divide,
 )
@@ -46,7 +45,6 @@ __all__ = [
     "LinearBase",
     "MergedColumnParallelLinear",
     "QKVParallelLinear",
-    "ReplicatedLinear",
     "RowParallelLinear",
     "divide",
     # Rotary embeddings

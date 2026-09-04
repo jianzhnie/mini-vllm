@@ -146,48 +146,29 @@ class QwenAttention(nn.Module):
     def forward(
         self, positions: torch.Tensor, hidden_states: torch.Tensor
     ) -> torch.Tensor:
+        # hidden_states is always 2-D (total_tokens, hidden): the model flattens
+        # batch*seq before dispatching. (A 3-D (batch, seq, hidden) branch used
+        # to exist here but was unreachable and its RoPE/attention paths were
+        # broken for that layout, so it was removed.)
         qkv = self.qkv_proj(hidden_states)
 
-        if hidden_states.dim() == 3:
-            batch_size, seq_len, _ = hidden_states.shape
-            q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
+        total_tokens, _ = hidden_states.shape
+        q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
 
-            q = q.view(batch_size, seq_len, self.num_heads, self.head_dim)
-            k = k.view(batch_size, seq_len, self.num_kv_heads, self.head_dim)
-            v = v.view(batch_size, seq_len, self.num_kv_heads, self.head_dim)
+        q = q.view(total_tokens, self.num_heads, self.head_dim)
+        k = k.view(total_tokens, self.num_kv_heads, self.head_dim)
+        v = v.view(total_tokens, self.num_kv_heads, self.head_dim)
 
-            q = q.transpose(1, 2)
-            k = k.transpose(1, 2)
-            v = v.transpose(1, 2)
+        if self.q_norm is not None and self.k_norm is not None:
+            q, _ = self.q_norm(q)
+            k, _ = self.k_norm(k)
 
-            if self.q_norm is not None and self.k_norm is not None:
-                q, _ = self.q_norm(q)
-                k, _ = self.k_norm(k)
+        q, k = self.rotary_emb(positions, q, k)
+        o = self.attn(q, k, v)
 
-            q, k = self.rotary_emb(positions, q, k)
-            o = self.attn(q, k, v)
-
-            o = o.transpose(1, 2).contiguous()
-            output = self.o_proj(o.view(batch_size * seq_len, -1))
-            return output.view(batch_size, seq_len, -1)
-        else:
-            total_tokens, _ = hidden_states.shape
-            q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
-
-            q = q.view(total_tokens, self.num_heads, self.head_dim)
-            k = k.view(total_tokens, self.num_kv_heads, self.head_dim)
-            v = v.view(total_tokens, self.num_kv_heads, self.head_dim)
-
-            if self.q_norm is not None and self.k_norm is not None:
-                q, _ = self.q_norm(q)
-                k, _ = self.k_norm(k)
-
-            q, k = self.rotary_emb(positions, q, k)
-            o = self.attn(q, k, v)
-
-            o = o.reshape(total_tokens, self.num_heads * self.head_dim)
-            output = self.o_proj(o)
-            return output
+        o = o.reshape(total_tokens, self.num_heads * self.head_dim)
+        output = self.o_proj(o)
+        return output
 
     def extra_repr(self) -> str:
         return (

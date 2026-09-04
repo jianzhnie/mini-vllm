@@ -61,7 +61,14 @@ def dtype_has_device(dtype: str) -> bool:
 
 @functools.cache
 def get_device_type() -> str:
-    """Detect best available device type (priority order, hardware-gated)."""
+    """Detect best available device type (priority order, hardware-gated).
+
+    Honors MINIVLLM_DEVICE so capability gating (cuda graphs, dist backend,
+    accelerator-specific ops) stays consistent with get_current_device.
+    """
+    env_device = os.environ.get("MINIVLLM_DEVICE", "").lower().strip()
+    if env_device:
+        return env_device
     for device_type in DEVICE_PRIORITY:
         if AVAILABILITY_CHECKS[device_type]() and dtype_has_device(device_type):
             return device_type

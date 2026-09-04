@@ -151,8 +151,13 @@ class ModelManager:
                 target_dtype = getattr(self.config.hf_config, "torch_dtype", torch.float16)
                 if not isinstance(target_dtype, torch.dtype):
                     target_dtype = torch.float16
+            elif dtype_str not in dtype_map:
+                raise ValueError(
+                    f"Unsupported dtype {self.config.dtype!r}; expected 'auto' "
+                    f"or one of {sorted(dtype_map)}"
+                )
             else:
-                target_dtype = dtype_map.get(dtype_str, torch.float16)
+                target_dtype = dtype_map[dtype_str]
 
             # Set the default dtype for construction only, then restore it
             # (torch.set_default_dtype is not a context manager in all builds).

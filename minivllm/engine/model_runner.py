@@ -146,21 +146,19 @@ class ModelRunner:
                     logger.info("Rank %d: Received exit command", self.rank)
                     break
 
-                # Execute command locally
-                if hasattr(self, method_name):
-                    try:
-                        method = getattr(self, method_name)
-                        method(*args, **kwargs)
-                    except Exception as e:
-                        logger.error(
-                            "Rank %d: Error executing %s: %s", self.rank, method_name, e
-                        )
-                        # Continue processing next command instead of crashing
-                else:
-                    logger.error(
-                        "Rank %d: Unknown method received: %s", self.rank, method_name
+                # Execute command locally.
+                #
+                # Do NOT catch per-command exceptions here: rank 0 has already
+                # entered (or finished) this command's collectives, so a worker
+                # that merely logs and `continue`s to the next broadcast would
+                # desync the process group -> rank 0 hangs with no error on its
+                # side. Let the failure propagate so this worker exits loudly
+                # and rank 0 observes the dead peer instead of hanging.
+                if not hasattr(self, method_name):
+                    raise AttributeError(
+                        f"Rank {self.rank}: Unknown method received: {method_name}"
                     )
-                    # Notify rank 0 about the error if needed
+                getattr(self, method_name)(*args, **kwargs)
 
         except KeyboardInterrupt:
             logger.info("Rank %d: Worker interrupted", self.rank)

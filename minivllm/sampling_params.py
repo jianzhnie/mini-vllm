@@ -31,6 +31,17 @@ class SamplingParams:
         min_p: Float that represents the minimum probability for a token to be
             considered, relative to the probability of the most likely token.
             Must be in [0, 1]. Default: 0.0.
+        typical_p: Typical-sampling threshold in (0, 1]. Tokens are kept while
+            their information content stays within typical_p * entropy. Set to
+            1.0 to disable. Default: 1.0.
+        repetition_penalty: Multiplies logits of already-seen tokens by 1/p
+            (p > 1 discourages repetition). Must be >= 1.0. Default: 1.0 (off).
+        frequency_penalty: Subtracts penalty * count(token) from a token's logit.
+            Must be >= 0.0. Default: 0.0 (off).
+        presence_penalty: Subtracts penalty from a token's logit if it has
+            appeared at least once. Must be >= 0.0. Default: 0.0 (off).
+        seed: Optional RNG seed for reproducible sampling of this request.
+            Default: None (non-deterministic).
         max_tokens: Maximum number of tokens to generate in completion.
             Default: 64.
         ignore_eos: Whether to ignore the end-of-sequence token and
@@ -44,6 +55,11 @@ class SamplingParams:
     min_p: float = 0.0
     max_tokens: int = 64
     ignore_eos: bool = False
+    typical_p: float = 1.0
+    repetition_penalty: float = 1.0
+    frequency_penalty: float = 0.0
+    presence_penalty: float = 0.0
+    seed: int | None = None
 
     def __post_init__(self) -> None:
         """Validate sampling parameters after dataclass initialization.
@@ -65,3 +81,21 @@ class SamplingParams:
 
         if self.max_tokens <= 0:
             raise ValueError(f"max_tokens must be > 0, got {self.max_tokens}")
+
+        if self.typical_p <= 0:
+            raise ValueError(f"typical_p must be > 0, got {self.typical_p}")
+
+        if self.repetition_penalty < 1.0:
+            raise ValueError(
+                f"repetition_penalty must be >= 1.0, got {self.repetition_penalty}"
+            )
+
+        if self.frequency_penalty < 0.0:
+            raise ValueError(
+                f"frequency_penalty must be >= 0.0, got {self.frequency_penalty}"
+            )
+
+        if self.presence_penalty < 0.0:
+            raise ValueError(
+                f"presence_penalty must be >= 0.0, got {self.presence_penalty}"
+            )

@@ -37,6 +37,10 @@ class Sampler(nn.Module):
         avoid_top_ks: Tensor | None = None,
         prev_tokens: Tensor | None = None,
         generator: torch.Generator | None = None,
+        repetition_penalties: Tensor | None = None,
+        frequency_penalties: Tensor | None = None,
+        presence_penalties: Tensor | None = None,
+        generators: list[torch.Generator | None] | None = None,
     ) -> Tensor:
         """
         Sample tokens from logits.
@@ -50,29 +54,39 @@ class Sampler(nn.Module):
             min_ps: Optional tensor [batch_size] to override config.min_p
             typical_ps: Optional tensor [batch_size] to override config.typical_p
             avoid_top_ks: Optional tensor [batch_size] to override config.avoid_top_k
-            prev_tokens: Optional tensor [batch_size, seq_len] for penalties
-            generator: Optional random generator
+            prev_tokens: Optional tensor [batch_size, seq_len] (padded with -1)
+                for penalties
+            generator: Optional random generator for the no-seed batch path
+            repetition_penalties/frequency_penalties/presence_penalties: Optional
+                per-row tensor [batch_size] overrides; fall back to the config
+                scalar when a row/whole tensor is absent.
+            generators: Optional per-row generators (for reproducible sampling);
+                ``None`` entries fall back to ``generator``.
 
         Returns:
             sampled_tokens: [batch_size]
         """
         cfg = config or self.config
 
-        # 1. Apply penalties (if any)
-        # Note: Penalties are typically applied before other transformations
+        # 1. Apply penalties (if any). The functional penalty ops take a scalar,
+        #    so per-row values are applied row-by-row (only over active rows).
         if prev_tokens is not None:
-            if cfg.repetition_penalty != 1.0:
-                logits = F.apply_repetition_penalty(
-                    logits, prev_tokens, cfg.repetition_penalty
-                )
-            if cfg.frequency_penalty != 0.0:
-                logits = F.apply_frequency_penalty(
-                    logits, prev_tokens, cfg.frequency_penalty
-                )
-            if cfg.presence_penalty != 0.0:
-                logits = F.apply_presence_penalty(
-                    logits, prev_tokens, cfg.presence_penalty
-                )
+            batch = logits.size(0)
+            rep = self._row_list(repetition_penalties, cfg.repetition_penalty, batch)
+            freq = self._row_list(frequency_penalties, cfg.frequency_penalty, batch)
+            pres = self._row_list(presence_penalties, cfg.presence_penalty, batch)
+            for b in range(batch):
+                row_logits = logits[b : b + 1]
+                row_prev = prev_tokens[b : b + 1]
+                if rep[b] != 1.0:
+                    row_logits = F.apply_repetition_penalty(
+                        row_logits, row_prev, rep[b]
+                    )
+                if freq[b] != 0.0:
+                    row_logits = F.apply_frequency_penalty(row_logits, row_prev, freq[b])
+                if pres[b] != 0.0:
+                    row_logits = F.apply_presence_penalty(row_logits, row_prev, pres[b])
+                logits[b] = row_logits.squeeze(0)
 
         # 2. Apply Top Token Restriction (Avoid Top-K)
         # Useful for watermarking or specific constraints
@@ -107,7 +121,7 @@ class Sampler(nn.Module):
             logits = F.apply_top_k(logits, top_ks if top_ks is not None else cfg.top_k)
             logits = F.apply_top_p(logits, top_ps if top_ps is not None else cfg.top_p)
             logits = F.apply_min_p(logits, min_ps if min_ps is not None else cfg.min_p)
-            return F.sample_from_logits(logits, generator=generator)
+            return self._sample(logits, generators, generator)
 
         # Mixed batch: greedy rows argmax, remaining rows run the pipeline.
         non_greedy = ~greedy
@@ -121,7 +135,30 @@ class Sampler(nn.Module):
         sub = F.apply_top_k(sub, top_ks[non_greedy] if top_ks is not None else cfg.top_k)
         sub = F.apply_top_p(sub, top_ps[non_greedy] if top_ps is not None else cfg.top_p)
         sub = F.apply_min_p(sub, min_ps[non_greedy] if min_ps is not None else cfg.min_p)
-        out[non_greedy] = F.sample_from_logits(sub, generator=generator)
+        sub_gens = [generators[i] for i in non_greedy.nonzero().squeeze(-1)] if generators else None
+        out[non_greedy] = self._sample(sub, sub_gens, generator)
+        return out
+
+    @staticmethod
+    def _row_list(values: Tensor | None, default: float, batch: int) -> list[float]:
+        """Per-row override list, falling back to the config scalar per row."""
+        if values is None:
+            return [default] * batch
+        return values.tolist()
+
+    def _sample(
+        self,
+        logits: Tensor,
+        generators: list[torch.Generator | None] | None,
+        generator: torch.Generator | None,
+    ) -> Tensor:
+        """Sample a batch, honoring per-row generators when provided."""
+        if generators is None:
+            return F.sample_from_logits(logits, generator=generator)
+        out = logits.new_empty(logits.size(0), dtype=torch.long)
+        for b in range(logits.size(0)):
+            gen = generators[b] if generators[b] is not None else generator
+            out[b] = F.sample_from_logits(logits[b : b + 1], generator=gen).squeeze(0)
         return out
 
 

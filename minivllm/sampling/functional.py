@@ -8,7 +8,6 @@ from torch import Tensor
 
 # Constants
 MIN_TEMPERATURE = 1e-8
-MIN_PROB = 1e-10
 
 # Attempt to use torch.compile for kernel fusion on supported devices
 try:
@@ -248,10 +247,17 @@ def apply_typical_filtering(
         tau: float, typical threshold (default 1.0).
              When tau >= 1.0, typical sampling is effectively disabled (returns original logits).
     """
-    if isinstance(tau, (int, float)):
-        if tau >= 1.0:
+    if isinstance(tau, Tensor):
+        tau_row = tau.float()
+        if not (tau_row < 1.0).any():
             return logits
-    elif not (tau < 1.0).any():
+        # Rows with tau >= 1.0 are disabled: give them a huge threshold so the
+        # mask keeps every token. (tau is shaped [batch]; align with entropy's
+        # [batch, 1] via unsqueeze so it broadcasts per-row, not per-column.)
+        tau = torch.where(
+            tau_row < 1.0, tau_row, torch.tensor(1e9, device=tau_row.device)
+        ).unsqueeze(-1)
+    elif tau >= 1.0:
         return logits
 
     logits = logits.clone()

@@ -1,7 +1,7 @@
 """Rotary positional embedding helpers."""
 
 import os
-from functools import lru_cache
+from functools import cache
 from typing import Any
 
 import torch
@@ -216,27 +216,28 @@ def get_rope(
     Returns:
         RotaryEmbedding instance configured with the specified parameters.
     """
-    # Note: dict is not hashable, so we can't directly pass it to lru_cache wrapped function
-    # if we want to use it as a key. However, for this helper, we assume the dict content
-    # determines uniqueness.
-    # To make it hashable for lru_cache, we'd need to convert it to a tuple of items.
-    # For now, we'll instantiate it directly if scaling is present, bypassing cache for simplicity
-    # or rely on the user to pass hashable args if we were strict.
-    # Given the simplicity, we'll just create the instance.
+    # A dict is not hashable, so normalize it to a sorted tuple of items to use
+    # as the cache key. (Bypassing the cache here — as it was before — would build
+    # a fresh RotaryEmbedding, and hence a redundant fp32 cos/sin buffer, per layer.)
+    if isinstance(rope_scaling, dict):
+        key: tuple | None = tuple(sorted(rope_scaling.items()))
+    else:
+        key = rope_scaling
 
-    # Check if we need to bypass cache due to unhashable dict
-    if rope_scaling is not None:
-        return RotaryEmbedding(head_size, rotary_dim, max_position, base, rope_scaling)
-
-    return _get_rope_cached(head_size, rotary_dim, max_position, base)
+    return _get_rope_cached(head_size, rotary_dim, max_position, base, key)
 
 
-@lru_cache(4)
+@cache
 def _get_rope_cached(
     head_size: int,
     rotary_dim: int,
     max_position: int,
     base: float,
+    rope_scaling_key: tuple | None,
 ) -> RotaryEmbedding:
     """Internal cached helper."""
-    return RotaryEmbedding(head_size, rotary_dim, max_position, base)
+    if isinstance(rope_scaling_key, tuple):
+        rope_scaling = dict(rope_scaling_key)
+    else:
+        rope_scaling = rope_scaling_key
+    return RotaryEmbedding(head_size, rotary_dim, max_position, base, rope_scaling)

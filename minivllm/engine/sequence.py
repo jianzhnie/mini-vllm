@@ -92,6 +92,11 @@ class Sequence:
         self.min_p: float = sampling_params.min_p
         self.max_tokens: int = sampling_params.max_tokens
         self.ignore_eos: bool = sampling_params.ignore_eos
+        self.typical_p: float = sampling_params.typical_p
+        self.repetition_penalty: float = sampling_params.repetition_penalty
+        self.frequency_penalty: float = sampling_params.frequency_penalty
+        self.presence_penalty: float = sampling_params.presence_penalty
+        self.seed: int | None = sampling_params.seed
 
     def __len__(self) -> int:
         """Return the total number of tokens in the sequence.
@@ -286,6 +291,11 @@ class Sequence:
             self.min_p,
             self.max_tokens,
             self.ignore_eos,
+            self.typical_p,
+            self.repetition_penalty,
+            self.frequency_penalty,
+            self.presence_penalty,
+            self.seed,
         )
 
     def __setstate__(
@@ -303,6 +313,11 @@ class Sequence:
             float,
             int,
             bool,
+            float,
+            float,
+            float,
+            float,
+            int | None,
         ],
     ) -> None:
         """Restore sequence state from serialization/unpickling.
@@ -327,6 +342,11 @@ class Sequence:
             self.min_p,
             self.max_tokens,
             self.ignore_eos,
+            self.typical_p,
+            self.repetition_penalty,
+            self.frequency_penalty,
+            self.presence_penalty,
+            self.seed,
         ) = state
 
         # Calculate completion tokens count for logic check

@@ -138,7 +138,6 @@ class InferenceExecutor:
         self.graphs: dict[int, Any] = {}
         self.graph_vars: dict[str, torch.Tensor] = {}
         self.graph_bs: list[int] = []
-        self.graph_pool: Any | None = None
 
         # Performance metrics
         self.total_tokens_generated = 0
@@ -342,6 +341,11 @@ class InferenceExecutor:
         """Initialize the token sampler."""
         self.sampler = Sampler()
         self.sampler = self.sampler.to(self.device)
+        # Persistent per-request RNG so a seeded request stays reproducible
+        # across decode steps (multinomial generator state must advance, not be
+        # re-seeded, each step). Keyed by seq_id; small and bounded by the
+        # session's request count.
+        self._sample_generators: dict[int, torch.Generator] = {}
         logger.debug("Token sampler initialized")
 
     def _optimize_model(self) -> None:
@@ -685,10 +689,17 @@ class InferenceExecutor:
         ):
             buf = self._decode_block_tables_cpu[:batch_size, :max_blocks]
             buf.fill_(-1)
-            for i, seq in enumerate(sequences):
-                bt = seq.block_table
-                if bt:
-                    buf[i, : len(bt)] = torch.tensor(bt, dtype=torch.int32)
+            # One batch-wide tensor instead of a per-sequence allocation per
+            # step (short rows are -1 padded to the batch's max_blocks).
+            packed = torch.tensor(
+                [
+                    list(seq.block_table)
+                    + [-1] * (max_blocks - len(seq.block_table))
+                    for seq in sequences
+                ],
+                dtype=torch.int32,
+            )
+            buf.copy_(packed)
             self._decode_block_tables[:batch_size, :max_blocks].copy_(
                 buf, non_blocking=True
             )
@@ -820,6 +831,46 @@ class InferenceExecutor:
             if any(p > 0.0 for p in min_p_vals)
             else None
         )
+        typical_ps = (
+            torch.tensor(
+                [seq.typical_p for seq in sequences], device=device, dtype=torch.float32
+            )
+            if any(seq.typical_p < 1.0 for seq in sequences)
+            else None
+        )
+
+        # Penalties (opt-in, per-row). prev_tokens is the shared input for all
+        # three; the per-row tensors are only built for the penalties that are
+        # actually active so the common path stays allocation-free.
+        rep_penalties = freq_penalties = pres_penalties = None
+        prev_tokens = None
+        if any(
+            seq.repetition_penalty != 1.0
+            or seq.frequency_penalty != 0.0
+            or seq.presence_penalty != 0.0
+            for seq in sequences
+        ):
+            prev_tokens = self._build_prev_tokens(sequences, device)
+            if any(seq.repetition_penalty != 1.0 for seq in sequences):
+                rep_penalties = torch.tensor(
+                    [seq.repetition_penalty for seq in sequences],
+                    device=device,
+                    dtype=torch.float32,
+                )
+            if any(seq.frequency_penalty != 0.0 for seq in sequences):
+                freq_penalties = torch.tensor(
+                    [seq.frequency_penalty for seq in sequences],
+                    device=device,
+                    dtype=torch.float32,
+                )
+            if any(seq.presence_penalty != 0.0 for seq in sequences):
+                pres_penalties = torch.tensor(
+                    [seq.presence_penalty for seq in sequences],
+                    device=device,
+                    dtype=torch.float32,
+                )
+
+        generators = self._build_generators(sequences, device)
 
         next_tokens = self.sampler(
             logits,
@@ -827,9 +878,54 @@ class InferenceExecutor:
             top_ps=top_ps,
             top_ks=top_ks,
             min_ps=min_ps,
+            typical_ps=typical_ps,
+            prev_tokens=prev_tokens,
+            repetition_penalties=rep_penalties,
+            frequency_penalties=freq_penalties,
+            presence_penalties=pres_penalties,
+            generators=generators,
         )
 
         return next_tokens.tolist()
+
+    @staticmethod
+    def _build_prev_tokens(
+        sequences: list[Sequence], device: torch.device
+    ) -> torch.Tensor:
+        """Padded per-row token history for penalties: ``[batch, max_len]``,
+        with ``-1`` in the padding (the penalty fns mask ``token < 0``)."""
+        batch = len(sequences)
+        max_len = max(len(seq) for seq in sequences)
+        prev = torch.full((batch, max_len), -1, dtype=torch.long, device=device)
+        for i, seq in enumerate(sequences):
+            prev[i, : len(seq)] = torch.tensor(
+                seq.token_ids, dtype=torch.long, device=device
+            )
+        return prev
+
+    def _build_generators(
+        self, sequences: list[Sequence], device: torch.device
+    ) -> list[torch.Generator | None] | None:
+        """Per-row persistent generators for seeded requests.
+
+        Returns ``None`` when no request in the batch is seeded (keeps the
+        single-generator fast path). A generator is created once per seq_id and
+        reused across steps so the RNG state advances for reproducible output.
+        """
+        if all(seq.seed is None for seq in sequences):
+            return None
+        gens: list[torch.Generator | None] = []
+        for seq in sequences:
+            if seq.seed is None:
+                gens.append(None)
+                continue
+            gen = self._sample_generators.get(seq.seq_id)
+            if gen is None:
+                gen = torch.Generator(device=device)
+                gen.manual_seed(int(seq.seed))
+                self._sample_generators[seq.seq_id] = gen
+            gens.append(gen)
+        return gens
 
     def _update_metrics(self, sequences: list[Sequence], prefill: bool) -> None:
         """Update performance metrics.
@@ -936,13 +1032,13 @@ class InferenceExecutor:
             )
 
             # Warmup
-            outputs.copy_(self.model(input_ids=input_ids, positions=positions)[0])
+            outputs.copy_(self.model(input_ids=input_ids, positions=positions))
 
             # Capture graph using device-appropriate graph class
             DeviceGraph = get_device_graph_class()
             graph = DeviceGraph()
             with DeviceGraphContext(graph):
-                outputs.copy_(self.model(input_ids=input_ids, positions=positions)[0])
+                outputs.copy_(self.model(input_ids=input_ids, positions=positions))
 
             self.graphs[batch_size] = graph
             synchronize(self.device)
@@ -961,7 +1057,6 @@ class InferenceExecutor:
         # Clear device graphs
         self.graphs.clear()
         self.graph_vars.clear()
-        self.graph_pool = None
 
         # Clear KV cache
         if self.kv_cache is not None:

@@ -11,7 +11,6 @@ from torch import nn
 
 __all__ = [
     "LinearBase",
-    "ReplicatedLinear",
     "ColumnParallelLinear",
     "MergedColumnParallelLinear",
     "QKVParallelLinear",
@@ -106,28 +105,6 @@ class LinearBase(nn.Module):
     ) -> None:
         """Load weights - to be implemented by subclasses."""
         raise NotImplementedError("Subclasses must implement weight_loader method")
-
-
-class ReplicatedLinear(LinearBase):
-    """Standard dense linear layer replicated across tensor-parallel ranks."""
-
-    def __init__(
-        self,
-        input_size: int,
-        output_size: int,
-        bias: bool = False,
-    ) -> None:
-        super().__init__(input_size, output_size, bias)
-
-    def weight_loader(
-        self, param: nn.Parameter, loaded_weight: torch.Tensor, *args, **kwargs
-    ) -> None:
-        """Load replicated weights (same across all ranks)."""
-        param.data.copy_(loaded_weight)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Apply linear transformation."""
-        return F.linear(x, self.weight, self.bias)
 
 
 class ColumnParallelLinear(LinearBase):

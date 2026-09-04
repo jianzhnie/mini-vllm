@@ -144,6 +144,13 @@ class Scheduler:
         if scheduled_sequences:
             return scheduled_sequences, False
 
+        # A decode self-preemption may have just moved a sequence back to
+        # waiting and freed its blocks. Retry prefill so it is rescheduled this
+        # step instead of deadlocking (its own freed blocks now fit it).
+        scheduled_sequences = self._schedule_prefill()
+        if scheduled_sequences:
+            return scheduled_sequences, True
+
         # Safety check: ensure we scheduled something
         if not self.is_finished():
             # This should never happen if is_finished() is checked properly
