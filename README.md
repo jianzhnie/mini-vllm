@@ -140,11 +140,11 @@ python examples/inference_example.py --model qwen3-4b --max-tokens 128
 
 更多示例请参考 [examples/](examples/) 目录：
 
-- `cpu_inference_opt.py` — CPU 推理示例（支持 `--model` 选择模型）
-- `npu_inference_example.py` — NPU 推理示例（支持 TP、Flash Attention）
+- `sampling_example.py` — 采样参数 & 策略对比
 - `npu_flash_attention_example.py` — NPU Flash Attention 性能对比
 - `npu_tp_example.py` — 张量并行验证（TP=1/2/4）
 - `check_npu_graph.py` — NPU 环境检测
+- `mp_event_demo.py` — 多进程 Event 示例
 
 ### 高级配置
 

@@ -9,7 +9,7 @@ from pathlib import Path
 # example_utils lives in examples/ (not the minivllm package); put it on the path.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "examples"))
 
-from example_utils import (  # noqa: E402
+from example_utils import (
     DEFAULT_MODEL,
     MODEL_PATHS,
     apply_darwin_cpu_fallback,

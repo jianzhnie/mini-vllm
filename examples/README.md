@@ -1,6 +1,10 @@
 # mini-vLLM Examples
 
-Example scripts demonstrating inference, flash attention, and tensor parallelism on NPU / CPU.
+Example scripts demonstrating inference, sampling, flash attention, and tensor
+parallelism on NPU / CPU. All scripts share the scaffolding in
+[`example_utils.py`](example_utils.py) — model registry, `make_config`, the
+common CLI args, and `timed_generate` — so each example stays focused on its own
+point.
 
 ## Quick Start
 
@@ -8,27 +12,27 @@ Example scripts demonstrating inference, flash attention, and tensor parallelism
 # Activate environment
 source set_env.sh
 
-# Quick inference (auto-detects NPU)
+# Main inference (auto-detects NPU / CUDA / CPU)
 python examples/inference_example.py
 
-# NPU inference with Qwen3
-python examples/npu_inference_example.py --model qwen3
-
-# Flash attention benchmark
+# NPU flash-attention benchmark
 python examples/npu_flash_attention_example.py --benchmark
 
 # Tensor parallelism TP=2
 python examples/npu_tp_example.py --tp 2
+
+# Force CPU
+MINIVLLM_DEVICE=cpu python examples/inference_example.py
 ```
 
 ---
 
 ## Environment
 
-Activate the CANN + Python environment before running any example:
+Activate the CANN + Python environment before running any NPU example:
 
 ```bash
-source /home/jianzhnie/llmtuner/llm/mini-vllm/set_env.sh
+source /home/jianzhnie/llmtuner/llm/mini-vllm/tools/set_env.sh
 ```
 
 ## Model Short Names
@@ -49,126 +53,59 @@ You can also pass a full path to any local HuggingFace-format model directory.
 
 ## Examples
 
-### 1. `inference_example.py` — Main Example
+### 1. `inference_example.py` — Main Inference
 
-Auto-detects the device (NPU/CUDA/CPU) and runs inference. The simplest entry
-point. All scripts share the scaffolding in `example_utils.py` (model
-registry, `make_config`, the common `--model/--dtype/--max-tokens/...` args, and
-`timed_generate`).
+The device-agnostic entry point: auto-detects NPU / CUDA / CPU and covers the
+common knobs (tensor parallelism, flash attention, graph capture) plus an
+optional boxed output mode.
 
 ```bash
-python examples/inference_example.py                          # default: Qwen3-0.6B, float16
-python examples/inference_example.py --model qwen3-4b         # a different Qwen3 size
-python examples/inference_example.py --model /path/to/model  # custom model
-python examples/inference_example.py --dtype float32          # float32 precision
-python examples/inference_example.py --max-tokens 128         # longer output
+python examples/inference_example.py
+python examples/inference_example.py --model qwen3-4b --max-tokens 128
+python examples/inference_example.py --flash-attn --no-eager
+python examples/inference_example.py --tp 2
+MINIVLLM_DEVICE=cpu python examples/inference_example.py --boxed
 ```
-
-**Options**
 
 | Flag | Default | Description |
 |---|---|---|
 | `--model` | `qwen3` | Model short name or path |
-| `--dtype` | `float16` | `float16`, `float32`, or `auto` |
+| `--dtype` | `float16` | `float16`, `float32`, `bfloat16`, or `auto` |
 | `--max-tokens` | `64` | Max tokens to generate per prompt |
 | `--temperature` | `0.7` | Sampling temperature |
+| `--top-p` / `--top-k` | `0.95` / `40` | Sampling filters |
 | `--max-model-len` | `512` | Max sequence length |
-| `--eager` | `True` | Force eager mode (disable CUDA Graph) |
-
----
-
-### 2. `npu_inference_example.py` — NPU Inference
-
-Comprehensive NPU inference with flash attention and tensor parallelism toggles.
-
-```bash
-# Basic eager mode
-python examples/npu_inference_example.py
-
-# With flash attention
-python examples/npu_inference_example.py --flash-attn
-
-# With tensor parallelism
-python examples/npu_inference_example.py --tp 2
-python examples/npu_inference_example.py --tp 4
-
-# Combined
-python examples/npu_inference_example.py --model qwen3 --tp 2 --flash-attn
-
-# Custom prompt
-python examples/npu_inference_example.py --prompt "What is AI?"
-```
-
-**Options**
-
-| Flag | Default | Description |
-|---|---|---|
-| `--model` | `qwen3` | Model short name or path |
-| `--dtype` | `float16` | `float16`, `float32`, `bfloat16` |
-| `--max-tokens` | `64` | Max tokens per prompt |
-| `--temperature` | `0.7` | Sampling temperature |
-| `--top-p` | `0.95` | Top-p sampling |
-| `--top-k` | `40` | Top-k sampling |
-| `--max-model-len` | `512` | Max sequence length |
-| `--max-seqs` | `8` | Max concurrent sequences |
 | `--tp` | `1` | Tensor parallelism size (1–8) |
 | `--flash-attn` | off | Enable NPU flash attention |
-| `--no-eager` | off | Disable eager mode (enable graph capture) |
+| `--no-eager` | off | Enable graph capture (disable eager) |
+| `--max-seqs` | `8` | Max concurrent sequences |
 | `--prompt` | — | Add a prompt (repeatable) |
+| `--boxed` | off | Render results in boxes |
 
 ---
 
-### 3. `npu_flash_attention_example.py` — Flash Attention
+### 2. `sampling_example.py` — Sampling Parameters & Strategies
 
-Compares eager mode vs NPU flash attention. Includes low-level attention layer demos.
+One model load, two parts: a parameter sweep (temperature / top-k / top-p / min-p
+on a single prompt) and a strategy comparison (greedy / balanced / creative over a
+small batch, with timing).
 
 ```bash
-# Quick inference (eager, no benchmark)
-python examples/npu_flash_attention_example.py
-
-# Full benchmark (eager vs FA comparison)
-python examples/npu_flash_attention_example.py --benchmark
-python examples/npu_flash_attention_example.py --benchmark --model qwen3
-
-# Skip low-level layer demos
-python examples/npu_flash_attention_example.py --skip-low-level
+python examples/sampling_example.py
+python examples/sampling_example.py --model qwen3-4b --max-tokens 48
 ```
-
-**Options**
-
-| Flag | Default | Description |
-|---|---|---|
-| `--model` | `qwen3` | Model short name or path |
-| `--max-tokens` | `48` | Max tokens per prompt |
-| `--skip-low-level` | off | Skip attention layer demos |
-| `--benchmark` | off | Run full eager vs FA comparison |
-
-**Note:** Flash attention is enabled via `MINIVLLM_USE_NPU_FA=1`. On CANN 8.2.RC1, the `npu_fused_infer_attention_score` and `npu_incre_flash_attention` APIs have known compatibility issues; the standard PyTorch SDPA path is used by default and is well-optimized on NPU.
 
 ---
 
-### 4. `npu_tp_example.py` — Tensor Parallelism
+### 3. `npu_tp_example.py` — Tensor Parallelism
 
 Verifies TP=1, TP=2, and TP=4 correctness and throughput.
 
 ```bash
-# Baseline TP=1
-python examples/npu_tp_example.py
-
-# TP=2 only
-python examples/npu_tp_example.py --tp 2
-
-# TP=4 only
-python examples/npu_tp_example.py --tp 4
-
-# Test all TP sizes sequentially
-python examples/npu_tp_example.py --all
-
-# TP with Qwen3
-python examples/npu_tp_example.py --tp 2 --model qwen3
+python examples/npu_tp_example.py            # TP=1 baseline
+python examples/npu_tp_example.py --tp 2     # TP=2 only
+python examples/npu_tp_example.py --all      # TP=1,2,4 sequentially
 ```
-
-**Options**
 
 | Flag | Default | Description |
 |---|---|---|
@@ -178,42 +115,46 @@ python examples/npu_tp_example.py --tp 2 --model qwen3
 | `--max-tokens` | `48` | Max tokens per prompt |
 | `--dtype` | `float16` | `float16`, `float32`, or `bfloat16` |
 
-**Note:** TP=4 requires 4 NPU devices with HCCL peer-to-peer connectivity. On some machines, TP=4 in `--all` mode may fail due to HCCL link timeouts between runs; try running TP=4 standalone (`--tp 4`) if this occurs.
+**Note:** TP=4 requires 4 NPU devices with HCCL peer-to-peer connectivity. On
+some machines, TP=4 in `--all` mode may fail due to HCCL link timeouts between
+runs; run TP=4 standalone (`--tp 4`) if this occurs.
+
+---
+
+### 4. `npu_flash_attention_example.py` — Flash Attention
+
+Exercises the low-level `Attention` layer (prefill + decode) on NPU and compares
+eager vs NPU flash attention.
+
+```bash
+python examples/npu_flash_attention_example.py                     # quick check
+python examples/npu_flash_attention_example.py --benchmark         # full bench
+python examples/npu_flash_attention_example.py --skip-low-level    # LLM only
+```
+
+**Note:** Flash attention is enabled via `MINIVLLM_USE_NPU_FA=1`. On CANN 8.2.RC1
+the `npu_fused_infer_attention_score` and `npu_incre_flash_attention` APIs have
+known compatibility issues, so the standard PyTorch SDPA path is the default and
+is well-optimized on NPU.
 
 ---
 
 ### 5. `check_npu_graph.py` — NPU Environment Check
 
-Quick diagnostic of NPU runtime and available flash attention APIs.
+Quick diagnostic of NPU runtime and available flash-attention APIs: device
+count/name, FA API availability (fusion, incremental, unified), and a functional
+SDPA test.
 
 ```bash
 python examples/check_npu_graph.py
 ```
 
-Checks:
-- NPU device count and name
-- Flash attention API availability (fusion, incremental, unified)
-- Functional SDPA test
-
 ---
 
-### 6. `cpu_inference_opt.py` — CPU Inference
+### 6. `mp_event_demo.py` — Multiprocessing Event Demo
 
-Forces execution on CPU, useful as a golden reference for output comparison.
-
-```bash
-python examples/cpu_inference_opt.py
-python examples/cpu_inference_opt.py --model qwen3
-python examples/cpu_inference_opt.py --model qwen3-1.7b
-```
-
-Accepts `--model` with the same short names as other scripts. Hides all accelerator devices by setting `MINIVLLM_DEVICE=cpu`.
-
----
-
-### 7. `mp_event_demo.py` — Multiprocessing Event Demo
-
-Demonstrates the `multiprocessing.Event` pattern used by the tensor parallelism worker processes.
+Demonstrates the `multiprocessing.Event` pattern used by the tensor-parallelism
+worker processes (no LLM involved).
 
 ```bash
 python examples/mp_event_demo.py
@@ -223,58 +164,19 @@ python examples/mp_event_demo.py
 
 ## Common Workflows
 
-### Verify NPU environment
-
 ```bash
+# Verify NPU environment
 python examples/check_npu_graph.py
-```
 
-### Quick smoke test (all in one)
+# Quick smoke test across two model sizes
+python examples/inference_example.py --model qwen3 --max-tokens 16
+python examples/inference_example.py --model qwen3-4b --max-tokens 16
 
-```bash
-# Eager mode with two Qwen3 sizes
-python examples/npu_inference_example.py --model qwen3 --max-tokens 16
-python examples/npu_inference_example.py --model qwen3-4b --max-tokens 16
-
-# Flash attention benchmark
+# Flash-attention benchmark / TP verification
 python examples/npu_flash_attention_example.py --benchmark
-
-# TP=2 verification
 python examples/npu_tp_example.py --tp 2
-```
 
-### Performance comparison (eager vs flash attention)
-
-```bash
-python examples/npu_flash_attention_example.py --benchmark --model qwen3
-```
-
-### Tensor parallelism verification
-
-```bash
-# Sequential test (TP=1, TP=2, TP=4)
-python examples/npu_tp_example.py --all --max-tokens 32
-
-# Individual TP sizes
-python examples/npu_tp_example.py --tp 2 --model qwen3
-```
-
-### Debug mode
-
-Set `MINIVLLM_LOG_LEVEL=DEBUG` for verbose logs:
-
-```bash
-MINIVLLM_LOG_LEVEL=DEBUG python examples/npu_inference_example.py
-```
-
-Enable NPU flash attention:
-
-```bash
-MINIVLLM_USE_NPU_FA=1 python examples/npu_inference_example.py --flash-attn
-```
-
-Force CPU:
-
-```bash
-MINIVLLM_DEVICE=cpu python examples/npu_inference_example.py --dtype float32
+# Verbose logs / force CPU
+MINIVLLM_LOG_LEVEL=DEBUG python examples/inference_example.py
+MINIVLLM_DEVICE=cpu python examples/inference_example.py --dtype float32
 ```

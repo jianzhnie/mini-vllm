@@ -213,3 +213,69 @@ def format_prompts_with_chat_template(
         return prompts
 
     return formatted_prompts
+
+
+# ---------------------------------------------------------------------------
+# Boxed result formatting (optional --boxed output mode)
+# ---------------------------------------------------------------------------
+
+
+def deduplicate_text(text: str, max_repeat: int = 3) -> str:
+    """Drop lines that repeat more than ``max_repeat`` times (model artifacts)."""
+    seen: dict[str, int] = {}
+    kept: list[str] = []
+    for line in text.split("\n"):
+        key = line.strip()
+        if not key:
+            continue
+        if seen.get(key, 0) < max_repeat:
+            kept.append(line)
+            seen[key] = seen.get(key, 0) + 1
+    return "\n".join(kept) if kept else text
+
+
+def _wrap_text(text: str, width: int) -> list[str]:
+    """Word-wrap text into lines of at most ``width`` characters."""
+    lines: list[str] = []
+    current: list[str] = []
+    length = 0
+    for word in text.split():
+        if length + len(word) + len(current) <= width:
+            current.append(word)
+            length += len(word)
+        else:
+            lines.append(" ".join(current))
+            current, length = [word], len(word)
+    if current:
+        lines.append(" ".join(current))
+    return lines or [text[:width]]
+
+
+def format_output_box(
+    prompt: str, output: str, index: int, token_count: int = 0
+) -> str:
+    """Render one prompt/output pair inside a fixed-width box."""
+    width = 76
+    inner = width - 4
+    wrapped = _wrap_text(output.strip().replace("\n", " "), inner - 2)[:10]
+    box = [
+        f"┌{'─' * width}┐",
+        f"│ [{index}] Prompt: {prompt[: inner - 12]:<{inner - 12}} │",
+        f"├{'─' * width}┤",
+        f"│{' ' * inner} │",
+    ]
+    box += [f"│  {line:<{inner - 2}} │" for line in wrapped]
+    if len(wrapped) == 10:
+        box.append(f"│  {' ' * (inner - 2)} │")
+    box += [f"│{' ' * inner} │", f"│ {'Tokens: ' + str(token_count):<{inner}} │", f"└{'─' * width}┘"]
+    return "\n".join(box)
+
+
+def print_boxed_results(
+    prompts: list[str], outputs: list[dict], *, dedupe: bool = True
+) -> None:
+    """Print each result in a box (the ``--boxed`` display mode)."""
+    for idx, (prompt, output) in enumerate(zip(prompts, outputs, strict=True)):
+        text = deduplicate_text(output["text"]) if dedupe else output["text"]
+        print(format_output_box(prompt, text, idx, len(output["token_ids"])))
+        print()
