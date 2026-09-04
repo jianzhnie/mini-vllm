@@ -5,8 +5,8 @@ from __future__ import annotations
 import os
 
 from minivllm.utils.example_utils import (
-    MODEL_PATHS,
     DEFAULT_MODEL,
+    MODEL_PATHS,
     apply_darwin_cpu_fallback,
     make_config,
     print_banner,

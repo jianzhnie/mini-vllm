@@ -10,16 +10,16 @@ from minivllm.models.registry import SUPPORTED_MODELS, TYPE_TO_ARCH, create_mode
 
 
 def _cfg(**overrides):
-    kwargs = dict(
-        vocab_size=64,
-        hidden_size=32,
-        num_hidden_layers=1,
-        num_attention_heads=4,
-        num_key_value_heads=2,
-        intermediate_size=64,
-        max_position_embeddings=128,
-        rms_norm_eps=1e-6,
-    )
+    kwargs = {
+        "vocab_size": 64,
+        "hidden_size": 32,
+        "num_hidden_layers": 1,
+        "num_attention_heads": 4,
+        "num_key_value_heads": 2,
+        "intermediate_size": 64,
+        "max_position_embeddings": 128,
+        "rms_norm_eps": 1e-6,
+    }
     kwargs.update(overrides)
     return Qwen3Config(**kwargs)
 

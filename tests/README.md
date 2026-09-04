@@ -6,21 +6,56 @@ This directory contains comprehensive tests for the mini-vLLM library.
 
 ### Test Modules
 
-- **test_config.py**: Config class validation and initialization
-- **test_sampling_params.py**: SamplingParams class and constraints
-- **test_sequence.py**: Sequence class and token management
-- **test_device.py**: Device detection and management
-- **test_linear.py**: Tensor-parallel linear layers
-- **test_page_attention.py**: Page attention correctness vs reference implementation
+Test files mirror the `minivllm/` source layout, so each `tests/<pkg>/test_<name>.py`
+covers `minivllm/<pkg>/<name>.py`.
+
+**Top level**
+- **test_config.py**: `config.Config` validation and initialization
+- **test_llm.py**: `llm.LLM` high-level entry point
+- **test_integration.py**: component-interaction integration tests
+
+**engine/**
+- **test_sequence.py**: Sequence and token management
+- **test_scheduler.py**: two-phase scheduling
+- **test_block_manager.py**: block-based KV cache, prefix + CoW
+- **test_llm_engine.py**: engine orchestration
+- **test_model_runner.py**: rank-0/worker runner
+- **test_inference_executor.py**: CUDA-graph batched execution
+- **test_distributed_manager.py**: NCCL/HCLL process group sync
+
+**models/**
+- **test_registry.py**: `MODEL_REGISTRY` / `create_model` dispatch
+- **test_manager.py**: `ModelManager` loading, validation, cleanup, dtype resolution
+- **test_qwen_base.py**: shared Qwen backbone (Attention/MLP/layers, `load_weights` packed mapping)
+- **test_qwen3_npu.py**: Qwen3 + NPU backend init and kernel dispatch
+- **test_qwen3_logit_match.py**: Qwen3 logit reproducibility (vs HuggingFace)
+
+**models/layers/**
+- **test_linear.py**: tensor-parallel linear layers
+- **test_attention.py**: `Attention` prefill/decode + NPU integration (CPU fallback)
+- **test_attention_backend.py**: attention backend dispatch logic
+- **test_npu_flash_attention.py**: NPU causal-mask helper caching + `SPARSE_MODE` validation
+- **test_page_attention.py**: page attention vs reference
+- **test_attention_gather.py**: paged-KV gather
+- **test_embed_head.py**: parallel embedding / LM head
+- **test_layernorm.py**: RMSNorm
 - **test_rotary_embedding.py**: RoPE computation and caching
-- **test_sampler.py**: Token sampling pipeline
-- **test_npu_attention.py**: NPU flash attention integration (CPU fallback when no NPU)
-- **test_npu_backend.py**: NPU attention backend dispatch logic
-- **test_qwen3_npu.py**: Qwen3 + NPU backend initialization and kernel dispatch
-- **test_qwen3_logit_match.py**: Qwen3 logit reproducibility
-- **test_integration.py**: Component interaction integration tests
-- **test_llm.py** / **test_llm_engine.py**: End-to-end inference pipeline
-- **test_scheduler.py** / **test_block_manager.py**: Scheduling and memory management
+- **test_activation.py**: SiluAndMul
+
+**sampling/**
+- **test_sampler.py**: token sampling pipeline
+- **test_mirostat.py**: Mirostat v1/v2 samplers
+- **test_functional.py**: stateless sampling ops
+- **test_sampling_config.py**: `SamplingConfig`
+- **test_sampling_params.py**: user-facing `SamplingParams`
+
+**utils/**
+- **test_device.py**: device detection and management
+- **test_context.py**: inference context
+- **test_loader.py**: safetensors weight loading
+- **test_logger_utils.py**: logger configuration
+- **test_random_utils.py**: RNG helpers
+- **test_example_utils.py**: example-script helpers
 
 ### Test Fixtures
 

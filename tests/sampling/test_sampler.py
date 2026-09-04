@@ -2,7 +2,6 @@ import pytest
 import torch
 
 from minivllm.sampling.config import SamplingConfig
-from minivllm.sampling.mirostat import MirostatSampler, MirostatV2Sampler
 from minivllm.sampling.sampler import Sampler
 
 
@@ -251,26 +250,6 @@ class TestGreedyAndScalarRobustness:
         assert self.sampler(logits, top_ps=torch.tensor([1, 1])).shape == (2,)
         assert self.sampler(logits, min_ps=torch.tensor([0, 0])).shape == (2,)
         assert self.sampler(logits, typical_ps=torch.tensor([1, 1])).shape == (2,)
-
-
-class TestMirostat:
-    """Tests for Mirostat samplers."""
-
-    def test_mirostat_v1(self):
-        logits = torch.randn(1, 100)
-        sampler = MirostatSampler(target_perplexity=3.0)
-        for _ in range(5):
-            token = sampler(logits)
-            assert token.shape == (1,)
-            assert 0 <= token.item() < 100
-
-    def test_mirostat_v2(self):
-        logits = torch.randn(1, 100)
-        sampler = MirostatV2Sampler(target_perplexity=3.0)
-        for _ in range(5):
-            token = sampler(logits)
-            assert token.shape == (1,)
-            assert 0 <= token.item() < 100
 
 
 if __name__ == "__main__":

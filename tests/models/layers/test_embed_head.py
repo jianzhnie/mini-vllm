@@ -9,7 +9,6 @@ import torch.nn.functional as F
 from minivllm.models.layers.embed_head import ParallelLMHead, VocabParallelEmbedding
 from minivllm.utils.context import reset_context, set_context
 
-
 # --- VocabParallelEmbedding ------------------------------------------------
 
 
@@ -18,8 +17,15 @@ def test_embedding_weight_shape():
     assert e.weight.shape == (100, 16)
 
 
+def _seed_weight(module, seed=0):
+    # Parameters start as torch.empty() (may hold NaN); pin deterministic values.
+    gen = torch.Generator().manual_seed(seed)
+    module.weight.data = torch.randn(*module.weight.shape, generator=gen)
+    return module
+
+
 def test_embedding_forward_matches_torch():
-    e = VocabParallelEmbedding(100, 16)
+    e = _seed_weight(VocabParallelEmbedding(100, 16))
     ids = torch.tensor([0, 5, 99])
     assert torch.allclose(e(ids), F.embedding(ids, e.weight))
 
@@ -40,7 +46,7 @@ def test_embedding_weight_loader_full_shard():
 
 
 def test_lm_head_decode_logits_equal_linear():
-    head = ParallelLMHead(50, 16)
+    head = _seed_weight(ParallelLMHead(50, 16))
     x = torch.randn(3, 16)
     assert torch.allclose(head(x), F.linear(x, head.weight))
 
